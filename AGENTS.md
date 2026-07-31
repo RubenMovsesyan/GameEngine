@@ -11,6 +11,7 @@ Currently: `gpu/` and `graphics/`.
 buildcpp/   git submodule, the build system (build.h)
 build.c     the build script, C23
 common/     shared across modules (see common/AGENTS.md)
+docs/       system overview + the stylesheet every module's docs share
 gpu/        Vulkan device, queues, commands, sync, swapchain, buffers
 graphics/   the graphics engine: window (GLFW) and renderer. links gpu
 sandbox/    test executable
@@ -37,7 +38,16 @@ A module is laid out as:
 ```
 <module>/include/<module>/   public API, the only headers other modules may include
 <module>/src/                implementation and private headers
+<module>/docs/               how this module works
 ```
+
+**Every module gets a `docs/` directory** — create it when you create the module. It holds
+an HTML page (dark mode) explaining how that module works, with real code examples pulled
+from the module itself. Link the shared stylesheet at `../../docs/style.css` rather than
+restyling; add more pages under `docs/` when one topic deserves its own. Start from
+`docs/index.html` at the repo root, which is the system overview and links every module.
+Update the module's page in the same change as the code — a docs page that describes an
+older design is worse than none.
 
 ## Building
 

@@ -1,0 +1,342 @@
+/* Shared dark theme for every module's docs/ page. */
+
+:root {
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-2: #12151c;
+    --border: #262b36;
+    --text: #d5dae3;
+    --muted: #8b94a7;
+    --accent: #7aa2f7;
+    --accent-gfx: #9ece6a;
+    --accent-warn: #e0af68;
+    --accent-bad: #f7768e;
+    --mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 1.5rem;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 3rem;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 6rem;
+}
+
+/* ---------- sidebar ---------- */
+
+nav {
+    position: sticky;
+    top: 2.5rem;
+    align-self: start;
+    font-size: 0.875rem;
+}
+
+nav .brand {
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    display: block;
+    margin-bottom: 0.25rem;
+    text-decoration: none;
+}
+
+nav .brand span {
+    color: var(--accent);
+}
+
+nav .tag {
+    color: var(--muted);
+    font-size: 0.78rem;
+    display: block;
+    margin-bottom: 1.5rem;
+}
+
+nav h4 {
+    margin: 1.5rem 0 0.5rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--muted);
+    font-weight: 600;
+}
+
+nav a {
+    display: block;
+    padding: 0.22rem 0;
+    color: var(--muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    padding-left: 0.7rem;
+    margin-left: -0.7rem;
+}
+
+nav a:hover {
+    color: var(--text);
+    border-left-color: var(--border);
+}
+
+nav a.here {
+    color: var(--accent);
+    border-left-color: var(--accent);
+}
+
+/* ---------- content ---------- */
+
+main {
+    min-width: 0;
+}
+
+h1 {
+    font-size: 2rem;
+    letter-spacing: -0.02em;
+    margin: 0 0 0.4rem;
+}
+
+h2 {
+    font-size: 1.3rem;
+    letter-spacing: -0.01em;
+    margin: 3rem 0 0.9rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+}
+
+h3 {
+    font-size: 1.02rem;
+    margin: 2rem 0 0.6rem;
+    color: var(--text);
+}
+
+.lede {
+    color: var(--muted);
+    font-size: 1.05rem;
+    margin-bottom: 2rem;
+}
+
+p,
+li {
+    color: var(--text);
+}
+
+a {
+    color: var(--accent);
+}
+
+code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.08em 0.36em;
+}
+
+pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-size: 0.83rem;
+    line-height: 1.6;
+}
+
+pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+}
+
+/* Fallback colours when highlight.js is unavailable (offline). */
+pre code:not(.hljs) {
+    color: #c8d1e0;
+}
+
+figure {
+    margin: 1.5rem 0;
+}
+
+figcaption {
+    color: var(--muted);
+    font-size: 0.82rem;
+    margin-top: 0.6rem;
+}
+
+/* ---------- tables ---------- */
+
+.scroll {
+    overflow-x: auto;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.875rem;
+    margin: 1.2rem 0;
+}
+
+th,
+td {
+    text-align: left;
+    padding: 0.55rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+tbody tr:hover {
+    background: var(--surface);
+}
+
+/* ---------- callouts ---------- */
+
+.note {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    padding: 0.9rem 1.1rem;
+    margin: 1.5rem 0;
+    font-size: 0.92rem;
+}
+
+.note.warn {
+    border-left-color: var(--accent-warn);
+}
+
+.note.bad {
+    border-left-color: var(--accent-bad);
+}
+
+.note.good {
+    border-left-color: var(--accent-gfx);
+}
+
+.note strong:first-child {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+}
+
+.note > :last-child {
+    margin-bottom: 0;
+}
+
+.note > :first-child {
+    margin-top: 0;
+}
+
+/* ---------- module diagram ---------- */
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin: 1.5rem 0;
+}
+
+.box {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+}
+
+.box .name {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.box.gfx .name {
+    color: var(--accent-gfx);
+}
+
+.box .desc {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 0.15rem;
+}
+
+.arrow {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-family: var(--mono);
+}
+
+.cols {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.6rem;
+}
+
+.chart {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface-2);
+    padding: 0.5rem;
+    min-height: 60px;
+}
+
+.pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.73rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+}
+
+hr {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 3rem 0;
+}
+
+footer {
+    margin-top: 4rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+@media (max-width: 820px) {
+    .wrap {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+    }
+    nav {
+        position: static;
+    }
+}

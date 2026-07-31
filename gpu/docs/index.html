@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu — GameEngine</title>
+<link rel="stylesheet" href="../../docs/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/tokyo-night-dark.min.css">
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../../docs/index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · Linux</span>
+
+  <h4>System</h4>
+  <a href="../../docs/index.html">Overview</a>
+
+  <h4>gpu</h4>
+  <a class="here" href="index.html">Module</a>
+  <a href="#shape">Shape of the API</a>
+  <a href="#instance">Instance</a>
+  <a href="#device">Device</a>
+  <a href="#commands">Commands &amp; submission</a>
+  <a href="#buffer">Buffers</a>
+  <a href="#headless">Headless compute</a>
+  <a href="#rules">Rules &amp; traps</a>
+  <a href="synchronization.html">Synchronization →</a>
+
+  <h4>graphics</h4>
+  <a href="../../graphics/docs/index.html">Module</a>
+</nav>
+
+<main>
+
+<h1><code>gpu</code></h1>
+<p class="lede">
+  Everything needed to talk to a Vulkan device: instance, physical-device and queue
+  selection, command submission, frame synchronization, swapchain, and VMA-backed buffers.
+  It knows nothing about windows, rendering, shaders, or pipelines.
+</p>
+
+<h2 id="shape">The shape of the API</h2>
+
+<p>
+  <code>gpu/</code> is <strong>a library of RAII value types, not a framework</strong>. That
+  distinction drives every design choice here, so it is worth stating precisely:
+</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>A framework would…</th><th><code>gpu/</code> instead…</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>define an abstract <code>Pipeline</code>/<code>Pass</code> base you subclass, and call your virtuals each frame.</td>
+      <td>hands you a <code>vk::raii::CommandBuffer&amp;</code>. You record whatever you like onto it. There are no virtual functions in the module.</td>
+    </tr>
+    <tr>
+      <td>own a global <code>get_core()</code> singleton everyone reaches into.</td>
+      <td>has you construct <code>Instance</code> and <code>Device</code> yourself and pass them by reference. No singleton, no <code>shared_ptr</code> graph.</td>
+    </tr>
+    <tr>
+      <td>wrap every Vulkan handle in a bespoke class.</td>
+      <td>wraps only what Vulkan-Hpp doesn't already: there is no <code>gpu::CommandBuffer</code>, because <code>vk::raii::CommandBuffer</code> <em>is</em> that type.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>
+  Direction of control is one-way: <code>graphics/</code> calls into <code>gpu/</code>, and
+  <code>gpu/</code> never calls back. That is what lets a physics module use the same device
+  without the renderer existing.
+</p>
+
+<h3>Files</h3>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Header</th><th>Declares</th></tr></thead>
+  <tbody>
+    <tr><td><code>gpu/vk.hpp</code></td><td>The <em>only</em> include of <code>&lt;vulkan/vulkan_raii.hpp&gt;</code>, plus <code>devtools/common.h</code> for <code>u32</code>.</td></tr>
+    <tr><td><code>gpu/instance.hpp</code></td><td><code>InstanceConfig</code>, <code>Instance</code></td></tr>
+    <tr><td><code>gpu/device.hpp</code></td><td><code>QueueFamilies</code>, <code>DeviceConfig</code>, <code>Device</code></td></tr>
+    <tr><td><code>gpu/command.hpp</code></td><td><code>imageBarrier()</code>, <code>SubmitInfo</code>, <code>submit()</code> — free functions, no class</td></tr>
+    <tr><td><code>gpu/frame.hpp</code></td><td><code>FrameRing</code> — see <a href="synchronization.html">Synchronization</a></td></tr>
+    <tr><td><code>gpu/swapchain.hpp</code></td><td><code>Swapchain</code> — see <a href="synchronization.html">Synchronization</a></td></tr>
+    <tr><td><code>gpu/buffer.hpp</code></td><td><code>Buffer</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="instance">Instance</h2>
+
+<p>
+  <code>Instance</code> owns the <code>vk::raii::Context</code>, the <code>VkInstance</code>, and
+  an optional debug messenger. Its config is the entire windowing seam on this side:
+</p>
+
+<pre><code class="language-cpp">struct InstanceConfig {
+    const char* app_name = "GameEngine";
+    u32 api_version = vk::ApiVersion14;
+    // Handed through from the windowing layer. The entire window seam on this side.
+    std::span&lt;const char* const&gt; required_extensions{};
+    bool validation = true;
+};</code></pre>
+
+<p>
+  <code>std::span&lt;const char* const&gt;</code> maps exactly onto GLFW's
+  <code>const char**</code> plus count — no copy, no allocation, and critically, no GLFW type
+  in the signature. <code>gpu/</code> sees an array of strings and nothing more.
+</p>
+
+<h3>Validation</h3>
+
+<p>
+  Validation is requested by default but never assumed. If the layer isn't installed the
+  constructor warns and continues rather than dying:
+</p>
+
+<pre><code class="language-cpp">const bool validation = cfg.validation
+    &amp;&amp; hasLayer(m_context.enumerateInstanceLayerProperties(), VALIDATION_LAYER);
+if (cfg.validation &amp;&amp; !validation) {
+    RLOG(LL_WARN, "%s not available, continuing without validation", VALIDATION_LAYER);
+}</code></pre>
+
+<p>
+  The messenger routes the layer's output into <code>rlog</code> and always returns
+  <code>vk::False</code>, so a validation error is reported but never aborts the call that
+  triggered it:
+</p>
+
+<pre><code class="language-cpp">VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(
+    vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
+    vk::DebugUtilsMessageTypeFlagsEXT,
+    const vk::DebugUtilsMessengerCallbackDataEXT* data,
+    void*
+) {
+    if (severity == vk::DebugUtilsMessageSeverityFlagBitsEXT::eError) {
+        RLOG(LL_ERROR, "[vk] %s", data->pMessage);
+    } else {
+        RLOG(LL_WARN, "[vk] %s", data->pMessage);
+    }
+    return vk::False; // never abort the offending call
+}</code></pre>
+
+<div class="note">
+  <strong>Why the vk:: parameter types</strong>
+  <p>
+    The obvious version of this callback takes the C types
+    (<code>VkDebugUtilsMessageSeverityFlagBitsEXT</code>, …), which is what every tutorial
+    shows. Vulkan-Hpp's <code>pfnUserCallback</code> field is typed with the C++ enums, so
+    the C signature doesn't convert and you need a function-pointer
+    <code>reinterpret_cast</code>. Writing the callback with <code>vk::</code> types instead
+    makes the cast unnecessary.
+  </p>
+</div>
+
+<h3>Turning validation errors into hard stops</h3>
+
+<p>
+  During bring-up it is often better to die on the first validation error than to scroll
+  back through a log. Change one word in <code>gpu/src/instance.cpp</code>:
+</p>
+
+<pre><code class="language-cpp">RLOG(LL_FATAL, "[vk] %s", data->pMessage);   // was LL_ERROR</code></pre>
+
+<p><code>LL_FATAL</code> calls <code>exit(404)</code>, so you get an immediate, attachable stop.</p>
+
+<h2 id="device">Device</h2>
+
+<p>
+  <code>Device</code> picks a physical device, selects queue families, creates the logical
+  device, retrieves the queues, and creates the VMA allocator.
+</p>
+
+<h3>Queue family selection</h3>
+
+<p>
+  This is where the previous attempt had a real bug, so the helper is written to make that
+  bug impossible:
+</p>
+
+<pre><code class="language-cpp">// First match, then stop. No silent fallback to family 0.
+std::optional&lt;u32&gt; pickFamily(
+    const std::vector&lt;vk::QueueFamilyProperties&gt;&amp; props,
+    vk::QueueFlags required,
+    vk::QueueFlags forbidden
+) {
+    for (u32 i = 0; i &lt; props.size(); i++) {
+        const vk::QueueFlags flags = props[i].queueFlags;
+        if ((flags &amp; required) == required &amp;&amp; !(flags &amp; forbidden)) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}</code></pre>
+
+<div class="note bad">
+  <strong>The bug this replaces</strong>
+  <p>
+    ShaderPlayground's selection loop had <em>no <code>break</code></em>, so it kept the
+    <strong>last</strong> matching family rather than the first. On a typical discrete GPU —
+    where family 0 is graphics|compute|transfer and later families are specialised — that
+    silently landed on the wrong family. Both indices also defaulted to <code>0</code> with
+    no failure path, so "no suitable family" was indistinguishable from "family 0".
+  </p>
+</div>
+
+<p>
+  The <code>forbidden</code> parameter is what expresses "dedicated". Asking for compute
+  <em>while forbidding graphics</em> finds an async-compute family if the hardware has one,
+  and falls back to the graphics family if it doesn't:
+</p>
+
+<pre><code class="language-cpp">QueueFamilies families{
+    .graphics = *graphics,
+    .compute  = pickFamily(props, Q::eCompute,  Q::eGraphics).value_or(*graphics),
+    .transfer = pickFamily(props, Q::eTransfer, Q::eGraphics | Q::eCompute).value_or(*graphics),
+};</code></pre>
+
+<p>
+  Present support is checked only when a surface was supplied, and prefers the graphics
+  family so submission and presentation share a queue where possible:
+</p>
+
+<pre><code class="language-cpp">if (surface) {
+    // Prefer the graphics family so submission and present share a queue.
+    if (gpu.getSurfaceSupportKHR(*graphics, surface)) {
+        families.present = *graphics;
+        families.has_present = true;
+    } else {
+        for (u32 i = 0; i &lt; props.size(); i++) {
+            if (gpu.getSurfaceSupportKHR(i, surface)) {
+                families.present = i;
+                families.has_present = true;
+                break;
+            }
+        }
+    }
+    if (!families.has_present) {
+        return std::nullopt;   // this device cannot present to this surface
+    }
+}</code></pre>
+
+<p>
+  Queues alias freely when their families are equal — <code>vk::raii::Queue</code> destruction
+  is a no-op, so holding the same underlying queue in two members is safe.
+</p>
+
+<h3>Required features</h3>
+
+<p>
+  A device that can't do dynamic rendering and synchronization2 is skipped, not
+  worked around:
+</p>
+
+<pre><code class="language-cpp">bool supportsRequiredFeatures(const vk::raii::PhysicalDevice&amp; gpu) {
+    const auto chain = gpu.getFeatures2&lt;vk::PhysicalDeviceFeatures2,
+                                        vk::PhysicalDeviceVulkan13Features&gt;();
+    const auto&amp; vk13 = chain.get&lt;vk::PhysicalDeviceVulkan13Features&gt;();
+    return vk13.dynamicRendering &amp;&amp; vk13.synchronization2;
+}</code></pre>
+
+<p>They are then enabled through a structure chain at device creation:</p>
+
+<pre><code class="language-cpp">const vk::StructureChain&lt;vk::DeviceCreateInfo, vk::PhysicalDeviceVulkan13Features&gt; chain{
+    vk::DeviceCreateInfo{ /* queues, extensions */ },
+    vk::PhysicalDeviceVulkan13Features{
+        .synchronization2 = vk::True,
+        .dynamicRendering = vk::True,
+    },
+};
+m_device = vk::raii::Device{m_physical, chain.get&lt;vk::DeviceCreateInfo&gt;()};</code></pre>
+
+<p>
+  Selection prefers a discrete GPU and stops as soon as it finds one. If no candidate
+  survives, <code>RLOG(LL_FATAL, …)</code> ends the process — there is no error-propagation
+  plumbing through constructors.
+</p>
+
+<h3>VMA, and the one ordering rule</h3>
+
+<p>
+  VMA is a C library that wants raw handles, and <code>vk::raii</code> types convert with a
+  dereference plus a cast. The subtle part is telling VMA how to find its function pointers:
+</p>
+
+<pre><code class="language-cpp">VmaVulkanFunctions functions{
+    .vkGetInstanceProcAddr = instance-&gt;getDispatcher()-&gt;vkGetInstanceProcAddr,
+    .vkGetDeviceProcAddr   = m_device.getDispatcher()-&gt;vkGetDeviceProcAddr,
+};
+const VmaAllocatorCreateInfo allocator_info{
+    .physicalDevice   = static_cast&lt;VkPhysicalDevice&gt;(*m_physical),
+    .device           = static_cast&lt;VkDevice&gt;(*m_device),
+    .pVulkanFunctions = &amp;functions,
+    .instance         = static_cast&lt;VkInstance&gt;(instance.handle()),
+    .vulkanApiVersion = VK_API_VERSION_1_4,
+};</code></pre>
+
+<p>
+  Each <code>vk::raii</code> object carries its own dispatch table rather than using a global
+  one, so those two bootstrap pointers come from the dispatchers themselves. The build sets
+  <code>-DVMA_STATIC_VULKAN_FUNCTIONS=0 -DVMA_DYNAMIC_VULKAN_FUNCTIONS=1</code> so VMA
+  resolves the rest through them instead of the loader's exported symbols.
+</p>
+
+<div class="note warn">
+  <strong>Do not reorder Device's members</strong>
+  <p>
+    <code>vmaDestroyAllocator</code> must run before <code>vkDestroyDevice</code>. Nothing
+    enforces that except member declaration order — members are destroyed in reverse, so the
+    allocator is declared <em>last</em>:
+  </p>
+<pre><code class="language-cpp">vk::raii::Device m_device{nullptr};
+// ...
+// Declared last so it is destroyed first: vmaDestroyAllocator must run before
+// vkDestroyDevice. Do not reorder.
+std::unique_ptr&lt;VmaAllocator_T, void (*)(VmaAllocator_T*)&gt; m_allocator{nullptr, nullptr};</code></pre>
+  <p>
+    The check that this held is the validation layer's object-leak report at
+    <code>vkDestroyInstance</code>. A clean exit with zero leak messages is the proof; treat
+    any leak message as a hard failure.
+  </p>
+</div>
+
+<p>
+  The <code>unique_ptr</code> deleter is a plain function pointer, which is why
+  <code>VmaAllocator_T</code> can stay an incomplete forward declaration in the header and
+  <code>vk_mem_alloc.h</code> — roughly 750 KB — never lands in a consumer's translation unit.
+</p>
+
+<h2 id="commands">Commands and submission</h2>
+
+<p>
+  There is no command-buffer class. Recording is done directly on
+  <code>vk::raii::CommandBuffer</code>, and <code>gpu/</code> adds only the two things worth
+  not retyping: a barrier helper and one submission path.
+</p>
+
+<pre><code class="language-cpp">// The single submission path for graphics and compute.
+struct SubmitInfo {
+    const vk::raii::CommandBuffer* cmd = nullptr;
+    vk::Semaphore wait{};
+    vk::PipelineStageFlags2 wait_stage = vk::PipelineStageFlagBits2::eAllCommands;
+    vk::Semaphore signal{};
+    vk::PipelineStageFlags2 signal_stage = vk::PipelineStageFlagBits2::eAllCommands;
+    vk::Fence fence{}; // reset here, immediately before submitting
+};
+
+void submit(const Device&amp;, const vk::raii::Queue&amp;, const SubmitInfo&amp;);</code></pre>
+
+<p>
+  Every wait and signal is optional, so the same function serves a graphics frame (wait on
+  acquire, signal render-finished) and a fire-and-forget compute dispatch (neither). The
+  counts are derived from whether the handles are non-null:
+</p>
+
+<pre><code class="language-cpp">queue.submit2(vk::SubmitInfo2{
+    .waitSemaphoreInfoCount   = info.wait ? 1u : 0u,
+    .pWaitSemaphoreInfos      = &amp;wait,
+    .commandBufferInfoCount   = 1,
+    .pCommandBufferInfos      = &amp;cmd,
+    .signalSemaphoreInfoCount = info.signal ? 1u : 0u,
+    .pSignalSemaphoreInfos    = &amp;signal,
+}, info.fence);</code></pre>
+
+<p>
+  <code>submit</code> takes the <code>Device</code> for exactly one reason: to reset the fence
+  itself. That placement is load-bearing and is explained in
+  <a href="synchronization.html">Synchronization</a>.
+</p>
+
+<h2 id="buffer">Buffers</h2>
+
+<p>
+  <code>Buffer</code> is the module's only hand-written destructor, because VMA is a C API
+  with no RAII of its own.
+</p>
+
+<pre><code class="language-cpp">gpu::Buffer buffer{device, 64, vk::BufferUsageFlagBits::eStorageBuffer, /*host_visible=*/true};
+std::memset(buffer.mapped(), 0xAB, 64);</code></pre>
+
+<p>
+  When <code>host_visible</code> is set, VMA maps the allocation persistently and
+  <code>mapped()</code> is non-null for the buffer's lifetime — there is no map/unmap dance.
+  Otherwise <code>mapped()</code> is <code>nullptr</code> and the memory is device-local.
+</p>
+
+<p>Move assignment is a swap, so the moved-from object's destructor releases the old resources:</p>
+
+<pre><code class="language-cpp">// Swap, so other's destructor releases whatever we were holding.
+Buffer&amp; Buffer::operator=(Buffer&amp;&amp; other) noexcept {
+    std::swap(m_allocator, other.m_allocator);
+    std::swap(m_allocation, other.m_allocation);
+    std::swap(m_buffer, other.m_buffer);
+    std::swap(m_size, other.m_size);
+    std::swap(m_mapped, other.m_mapped);
+    return *this;
+}</code></pre>
+
+<div class="note">
+  <strong>No staging path yet</strong>
+  <p>
+    Uploading to a device-local buffer needs a staging buffer and a transfer-queue copy.
+    Neither exists — <code>QueueFamilies::transfer</code> is selected but unused. That is
+    deliberate: it arrives with the first vertex buffer that needs it.
+  </p>
+</div>
+
+<h2 id="headless">Using gpu/ headless</h2>
+
+<p>
+  This is the payoff for the whole split, and it is why <code>DeviceConfig::present_surface</code>
+  is a nullable field rather than a constructor requirement. A compute or physics module
+  constructs a device with no surface at all:
+</p>
+
+<pre><code class="language-cpp">// No window, no graphics/, no swapchain.
+const gpu::Instance instance{{.validation = true}};
+const gpu::Device device{instance};          // present_surface stays null
+
+gpu::Buffer out{device, 1024, vk::BufferUsageFlagBits::eStorageBuffer, true};
+gpu::FrameRing frames{device, device.families().compute, 1};
+
+const auto frame = frames.begin();
+frame.cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+// ... bind a compute pipeline, cmd.dispatch(...) ...
+frame.cmd.end();
+
+gpu::submit(device, device.computeQueue(), {.cmd = &amp;frame.cmd, .fence = frame.fence});</code></pre>
+
+<p>
+  With no surface, <code>Device</code> selects no present queue and doesn't request
+  <code>VK_KHR_swapchain</code>. The same <code>FrameRing</code> and the same
+  <code>submit</code> that the renderer uses work unchanged — which is exactly the
+  duplication the previous attempt fell into and this one avoids.
+</p>
+
+<h2 id="rules">Rules and traps</h2>
+
+<div class="note bad">
+  <strong>Never call a method on a bare handle</strong>
+  <p>
+    Call methods on <code>vk::raii::</code> types only. A bare <code>vk::Device</code>,
+    <code>vk::CommandBuffer</code> or <code>vk::Queue</code> routes through a
+    <em>second</em>, static dispatcher — a separate and invisible dispatch path. Bare handles
+    are fine to <em>pass around</em>; they are not fine to call on. That is why
+    <code>imageBarrier</code> and <code>SubmitInfo::cmd</code> take
+    <code>const vk::raii::CommandBuffer&amp;</code> rather than the plain handle.
+  </p>
+</div>
+
+<div class="note warn">
+  <strong><code>-DVULKAN_HPP_NO_CONSTRUCTORS</code> is required</strong>
+  <p>
+    Without it, <code>vk::</code> structs have constructors, are therefore not aggregates, and
+    every designated initializer in this module fails to compile. It is set in
+    <code>build.c</code>'s <code>cxxStep()</code> so all steps share it — a mismatch between
+    steps would be an ODR violation, since the flag changes the class definitions themselves.
+  </p>
+</div>
+
+<div class="note">
+  <strong>Errors</strong>
+  <p>
+    Setup failures we detect ourselves are <code>RLOG(LL_FATAL, …)</code>, which exits.
+    Vulkan errors surface as <code>vk::SystemError</code> exceptions and are caught once, in
+    <code>main</code>. Recoverable per-frame conditions — an out-of-date swapchain — are
+    return values and never exceptions at the API boundary.
+  </p>
+</div>
+
+<hr>
+
+<p>
+  Next: <a href="synchronization.html">Synchronization</a> — the frame ring, the swapchain,
+  and why the fence is reset where it is.
+</p>
+
+<footer>
+  <code>gpu/</code> · sources in <code>gpu/src/</code>, public headers in
+  <code>gpu/include/gpu/</code>
+</footer>
+
+</main>
+</div>
+
+<script>
+  if (window.hljs) { hljs.highlightAll(); }
+</script>
+</body>
+</html>

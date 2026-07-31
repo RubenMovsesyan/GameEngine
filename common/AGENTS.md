@@ -22,6 +22,5 @@ does not.
   include path, so include as `<devtools/rlog.h>`.
   - `attr.h` — `__DEV_ONLY__` / `__NOT_YET_IMPLEMENTED__` attribute macros.
   - `rlog.h` — logging. Define `RLOG_IMPLEMENTATION` in exactly one translation unit.
-  - `common.h` — fixed-width typedefs, `MIN`/`MAX`. **Not usable as-is:** under C++ it
-    unconditionally includes `<cuda_runtime.h>`, so it needs `-I/opt/cuda/include`.
-    Guard that block upstream before using it here.
+  - `common.h` — fixed-width typedefs (`u32`, `f32`, …), `__MIN__` / `__MAX__` /
+    `__STRINGIFY__`. Its CUDA block is behind `__CUDACC__`, so it costs us nothing.

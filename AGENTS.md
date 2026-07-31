@@ -3,7 +3,7 @@
 A game engine built as independent modules. Each module is a top-level directory that
 compiles to its own static library; `sandbox/` is the executable that exercises them.
 
-Currently: `graphics/` (Vulkan) only.
+Currently: `gpu/` and `graphics/`.
 
 ## Layout
 
@@ -11,8 +11,25 @@ Currently: `graphics/` (Vulkan) only.
 buildcpp/   git submodule, the build system (build.h)
 build.c     the build script, C23
 common/     shared across modules (see common/AGENTS.md)
-graphics/   the graphics engine
+gpu/        Vulkan device, queues, commands, sync, swapchain, buffers
+graphics/   the graphics engine: window (GLFW) and renderer. links gpu
 sandbox/    test executable
+```
+
+`gpu/` is a library of RAII value types, not a framework — no base class to subclass, no
+singleton, no `shared_ptr` graph. `graphics/` drives it and calls into it; `gpu/` never
+calls back. Two rules keep the split real, and a future `physics/` depends on both:
+
+- **`gpu/` never includes GLFW, and never mentions `graphics/`.** The window layer passes
+  it a `std::span<const char* const>` of instance extensions and a bare `vk::SurfaceKHR`.
+- **No virtual functions in either module.** The extension point is that you record
+  whatever commands you want onto a `vk::raii::CommandBuffer&`.
+
+Check both after touching `gpu/`:
+
+```sh
+grep -rn 'GLFW\|glfw\|graphics/' gpu/     # only the comment in gpu/vk.hpp
+nm -uC .build/libgpu.a | grep -i glfw     # empty
 ```
 
 A module is laid out as:
@@ -23,6 +40,8 @@ A module is laid out as:
 ```
 
 ## Building
+
+Needs `vulkan-headers`, `vulkan-validation-layers`, `vulkan-memory-allocator`, `glfw`.
 
 ```sh
 clang -std=c23 build.c -o build   # once, to bootstrap
@@ -52,3 +71,9 @@ globbing.
 - Use `newBuild`, not `newBuildWithCompiler`. The build script rebuilds itself with the
   default compiler, which has to be a C compiler; set `clang++` per step with
   `buildStepSetCompiler`.
+- Compilation flags are per-step, not inherited. `cxxStep()` in `build.c` applies the
+  shared ones so `-DVULKAN_HPP_NO_CONSTRUCTORS` can never differ between steps — it
+  changes `vk::` class definitions, so a mismatch would be an ODR violation.
+- Never call a method on a bare `vk::Device` / `vk::CommandBuffer` / `vk::Queue`. Those
+  route through a second, static dispatcher. `vk::raii::` types carry their own. Bare
+  handles are passed, never called on.

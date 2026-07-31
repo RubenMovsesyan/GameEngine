@@ -1,3 +1,6 @@
 [submodule "buildcpp"]
 	path = buildcpp
 	url = git@github.com:RubenMovsesyan/buildcpp.git
+[submodule "common/devtools"]
+	path = common/devtools
+	url = git@github.com:RubenMovsesyan/devtools.git

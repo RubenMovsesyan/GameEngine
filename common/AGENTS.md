@@ -16,4 +16,12 @@ does not.
 - Our own shared code follows the module layout: `include/` for the public API,
   `src/` for the implementation.
 
-Empty for now — nothing is shared by two modules yet.
+## Contents
+
+- `devtools/` — submodule, header-only C utilities. `common/` is on every module's
+  include path, so include as `<devtools/rlog.h>`.
+  - `attr.h` — `__DEV_ONLY__` / `__NOT_YET_IMPLEMENTED__` attribute macros.
+  - `rlog.h` — logging. Define `RLOG_IMPLEMENTATION` in exactly one translation unit.
+  - `common.h` — fixed-width typedefs, `MIN`/`MAX`. **Not usable as-is:** under C++ it
+    unconditionally includes `<cuda_runtime.h>`, so it needs `-I/opt/cuda/include`.
+    Guard that block upstream before using it here.

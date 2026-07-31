@@ -24,8 +24,7 @@ FrameRing::FrameRing(const Device& device, u32 queue_family, u32 frames_in_fligh
 
 FrameRing::Frame FrameRing::begin() const {
     // Deliberately no resetFences here: submit() does it, so bailing out is safe.
-    while (m_device->waitForFences(*m_fences[m_slot], vk::True, UINT64_MAX) == vk::Result::eTimeout) {
-    }
+    while (m_device->waitForFences(*m_fences[m_slot], vk::True, UINT64_MAX) == vk::Result::eTimeout) {}
     m_cmds[m_slot].reset();
     return {m_cmds[m_slot], *m_semaphores[m_slot], *m_fences[m_slot]};
 }

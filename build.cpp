@@ -6,6 +6,15 @@ int main(int argc, char** argv) {
 	initLog(4096);
 	Build build(BUILD_DIR, "clang++", argc, argv);
 
+	// Shaders -> SPIR-V embedded as C headers (glslc -mfmt=c), so the binary carries its
+	// own bytecode. Runs every build: a handful of tiny files, not worth caching.
+	Command mkdir_shaders({"mkdir", "-p", ".build/shaders"});
+	mkdir_shaders.exec();
+	for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "lighting.vert", "lighting.frag"}) {
+	    Command compile_shader({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name});
+	    compile_shader.exec();
+	}
+
 	BuildGroup& engine = build.addGroup();
 	engine.addCompileFlag("-std=c++23");
 	engine.addLinkFlag("-std=c++23");
@@ -14,6 +23,7 @@ int main(int argc, char** argv) {
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
 	engine.addInclude(Include<Direct>("src"));
+	engine.addInclude(Include<Direct>(".build/shaders"));
 
 	engine.addLink(Link<Dependency>("vulkan"));
 	engine.addLink(Link<Dependency>("pthread"));

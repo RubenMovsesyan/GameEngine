@@ -1,6 +1,48 @@
 #include <graphics/renderer.hpp>
 
+#include <cstddef>
+
 namespace {
+
+constexpr u32 kGBufferVertSpv[] =
+#include "gbuffer.vert.h"
+    ;
+constexpr u32 kGBufferFragSpv[] =
+#include "gbuffer.frag.h"
+    ;
+constexpr u32 kLightingVertSpv[] =
+#include "lighting.vert.h"
+    ;
+constexpr u32 kLightingFragSpv[] =
+#include "lighting.frag.h"
+    ;
+
+// lighting.vert derives a full-screen-covering triangle purely from gl_VertexIndex (0,
+// 1, 2) -- no vertex/index buffer, so this is the entire "mesh" for that pass.
+constexpr u32 kFullscreenTriangleVertexCount = 3;
+
+// mvp = view_projection * model, combined before it gets here -- see gbuffer.vert for
+// why (Vulkan's guaranteed push-constant budget is 128B; all three matrices/vector
+// together don't fit).
+struct GBufferPushConstants {
+    Eigen::Matrix4f mvp;
+    Eigen::Vector4f view_position;
+};
+
+nvrhi::ShaderHandle loadShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const u32* spirv, usize word_count) {
+    nvrhi::ShaderDesc desc{};
+    desc.shaderType = type;
+    return device->createShader(desc, spirv, word_count * sizeof(u32));
+}
+
+nvrhi::RenderState opaqueNoDepth() {
+    nvrhi::RenderState state{};
+    state.rasterState.setCullNone();
+    state.depthStencilState.disableDepthTest();
+    state.depthStencilState.setDepthWriteEnable(false);
+    return state;
+}
+
 nvrhi::TextureHandle createGBufferTexture(const gpu::Device& device, VkExtent2D extent, nvrhi::Format format, nvrhi::ResourceStates initial_state, const char* name) {
     nvrhi::TextureDesc desc{};
     desc.width = extent.width;
@@ -13,6 +55,7 @@ nvrhi::TextureHandle createGBufferTexture(const gpu::Device& device, VkExtent2D 
     desc.debugName = name;
     return device.createTexture(desc);
 }
+
 } // namespace
 
 namespace graphics {
@@ -21,6 +64,66 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
     m_cmd = device.nvrhi()->createCommandList();
     rebuildSwapchainSurfaces();
     rebuildGBuffer();
+
+    nvrhi::IDevice* nvrhi_device = device.nvrhi();
+
+    // Geometry (g_buffer) pass: writes albedo + depth from a Mesh's vertex/index buffers.
+    nvrhi::VertexAttributeDesc mesh_attrs[] = {
+        nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, position)).setElementStride(sizeof(Vertex)),
+        nvrhi::VertexAttributeDesc().setName("COLOR").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, color)).setElementStride(sizeof(Vertex)),
+    };
+
+    nvrhi::ShaderHandle gbuffer_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kGBufferVertSpv, std::size(kGBufferVertSpv));
+    nvrhi::ShaderHandle gbuffer_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kGBufferFragSpv, std::size(kGBufferFragSpv));
+    m_mesh_input_layout = nvrhi_device->createInputLayout(mesh_attrs, static_cast<u32>(std::size(mesh_attrs)), gbuffer_vs);
+
+    nvrhi::FramebufferInfo gbuffer_fb_info =
+        nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::SRGBA8_UNORM).setDepthFormat(nvrhi::Format::D32);
+
+    nvrhi::RenderState gbuffer_state{};
+    // Real mesh data with real winding, unlike the old single hardcoded triangle -- back-face culling is correct here.
+
+    nvrhi::BindingLayoutHandle gbuffer_push_constant_layout = nvrhi_device->createBindingLayout(
+        nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Vertex).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
+    );
+
+    m_gbuffer_pipeline = nvrhi_device->createGraphicsPipeline(
+        nvrhi::GraphicsPipelineDesc()
+            .setInputLayout(m_mesh_input_layout)
+            .setVertexShader(gbuffer_vs)
+            .setPixelShader(gbuffer_fs)
+            .setRenderState(gbuffer_state)
+            .addBindingLayout(gbuffer_push_constant_layout),
+        gbuffer_fb_info
+    );
+    m_gbuffer_push_constant_binding_set = nvrhi_device->createBindingSet(
+        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants))), gbuffer_push_constant_layout
+    );
+
+    // Lighting pass: fullscreen triangle, samples albedo, passes it through for now.
+    nvrhi::ShaderHandle lighting_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kLightingVertSpv, std::size(kLightingVertSpv));
+    nvrhi::ShaderHandle lighting_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kLightingFragSpv, std::size(kLightingFragSpv));
+
+    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it so the
+    // shader's plain `binding = 1` matches (see graphics::Surface-era discovery of this).
+    m_lighting_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
+                                                                        .setVisibility(nvrhi::ShaderType::Pixel)
+                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
+                                                                        .addItem(nvrhi::BindingLayoutItem::Sampler(1))
+                                                                        .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
+
+    nvrhi::FramebufferInfo lighting_fb_info = nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::BGRA8_UNORM);
+
+    m_lighting_pipeline = nvrhi_device->createGraphicsPipeline(
+        nvrhi::GraphicsPipelineDesc()
+            .setVertexShader(lighting_vs)
+            .setPixelShader(lighting_fs)
+            .setRenderState(opaqueNoDepth())
+            .addBindingLayout(m_lighting_binding_layout),
+        lighting_fb_info
+    );
+
+    m_lighting_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
 }
 
 void Renderer::rebuildSwapchainSurfaces() {
@@ -36,6 +139,9 @@ void Renderer::rebuildGBuffer() {
     m_normal = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA32_FLOAT, nvrhi::ResourceStates::ShaderResource, "gbuffer normal");
     m_material = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer material");
     m_depth = createGBufferTexture(*m_device, extent, nvrhi::Format::D32, nvrhi::ResourceStates::DepthWrite, "gbuffer depth");
+
+    m_gbuffer_framebuffer =
+        m_device->nvrhi()->createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(m_albedo).setDepthAttachment(m_depth));
 }
 
 void Renderer::beginFrame() {
@@ -49,6 +155,36 @@ void Renderer::beginFrame() {
     }
 
     m_cmd->open();
+
+    // The G-buffer is never cleared otherwise -- without this, the depth test runs
+    // against whatever garbage was already in that VRAM allocation, which can fail
+    // every fragment and leave albedo untouched (a black screen with no errors to show
+    // for it).
+    m_cmd->clearTextureFloat(m_albedo, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
+    m_cmd->clearDepthStencilTexture(m_depth, nvrhi::AllSubresources, true, 1.0f, false, 0);
+}
+
+void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const Camera& camera) {
+    if (!m_acquired.ok) {
+        return;
+    }
+
+    Eigen::Vector3f eye = camera.position();
+    GBufferPushConstants push{camera.viewProjectionMatrix() * model, Eigen::Vector4f(eye.x(), eye.y(), eye.z(), 1.0f)};
+
+    VkExtent2D extent = m_swapchain->extent();
+
+    nvrhi::GraphicsState state{};
+    state.pipeline = m_gbuffer_pipeline;
+    state.framebuffer = m_gbuffer_framebuffer;
+    state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
+    state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(mesh.vertexBuffer()).setSlot(0).setOffset(0)};
+    state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indexBuffer()).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
+    state.bindings = {m_gbuffer_push_constant_binding_set};
+
+    m_cmd->setGraphicsState(state);
+    m_cmd->setPushConstants(&push, sizeof(push));
+    m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh.indexCount()));
 }
 
 void Renderer::endFrame() {
@@ -57,7 +193,24 @@ void Renderer::endFrame() {
     }
 
     const Surface& target = m_swapchain_surfaces[m_acquired.image_index];
-    m_cmd->clearTextureFloat(target.texture(), nvrhi::AllSubresources, nvrhi::Color(1.0f, 0.0f, 1.0f, 1.0f));
+
+    nvrhi::BindingSetHandle lighting_binding_set = m_device->nvrhi()->createBindingSet(
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_albedo))
+            .addItem(nvrhi::BindingSetItem::Sampler(1, m_lighting_sampler)),
+        m_lighting_binding_layout
+    );
+
+    VkExtent2D extent = m_swapchain->extent();
+
+    nvrhi::GraphicsState state{};
+    state.pipeline = m_lighting_pipeline;
+    state.framebuffer = target.framebuffer();
+    state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
+    state.bindings = {lighting_binding_set};
+
+    m_cmd->setGraphicsState(state);
+    m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
 
     m_cmd->close();
 

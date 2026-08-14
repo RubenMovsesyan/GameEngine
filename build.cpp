@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",
 
-	    "src/main.cpp",
+	    "sandbox/cube_test/main.cpp",
 	};
 
 	std::vector<std::reference_wrapper<Task>> objects;

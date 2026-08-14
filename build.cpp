@@ -12,6 +12,7 @@ int main(int argc, char** argv) {
 
 	engine.addInclude(Include<Direct>("external/NVRHI/include"));
 	engine.addInclude(Include<Direct>("external/devtools"));
+	engine.addInclude(Include<Direct>("external/Eigen"));
 	engine.addInclude(Include<Direct>("src"));
 
 	engine.addLink(Link<Dependency>("vulkan"));
@@ -56,6 +57,7 @@ int main(int argc, char** argv) {
 
 	    "src/graphics/surface.cpp",
 	    "src/graphics/renderer.cpp",
+	    "src/graphics/camera.cpp",
 
 	    "src/app/window.cpp",
 	    "src/app/application.cpp",

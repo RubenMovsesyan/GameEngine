@@ -5,15 +5,29 @@ const std::string BUILD_DIR = ".build";
 int main(int argc, char** argv) {
     Build build(BUILD_DIR, "clang++", argc, argv);
 
+    // Shaders -> SPIR-V embedded as C headers (glslc -mfmt=c), so the binary carries its
+    // own bytecode. Runs every build: a handful of tiny files, not worth caching.
+    Command mkdir_shaders({"mkdir", "-p", ".build/shaders"});
+    mkdir_shaders.exec();
+    for (const std::string& name : {"triangle.vert", "triangle.frag", "quad.vert", "quad.frag"}) {
+        Command compile_shader({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "graphics/shaders/" + name});
+        compile_shader.exec();
+    }
+
     BuildGroup& engine = build.addGroup();
     engine.addCompileFlag("-std=c++23");
     engine.addLinkFlag("-std=c++23");
 
     engine.addInclude(Include<Direct>("external/NVRHI/include"));
     engine.addInclude(Include<Direct>("external"));
+    engine.addInclude(Include<Direct>("gpu/include"));
+    engine.addInclude(Include<Direct>("graphics/include"));
+    engine.addInclude(Include<Direct>("app/include"));
+    engine.addInclude(Include<Direct>(".build/shaders"));
 
     engine.addLink(Link<Dependency>("vulkan"));
     engine.addLink(Link<Dependency>("pthread"));
+    engine.addLink(Link<Dependency>("glfw"));
 
     // NVRHI, built from source (no CMake): common bookkeeping, the validation layer,
     // and the Vulkan backend. D3D11/D3D12 left out — Linux only, no DirectX.
@@ -46,11 +60,25 @@ int main(int argc, char** argv) {
         "external/NVRHI/src/vulkan/vulkan-upload.cpp",
     };
 
+    const std::vector<std::string> engine_sources = {
+        "gpu/src/instance.cpp",
+        "gpu/src/device.cpp",
+        "gpu/src/swapchain.cpp",
+
+        "graphics/src/surface.cpp",
+        "graphics/src/renderer.cpp",
+
+        "app/src/window.cpp",
+        "app/src/main.cpp",
+    };
+
     std::vector<std::reference_wrapper<Task>> objects;
     for (const auto& source : nvrhi_sources) {
         objects.push_back(engine.addTask(Output(Object(source))));
     }
-    objects.push_back(engine.addTask(Output(Object("src/main.cpp"))));
+    for (const auto& source : engine_sources) {
+        objects.push_back(engine.addTask(Output(Object(source))));
+    }
 
     Task& exe = engine.addTask(Output(Binary("game")));
     for (Task& object : objects) {

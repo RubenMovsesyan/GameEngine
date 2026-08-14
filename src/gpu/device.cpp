@@ -16,6 +16,34 @@ namespace gpu {
 
 namespace {
 
+// NVRHI's validation layer crashes (null message callback deref) if it needs to report
+// a problem and nothing was ever given to nvrhi::vulkan::DeviceDesc::errorCB -- route
+// its messages through RLOG instead.
+class RlogMessageCallback : public nvrhi::IMessageCallback {
+    public:
+        void message(nvrhi::MessageSeverity severity, const char* messageText) override {
+            switch (severity) {
+                case nvrhi::MessageSeverity::Info:
+                    RLOG(LL_INFO, "%s", messageText);
+                    break;
+                case nvrhi::MessageSeverity::Warning:
+                    RLOG(LL_WARN, "%s", messageText);
+                    break;
+                case nvrhi::MessageSeverity::Error:
+                    RLOG(LL_ERROR, "%s", messageText);
+                    break;
+                case nvrhi::MessageSeverity::Fatal:
+                    RLOG(LL_FATAL, "%s", messageText);
+                    break;
+            }
+        }
+};
+
+RlogMessageCallback& messageCallback() {
+    static RlogMessageCallback callback;
+    return callback;
+}
+
 struct Candidate {
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     u32 graphics_family = 0;
@@ -149,6 +177,7 @@ Device::Device(const Instance& instance, const DeviceConfig& cfg) {
     VULKAN_HPP_DEFAULT_DISPATCHER.init(instance.handle(), get_instance_proc_addr, m_device, get_device_proc_addr);
 
     nvrhi::vulkan::DeviceDesc desc{};
+    desc.errorCB = &messageCallback();
     desc.instance = instance.handle();
     desc.physicalDevice = m_physical;
     desc.device = m_device;

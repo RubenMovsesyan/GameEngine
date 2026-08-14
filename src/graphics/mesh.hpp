@@ -10,8 +10,8 @@ namespace graphics {
 
 struct Vertex {
     Eigen::Vector3f position;
-    Eigen::Vector3f color;
     Eigen::Vector3f normal;
+    Eigen::Vector2f uv;
 };
 
 // Everything drawable is a mesh: a vertex buffer and an index buffer, both GPU-resident.

@@ -64,7 +64,9 @@ void Swapchain::build(VkExtent2D want) {
     info.imageColorSpace = SWAPCHAIN_COLOR_SPACE;
     info.imageExtent = m_extent;
     info.imageArrayLayers = 1;
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // COLOR_ATTACHMENT for drawing into it, TRANSFER_DST since clearTextureFloat outside
+    // a render pass maps to vkCmdClearColorImage, which requires it.
+    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
     info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;

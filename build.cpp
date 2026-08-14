@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/mesh.cpp",
 
 	    "src/model/model.cpp",
+	    "src/model/gltf_loader.cpp",
 
 	    "src/app/window.cpp",
 	    "src/app/application.cpp",

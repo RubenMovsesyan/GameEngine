@@ -5,8 +5,6 @@
 #include <graphics/surface.hpp>
 #include <gpu/swapchain.hpp>
 
-#include <attr.h>
-
 #include <vector>
 
 namespace graphics {
@@ -22,9 +20,7 @@ class Renderer {
 
         void beginFrame();
 
-        // FIXME: replaced by a renderModel-shaped API once there's a real scene/model
-        // concept -- this exists to prove the geometry pass, nothing more.
-        void renderMesh(const Mesh&, const Eigen::Matrix4f& model, const Camera&) __DEV_ONLY__;
+        void renderMesh(const Mesh&, const Eigen::Matrix4f& model, const Camera&);
 
         void endFrame();
 

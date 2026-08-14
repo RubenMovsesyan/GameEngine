@@ -5,12 +5,12 @@
 #include <graphics/camera.hpp>
 #include <graphics/mesh.hpp>
 #include <graphics/renderer.hpp>
+#include <model/model.hpp>
 
 #include <chrono>
 #include <cmath>
 
-// Hardcoded cube + fixed camera -- renderMesh() is __DEV_ONLY__, so this whole call
-// site is scaffolding until a real scene/model system replaces it.
+// Hardcoded cube + fixed camera, wrapped in a one-part Model.
 void renderLoop(app::Application& app, graphics::Renderer& renderer) {
     RLOG(LL_INFO, "Starting Render Thread");
 
@@ -60,7 +60,8 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer) {
         16, 17, 18, 16, 18, 19, // top
         20, 22, 21, 20, 23, 22, // bottom
     };
-    graphics::Mesh cube = graphics::Mesh::create(app.device(), vertices, indices);
+    model::Model cube_model;
+    cube_model.addPart(graphics::Mesh::create(app.device(), vertices, indices));
 
     VkExtent2D extent = app.swapchain().extent();
     RLOG(LL_DEBUG, "Extent: " + std::to_string(extent.width) + " by " + std::to_string(extent.height));
@@ -68,7 +69,7 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer) {
         1.0472f, static_cast<f32>(extent.width) / static_cast<f32>(extent.height), 0.1f, 100.0f,
         {0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}
     };
-    Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
 
     while (app.running.load()) {
         f32 t = std::chrono::duration<f32>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -80,7 +81,7 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer) {
         camera.setLookAt({0.0f, 0.0f, 0.0f});
 
         renderer.beginFrame();
-        renderer.renderMesh(cube, model, camera);
+        cube_model.render(renderer, world_transform, camera);
         renderer.endFrame();
     }
 }

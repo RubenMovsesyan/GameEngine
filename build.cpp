@@ -72,6 +72,8 @@ int main(int argc, char** argv) {
 	    "src/graphics/camera.cpp",
 	    "src/graphics/mesh.cpp",
 
+	    "src/model/model.cpp",
+
 	    "src/app/window.cpp",
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",

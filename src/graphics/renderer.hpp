@@ -1,25 +1,29 @@
 #pragma once
 
 #include <graphics/surface.hpp>
+#include <gpu/swapchain.hpp>
+
+#include <vector>
 
 namespace graphics {
 
-// Draws into whatever Surface it's given, swapchain- or texture-backed alike. One
-// command list per frame: beginFrame(), any number of draws in dependency order (an
-// offscreen Surface written by one draw and sampled by a later one just works, NVRHI
-// tracks the transition within the command list), endFrame().
+// Self-sufficient enough to drive its own swapchain-present loop -- meant to run
+// entirely off a worker thread, no Window involved past construction. beginFrame()
+// acquires the next swapchain image and opens the command list; endFrame() records the
+// render pipeline, closes, submits, and presents. That's the whole public surface a
+// render loop needs.
 class Renderer {
     public:
-        explicit Renderer(const gpu::Device&);
+        Renderer(const gpu::Device&, gpu::Swapchain&);
 
         void beginFrame();
-        void renderTriangle(const Surface& target);
-        void renderTexturedQuad(const Surface& target, nvrhi::ITexture* source);
-        // wait/signal are the swapchain's acquire/present semaphores, or VK_NULL_HANDLE
-        // for offscreen-only work.
-        void endFrame(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE);
+        void endFrame();
 
     private:
+        void rebuildSwapchainSurfaces();
+        void renderTriangle(const Surface& target);
+        void renderTexturedQuad(const Surface& target, nvrhi::ITexture* source);
+
         const gpu::Device* m_device;
         nvrhi::CommandListHandle m_cmd;
 
@@ -28,6 +32,16 @@ class Renderer {
         nvrhi::GraphicsPipelineHandle m_quad_pipeline;
         nvrhi::BindingLayoutHandle m_quad_binding_layout;
         nvrhi::SamplerHandle m_sampler;
+
+        gpu::Swapchain* m_swapchain;
+        std::vector<Surface> m_swapchain_surfaces;
+        // Proves the Surface primitive: an offscreen render sampled into the main pass
+        // instead of blitted, the same mechanism a portal or mirror would use.
+        Surface m_offscreen;
+
+        // Stashed between beginFrame() and endFrame(). !ok means beginFrame's acquire
+        // failed (swapchain already recreated) -- endFrame is a no-op for that frame.
+        gpu::Swapchain::Acquired m_acquired;
 };
 
 } // namespace graphics

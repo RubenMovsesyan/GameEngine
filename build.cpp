@@ -68,7 +68,10 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderer.cpp",
 
 	    "src/app/window.cpp",
-	    "src/app/main.cpp",
+	    "src/app/application.cpp",
+	    "src/app/cli_parser.cpp",
+
+	    "src/main.cpp",
 	};
 
 	std::vector<std::reference_wrapper<Task>> objects;

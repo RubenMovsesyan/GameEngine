@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",
 
-	    "sandbox/cube_test/main.cpp",
+	    "sandbox/model_test/main.cpp",
 	};
 
 	std::vector<std::reference_wrapper<Task>> objects;
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
 	    objects.push_back(engine.addTask(Output(Object(source))));
 	}
 
-	Task& exe = engine.addTask(Output(Binary("sandbox/cube_test")));
+	Task& exe = engine.addTask(Output(Binary("sandbox/model_test")));
 	for (Task& object : objects) {
 	    exe.depends_on(object);
 	}

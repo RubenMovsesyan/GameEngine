@@ -4,4 +4,4 @@ cd "$(dirname "$0")"
 [ "$1" = clean ] && rm -rf .build
 [ -x ./build ] || clang++ -std=c++23 build.cpp -o build
 ./build -j $(nproc)
-exec .build/bin/sandbox/cube_test
+exec .build/bin/sandbox/model_test

@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 	    objects.push_back(engine.addTask(Output(Object(source))));
 	}
 
-	Task& exe = engine.addTask(Output(Binary("game")));
+	Task& exe = engine.addTask(Output(Binary("sandbox/cube_test")));
 	for (Task& object : objects) {
 	    exe.depends_on(object);
 	}

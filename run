@@ -3,5 +3,5 @@ set -e
 cd "$(dirname "$0")"
 [ "$1" = clean ] && rm -rf .build
 [ -x ./build ] || clang++ -std=c++23 build.cpp -o build
-./build
-exec .build/bin/game
+./build -j $(nproc)
+exec .build/bin/sandbox/cube_test

@@ -254,9 +254,10 @@ static void cxxStep(Build* build) {
 <h2 id="state">Current state</h2>
 
 <p>
-  The engine opens a window and clears it to an animated colour. That is deliberately the
-  whole of it: the milestone was to prove the <code>gpu</code>/<code>graphics</code> seam
-  end to end before any rendering features exist.
+  The engine opens a window and draws one hardcoded triangle over an animated clear
+  colour. The milestone after proving the <code>gpu</code>/<code>graphics</code> seam was
+  proving the pipeline/shader path end to end, still with the least amount of machinery
+  that does that honestly.
 </p>
 
 <p>What is verified today:</p>
@@ -266,13 +267,13 @@ static void cxxStep(Build* build) {
   <li>Clean exit with <strong>zero</strong> object-leak reports at <code>vkDestroyInstance</code>, which is the proof that destruction ordering is right.</li>
   <li>~1800 frames sustained with no validation output, so the frame ring wraps hundreds of times without a semaphore-reuse violation.</li>
   <li>VMA exercised by a real host-visible allocation with write and readback.</li>
+  <li>A dynamic-rendering graphics pipeline draws a shader-hardcoded triangle with interpolated vertex colours — no vertex buffer yet, see <a href="../graphics/docs/index.html#extending">graphics/'s notes</a>.</li>
 </ul>
 
 <p>Deliberately <em>not</em> built yet, and not scaffolded for:</p>
 
 <p>
-  <span class="pill">pipelines</span>
-  <span class="pill">shaders</span>
+  <span class="pill">vertex buffers</span>
   <span class="pill">descriptor sets</span>
   <span class="pill">staging buffers</span>
   <span class="pill">async compute</span>

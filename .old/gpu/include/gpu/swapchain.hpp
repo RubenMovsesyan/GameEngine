@@ -30,6 +30,7 @@ class Swapchain {
         // Per image, not per frame: nothing on the CPU says when a present is done with it.
         vk::Semaphore renderFinished(u32 i) const { return *m_render_finished[i]; }
         vk::Extent2D extent() const { return m_extent; }
+        vk::Format format() const { return m_format; }
 
     private:
         void build(vk::Extent2D want);

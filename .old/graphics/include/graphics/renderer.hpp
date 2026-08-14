@@ -16,6 +16,11 @@ class Renderer {
         gpu::Swapchain m_swapchain;
         gpu::FrameRing m_frames;
         bool m_needs_recreate = false;
+
+        // Hardcoded triangle: no vertex input, no descriptors. Viewport/scissor are
+        // dynamic pipeline state, so this never needs rebuilding on resize.
+        vk::raii::PipelineLayout m_pipeline_layout{nullptr};
+        vk::raii::Pipeline m_pipeline{nullptr};
 };
 
 } // namespace ge::gfx

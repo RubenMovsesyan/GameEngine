@@ -38,7 +38,7 @@
 <p class="lede">
   The renderer, and the only module in the engine that knows a display exists. It owns the
   window, creates the surface, and drives <code>gpu/</code> to produce a frame. Today that
-  frame is a clear — but the structure around it is the real deliverable.
+  frame is a hardcoded triangle — but the structure around it is the real deliverable.
 </p>
 
 <h2 id="seam">The seam with gpu/</h2>
@@ -247,13 +247,16 @@ const vk::RenderingAttachmentInfo color{
     .storeOp     = vk::AttachmentStoreOp::eStore,
     .clearValue  = clear,
 };
-// Nothing is drawn yet: the loadOp is the frame.
 frame.cmd.beginRendering(vk::RenderingInfo{
     .renderArea = {{0, 0}, m_swapchain.extent()},
     .layerCount = 1,
     .colorAttachmentCount = 1,
     .pColorAttachments = &amp;color,
 });
+frame.cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *m_pipeline);
+frame.cmd.setViewport(0, vk::Viewport{0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f});
+frame.cmd.setScissor(0, vk::Rect2D{{0, 0}, extent});
+frame.cmd.draw(3, 1, 0, 0);
 frame.cmd.endRendering();
 
 gpu::imageBarrier(frame.cmd, image,
@@ -269,8 +272,10 @@ frame.cmd.end();</code></pre>
 </p>
 
 <p>
-  Draw commands would go between <code>beginRendering</code> and <code>endRendering</code>.
-  Right now there are none, and the <code>eClear</code> load op is the entire frame.
+  <code>bindPipeline</code>/<code>setViewport</code>/<code>setScissor</code>/<code>draw</code>
+  between <code>beginRendering</code> and <code>endRendering</code> is the entire draw call.
+  Viewport and scissor are dynamic pipeline state (see <a href="#extending">below</a>), so
+  they're set here rather than baked into the pipeline.
 </p>
 
 <h3>4 — submit and present</h3>
@@ -345,18 +350,30 @@ VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ... but VkImage ... is in VK_IMAGE_LAYOUT_COLOR_
   you want onto it between <code>beginRendering</code> and <code>endRendering</code>.
 </p>
 
-<p>Concretely, to draw a triangle from here:</p>
+<p>Concretely, that's how the triangle above got drawn:</p>
 
 <ol>
-  <li>Compile GLSL to SPIR-V in <code>build.c</code> with a <code>glslc</code> prebuild command, embedding the result as a header.</li>
-  <li>Create a <code>vk::raii::Pipeline</code> with <code>vk::PipelineRenderingCreateInfo</code> in its chain — dynamic rendering pipelines declare their attachment formats instead of taking a render pass.</li>
+  <li><code>build.c</code> runs <code>glslc -mfmt=c</code> on <code>graphics/shaders/triangle.{vert,frag}</code> before compiling <code>graphics/</code>, writing bare SPIR-V word arrays to <code>.build/shaders/*.h</code>. <code>renderer.cpp</code> wraps each with its own array declaration and an <code>#include</code>, since <code>-mfmt=c</code> emits only the braced initializer, not a named variable.</li>
+  <li>The vertex shader hardcodes the three positions and colors and indexes them with <code>gl_VertexIndex</code> — no vertex buffer, no vertex input state on the pipeline.</li>
+  <li>The pipeline is built once, in <code>Renderer</code>'s constructor, with <code>vk::PipelineRenderingCreateInfo</code> in its <code>pNext</code> chain instead of a render pass, and <code>eViewport</code>/<code>eScissor</code> as dynamic state — so a resize only rebuilds the swapchain, never the pipeline.</li>
   <li>Between the begin/end pair: <code>frame.cmd.bindPipeline(...)</code>, <code>setViewport</code>, <code>setScissor</code>, <code>draw(3, 1, 0, 0)</code>.</li>
 </ol>
 
 <p>
-  None of that touches <code>gpu/</code>. Pipelines, shaders and descriptor sets are
-  rendering concepts and belong here — putting them in the GPU layer is precisely the mistake
-  described in the <a href="../../docs/index.html#idea">overview</a>.
+  None of that touches <code>gpu/</code>, beyond one new one-line accessor,
+  <code>Swapchain::format()</code> — pipeline creation needs the swapchain's color format
+  for <code>vk::PipelineRenderingCreateInfo</code>, and nothing exposed it before. Pipelines,
+  shaders and descriptor sets are rendering concepts and belong here — putting them in the
+  GPU layer is precisely the mistake described in the
+  <a href="../../docs/index.html#idea">overview</a>.
+</p>
+
+<p>
+  A real mesh would need a <code>gpu::Buffer</code> vertex buffer, a shared <code>Vertex</code>
+  layout, and a staging upload — none of which exist yet (see <a
+  href="../../gpu/docs/index.html#buffer">gpu/'s note on staging</a>). This triangle is
+  deliberately still hardcoded in the shader: it's the smallest thing that exercises the
+  pipeline and shader path, not the start of the mesh system.
 </p>
 
 <div class="note">

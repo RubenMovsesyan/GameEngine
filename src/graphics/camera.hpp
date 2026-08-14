@@ -13,8 +13,12 @@ class Camera {
             const Eigen::Vector3f& target, const Eigen::Vector3f& up
         );
 
-        // World space -> camera space. Not combined with m_projection yet.
+        // World space -> camera space.
         Eigen::Matrix4f transformationMatrix() const;
+
+        // The combined view-projection matrix -- projection * transformationMatrix().
+        Eigen::Matrix4f viewProjectionMatrix() const { return m_projection * transformationMatrix(); }
+        Eigen::Vector3f position() const { return m_position; }
 
     private:
         f32 m_fov_y;

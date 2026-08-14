@@ -167,4 +167,19 @@ Device::~Device() {
     }
 }
 
+nvrhi::BufferHandle Device::createBuffer(const nvrhi::BufferDesc& desc, const void* data, usize data_size) const {
+    nvrhi::BufferHandle buffer = m_nvrhi_device->createBuffer(desc);
+
+    if (data != nullptr) {
+        nvrhi::CommandListHandle cmd = m_nvrhi_device->createCommandList();
+        cmd->open();
+        cmd->writeBuffer(buffer, data, data_size);
+        cmd->close();
+        m_nvrhi_device->executeCommandList(cmd);
+        vkDeviceWaitIdle(m_device);
+    }
+
+    return buffer;
+}
+
 } // namespace gpu

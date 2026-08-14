@@ -33,6 +33,11 @@ class Device {
         VkQueue graphicsQueue() const { return m_graphics_queue; }
         u32 graphicsQueueFamily() const { return m_graphics_family; }
 
+        // Loans out a GPU buffer: allocates it, and if data is given, uploads it right
+        // there (a short-lived command list, submitted and waited on) so the caller gets
+        // back a buffer that's already populated.
+        nvrhi::BufferHandle createBuffer(const nvrhi::BufferDesc& desc, const void* data = nullptr, usize data_size = 0) const;
+
     private:
         VkPhysicalDevice m_physical = VK_NULL_HANDLE;
         u32 m_graphics_family = 0;

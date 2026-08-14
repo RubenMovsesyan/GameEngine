@@ -182,4 +182,8 @@ nvrhi::BufferHandle Device::createBuffer(const nvrhi::BufferDesc& desc, const vo
     return buffer;
 }
 
+nvrhi::TextureHandle Device::createTexture(const nvrhi::TextureDesc& desc) const {
+    return m_nvrhi_device->createTexture(desc);
+}
+
 } // namespace gpu

@@ -38,6 +38,10 @@ class Device {
         // back a buffer that's already populated.
         nvrhi::BufferHandle createBuffer(const nvrhi::BufferDesc& desc, const void* data = nullptr, usize data_size = 0) const;
 
+        // Loans out a GPU texture -- allocation only, nothing to upload (render targets
+        // get their contents from rendering, not from CPU data).
+        nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc& desc) const;
+
     private:
         VkPhysicalDevice m_physical = VK_NULL_HANDLE;
         u32 m_graphics_family = 0;

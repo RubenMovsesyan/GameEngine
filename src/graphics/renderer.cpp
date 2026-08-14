@@ -1,10 +1,26 @@
 #include <graphics/renderer.hpp>
 
+namespace {
+nvrhi::TextureHandle createGBufferTexture(const gpu::Device& device, VkExtent2D extent, nvrhi::Format format, nvrhi::ResourceStates initial_state, const char* name) {
+    nvrhi::TextureDesc desc{};
+    desc.width = extent.width;
+    desc.height = extent.height;
+    desc.format = format;
+    desc.isRenderTarget = true;
+    desc.isShaderResource = true;
+    desc.initialState = initial_state;
+    desc.keepInitialState = true;
+    desc.debugName = name;
+    return device.createTexture(desc);
+}
+} // namespace
+
 namespace graphics {
 
 Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_device(&device), m_swapchain(&swapchain) {
     m_cmd = device.nvrhi()->createCommandList();
     rebuildSwapchainSurfaces();
+    rebuildGBuffer();
 }
 
 void Renderer::rebuildSwapchainSurfaces() {
@@ -14,12 +30,21 @@ void Renderer::rebuildSwapchainSurfaces() {
     }
 }
 
+void Renderer::rebuildGBuffer() {
+    VkExtent2D extent = m_swapchain->extent();
+    m_albedo = createGBufferTexture(*m_device, extent, nvrhi::Format::SRGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer albedo");
+    m_normal = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA32_FLOAT, nvrhi::ResourceStates::ShaderResource, "gbuffer normal");
+    m_material = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer material");
+    m_depth = createGBufferTexture(*m_device, extent, nvrhi::Format::D32, nvrhi::ResourceStates::DepthWrite, "gbuffer depth");
+}
+
 void Renderer::beginFrame() {
     m_acquired = m_swapchain->acquire();
     if (!m_acquired.ok) {
         vkDeviceWaitIdle(m_device->handle());
         m_swapchain->recreate(m_swapchain->extent());
         rebuildSwapchainSurfaces();
+        rebuildGBuffer();
         return;
     }
 
@@ -49,6 +74,7 @@ void Renderer::endFrame() {
         vkDeviceWaitIdle(m_device->handle());
         m_swapchain->recreate(m_swapchain->extent());
         rebuildSwapchainSurfaces();
+        rebuildGBuffer();
     }
 }
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <devtools/common.h>
+#include <common.h>
 
 #include <vulkan/vulkan.h>
 

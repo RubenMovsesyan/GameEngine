@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
 	engine.addLinkFlag("-std=c++23");
 
 	engine.addInclude(Include<Direct>("external/NVRHI/include"));
-	engine.addInclude(Include<Direct>("external"));
+	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("src"));
 	engine.addInclude(Include<Direct>(".build/shaders"));
 

@@ -1,6 +1,6 @@
 #include <app/window.hpp>
 
-#include <devtools/rlog.h>
+#include <rlog.h>
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>

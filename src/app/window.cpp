@@ -14,7 +14,7 @@ std::span<const char* const> requiredInstanceExtensions() {
     return {extensions, count};
 }
 
-Window::Window(int width, int height, const char* title) {
+Window::Window(Application& app, int width, int height, const char* title) : m_app(app) {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     m_window = glfwCreateWindow(width, height, title, nullptr, nullptr);

@@ -7,3 +7,6 @@
 [submodule "external/NVRHI"]
 	path = external/NVRHI
 	url = https://github.com/NVIDIA-RTX/NVRHI.git
+[submodule "external/Eigen"]
+	path = external/Eigen
+	url = https://gitlab.com/libeigen/eigen.git

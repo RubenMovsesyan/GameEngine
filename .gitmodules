@@ -10,3 +10,9 @@
 [submodule "external/Eigen"]
 	path = external/Eigen
 	url = https://gitlab.com/libeigen/eigen.git
+[submodule "external/cgltf"]
+	path = external/cgltf
+	url = https://github.com/jkuhlmann/cgltf.git
+[submodule "external/stb"]
+	path = external/stb
+	url = https://github.com/nothings/stb.git

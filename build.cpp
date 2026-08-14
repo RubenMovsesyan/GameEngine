@@ -22,6 +22,8 @@ int main(int argc, char** argv) {
 	engine.addInclude(Include<Direct>("external/NVRHI/include"));
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
+	engine.addInclude(Include<Direct>("external/cgltf"));
+	engine.addInclude(Include<Direct>("external/stb"));
 	engine.addInclude(Include<Direct>("src"));
 	engine.addInclude(Include<Direct>(".build/shaders"));
 

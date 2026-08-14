@@ -2,19 +2,21 @@
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
+layout(location = 2) in vec3 inNormal;
 
 layout(location = 0) out vec3 vColor;
+layout(location = 1) out vec3 vNormal;
 
-// mvp = view_projection * model, combined on the CPU (see Renderer::renderMesh) --
-// Vulkan only guarantees 128 bytes of push-constant space, and model+view_projection+
-// view_position together (144B) exceeds that, so model gets folded in before it reaches
-// the shader instead of being its own field here.
+// model kept separate from view_projection (not pre-combined) since the normal needs
+// model's rotation, not clip-space projection. Only handles rotation correctly -- a
+// non-uniform model scale would need the inverse-transpose of model instead.
 layout(push_constant) uniform PushConstants {
-    mat4 mvp;
-    vec4 view_position;
+    mat4 model;
+    mat4 view_projection;
 } pc;
 
 void main() {
-    gl_Position = pc.mvp * vec4(inPosition, 1.0);
+    gl_Position = pc.view_projection * pc.model * vec4(inPosition, 1.0);
     vColor = inColor;
+    vNormal = mat3(pc.model) * inNormal;
 }

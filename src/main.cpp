@@ -14,25 +14,49 @@
 void renderLoop(app::Application& app, graphics::Renderer& renderer) {
     RLOG(LL_INFO, "Starting Render Thread");
 
-    // Unit cube, corners only (8 verts) -- winding is CCW per face as seen from outside,
-    // matching this pipeline's default back-face culling.
+    // Unit cube, 4 verts per face (24 total) -- a shared corner can't carry one "correct"
+    // normal for all 3 faces it touches, so each face gets its own copy of its corners
+    // with that face's flat outward normal. Winding is CCW per face as seen from
+    // outside, matching this pipeline's default back-face culling.
     const graphics::Vertex vertices[] = {
-        {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}},  // 0: front bottom left  (red)
-        {{0.5f, -0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},   // 1: front bottom right (green)
-        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},    // 2: front top right    (blue)
-        {{-0.5f, 0.5f, 0.5f}, {1.0f, 1.0f, 0.0f}},   // 3: front top left     (yellow)
-        {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 1.0f}}, // 4: back bottom left   (magenta)
-        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 1.0f}},  // 5: back bottom right  (cyan)
-        {{0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}},   // 6: back top right     (white)
-        {{-0.5f, 0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}},  // 7: back top left      (gray)
+        // front (z+), normal (0,0,1)
+        {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},  // 0 red
+        {{0.5f, -0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},   // 1 green
+        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},    // 2 blue
+        {{-0.5f, 0.5f, 0.5f}, {1.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},   // 3 yellow
+        // back (z-), normal (0,0,-1)
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}}, // 4 magenta
+        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},  // 5 cyan
+        {{0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, -1.0f}},   // 6 white
+        {{-0.5f, 0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, -1.0f}},  // 7 gray
+        // right (x+), normal (1,0,0)
+        {{0.5f, -0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}},  // 8 green
+        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 0.0f}}, // 9 cyan
+        {{0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 0.0f, 0.0f}},  // 10 white
+        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 0.0f}},   // 11 blue
+        // left (x-), normal (-1,0,0)
+        {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},  // 12 red
+        {{-0.5f, 0.5f, 0.5f}, {1.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}},   // 13 yellow
+        {{-0.5f, 0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, {-1.0f, 0.0f, 0.0f}},  // 14 gray
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 1.0f}, {-1.0f, 0.0f, 0.0f}}, // 15 magenta
+        // top (y+), normal (0,1,0)
+        {{-0.5f, 0.5f, 0.5f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},  // 16 yellow
+        {{0.5f, 0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 0.0f}},   // 17 blue
+        {{0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 0.0f}},  // 18 white
+        {{-0.5f, 0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}}, // 19 gray
+        // bottom (y-), normal (0,-1,0)
+        {{-0.5f, -0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}},  // 20 red
+        {{0.5f, -0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, -1.0f, 0.0f}},   // 21 green
+        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 1.0f}, {0.0f, -1.0f, 0.0f}},  // 22 cyan
+        {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 1.0f}, {0.0f, -1.0f, 0.0f}}, // 23 magenta
     };
     const u32 indices[] = {
-        0, 1, 2, 0, 2, 3, // front
-        4, 6, 5, 4, 7, 6, // back
-        1, 5, 6, 1, 6, 2, // right
-        0, 3, 7, 0, 7, 4, // left
-        3, 2, 6, 3, 6, 7, // top
-        0, 5, 1, 0, 4, 5, // bottom
+        0, 1, 2, 0, 2, 3,     // front
+        4, 6, 5, 4, 7, 6,     // back
+        8, 9, 10, 8, 10, 11,  // right
+        12, 13, 14, 12, 14, 15, // left
+        16, 17, 18, 16, 18, 19, // top
+        20, 22, 21, 20, 23, 22, // bottom
     };
     graphics::Mesh cube = graphics::Mesh::create(app.device(), vertices, indices);
 

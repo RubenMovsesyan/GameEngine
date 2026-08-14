@@ -21,11 +21,17 @@ constexpr u32 kLightingFragSpv[] =
 // 1, 2) -- no vertex/index buffer, so this is the entire "mesh" for that pass.
 constexpr u32 kFullscreenTriangleVertexCount = 3;
 
-// mvp = view_projection * model, combined before it gets here -- see gbuffer.vert for
-// why (Vulkan's guaranteed push-constant budget is 128B; all three matrices/vector
-// together don't fit).
+// model kept separate from view_projection -- normals need model's rotation, not a
+// clip-space-projected matrix. view_position isn't needed here; it moved to the
+// lighting pass instead (see LightingPushConstants).
 struct GBufferPushConstants {
-    Eigen::Matrix4f mvp;
+    Eigen::Matrix4f model;
+    Eigen::Matrix4f view_projection;
+};
+
+// Not read by the lighting math yet -- reserved for view-dependent shading (specular)
+// once that exists.
+struct LightingPushConstants {
     Eigen::Vector4f view_position;
 };
 
@@ -71,14 +77,17 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
     nvrhi::VertexAttributeDesc mesh_attrs[] = {
         nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, position)).setElementStride(sizeof(Vertex)),
         nvrhi::VertexAttributeDesc().setName("COLOR").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, color)).setElementStride(sizeof(Vertex)),
+        nvrhi::VertexAttributeDesc().setName("NORMAL").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, normal)).setElementStride(sizeof(Vertex)),
     };
 
     nvrhi::ShaderHandle gbuffer_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kGBufferVertSpv, std::size(kGBufferVertSpv));
     nvrhi::ShaderHandle gbuffer_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kGBufferFragSpv, std::size(kGBufferFragSpv));
     m_mesh_input_layout = nvrhi_device->createInputLayout(mesh_attrs, static_cast<u32>(std::size(mesh_attrs)), gbuffer_vs);
 
-    nvrhi::FramebufferInfo gbuffer_fb_info =
-        nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::SRGBA8_UNORM).setDepthFormat(nvrhi::Format::D32);
+    nvrhi::FramebufferInfo gbuffer_fb_info = nvrhi::FramebufferInfo()
+                                                  .addColorFormat(nvrhi::Format::SRGBA8_UNORM)
+                                                  .addColorFormat(nvrhi::Format::RGBA32_FLOAT)
+                                                  .setDepthFormat(nvrhi::Format::D32);
 
     nvrhi::RenderState gbuffer_state{};
     // Real mesh data with real winding, unlike the old single hardcoded triangle -- back-face culling is correct here.
@@ -100,17 +109,23 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
         nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants))), gbuffer_push_constant_layout
     );
 
-    // Lighting pass: fullscreen triangle, samples albedo, passes it through for now.
+    // Lighting pass: fullscreen triangle, samples albedo+normal, N.L against a
+    // hardcoded light direction.
     nvrhi::ShaderHandle lighting_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kLightingVertSpv, std::size(kLightingVertSpv));
     nvrhi::ShaderHandle lighting_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kLightingFragSpv, std::size(kLightingFragSpv));
 
     // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it so the
-    // shader's plain `binding = 1` matches (see graphics::Surface-era discovery of this).
+    // shader's plain `binding = 2` matches (see graphics::Surface-era discovery of this).
     m_lighting_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
                                                                         .setVisibility(nvrhi::ShaderType::Pixel)
                                                                         .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
-                                                                        .addItem(nvrhi::BindingLayoutItem::Sampler(1))
+                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
+                                                                        .addItem(nvrhi::BindingLayoutItem::Sampler(2))
                                                                         .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
+
+    m_lighting_push_constant_layout = nvrhi_device->createBindingLayout(
+        nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Pixel).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(LightingPushConstants)))
+    );
 
     nvrhi::FramebufferInfo lighting_fb_info = nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::BGRA8_UNORM);
 
@@ -119,11 +134,15 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
             .setVertexShader(lighting_vs)
             .setPixelShader(lighting_fs)
             .setRenderState(opaqueNoDepth())
-            .addBindingLayout(m_lighting_binding_layout),
+            .addBindingLayout(m_lighting_binding_layout)
+            .addBindingLayout(m_lighting_push_constant_layout),
         lighting_fb_info
     );
 
     m_lighting_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
+    m_lighting_push_constant_binding_set = nvrhi_device->createBindingSet(
+        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(LightingPushConstants))), m_lighting_push_constant_layout
+    );
 }
 
 void Renderer::rebuildSwapchainSurfaces() {
@@ -140,8 +159,9 @@ void Renderer::rebuildGBuffer() {
     m_material = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer material");
     m_depth = createGBufferTexture(*m_device, extent, nvrhi::Format::D32, nvrhi::ResourceStates::DepthWrite, "gbuffer depth");
 
-    m_gbuffer_framebuffer =
-        m_device->nvrhi()->createFramebuffer(nvrhi::FramebufferDesc().addColorAttachment(m_albedo).setDepthAttachment(m_depth));
+    m_gbuffer_framebuffer = m_device->nvrhi()->createFramebuffer(
+        nvrhi::FramebufferDesc().addColorAttachment(m_albedo).addColorAttachment(m_normal).setDepthAttachment(m_depth)
+    );
 }
 
 void Renderer::beginFrame() {
@@ -161,6 +181,7 @@ void Renderer::beginFrame() {
     // every fragment and leave albedo untouched (a black screen with no errors to show
     // for it).
     m_cmd->clearTextureFloat(m_albedo, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
+    m_cmd->clearTextureFloat(m_normal, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 0.0f));
     m_cmd->clearDepthStencilTexture(m_depth, nvrhi::AllSubresources, true, 1.0f, false, 0);
 }
 
@@ -169,8 +190,8 @@ void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const 
         return;
     }
 
-    Eigen::Vector3f eye = camera.position();
-    GBufferPushConstants push{camera.viewProjectionMatrix() * model, Eigen::Vector4f(eye.x(), eye.y(), eye.z(), 1.0f)};
+    m_view_position = camera.position();
+    GBufferPushConstants push{model, camera.viewProjectionMatrix()};
 
     VkExtent2D extent = m_swapchain->extent();
 
@@ -197,7 +218,8 @@ void Renderer::endFrame() {
     nvrhi::BindingSetHandle lighting_binding_set = m_device->nvrhi()->createBindingSet(
         nvrhi::BindingSetDesc()
             .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_albedo))
-            .addItem(nvrhi::BindingSetItem::Sampler(1, m_lighting_sampler)),
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_normal))
+            .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler)),
         m_lighting_binding_layout
     );
 
@@ -207,9 +229,11 @@ void Renderer::endFrame() {
     state.pipeline = m_lighting_pipeline;
     state.framebuffer = target.framebuffer();
     state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-    state.bindings = {lighting_binding_set};
+    state.bindings = {lighting_binding_set, m_lighting_push_constant_binding_set};
 
     m_cmd->setGraphicsState(state);
+    LightingPushConstants lighting_push{Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f)};
+    m_cmd->setPushConstants(&lighting_push, sizeof(lighting_push));
     m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
 
     m_cmd->close();

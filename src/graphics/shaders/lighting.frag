@@ -28,7 +28,7 @@ layout(push_constant) uniform PushConstants {
 const float kAmbient = 0.1;
 
 vec3 reconstructWorldPosition(vec2 uv, float depth) {
-    vec4 ndc = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 ndc = vec4(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0); // Y negated -- see docs (NVRHI viewport flip)
     vec4 world = pc.inverse_view_projection * ndc;
     return world.xyz / world.w;
 }

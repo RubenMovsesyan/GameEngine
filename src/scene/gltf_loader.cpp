@@ -1,4 +1,4 @@
-#include <model/gltf_loader.hpp>
+#include <scene/gltf_loader.hpp>
 
 #include <rlog.h>
 
@@ -7,7 +7,7 @@
 
 #include <vector>
 
-namespace model {
+namespace scene {
 
 namespace {
 
@@ -73,12 +73,11 @@ graphics::LightType toLightType(cgltf_light_type type) {
     __builtin_unreachable(); // RLOG(LL_FATAL, ...) exits the process
 }
 
-void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Model& model) {
-    // Rotation applied to local -Z, skipping inverse-transpose -- same simplification
-    // already used for mesh normals in gbuffer.vert, kept consistent.
+void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Scene& scene) {
+    // Rotation applied to local -Z, skipping inverse-transpose (matches gbuffer.vert's normal handling).
     const Eigen::Vector3f direction = (transform.block<3, 3>(0, 0) * Eigen::Vector3f(0.0f, 0.0f, -1.0f)).normalized();
 
-    model.addLight(graphics::Light{
+    scene.addLight(graphics::Light{
         .type = toLightType(light.type),
         .color = Eigen::Vector3f(light.color[0], light.color[1], light.color[2]),
         .intensity = light.intensity,
@@ -90,7 +89,7 @@ void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Mod
     });
 }
 
-void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Matrix4f& parent_transform, Model& model) {
+void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Matrix4f& parent_transform, Model& model, Scene& scene) {
     float local[16];
     cgltf_node_transform_local(&node, local);
     const Eigen::Matrix4f transform = parent_transform * Eigen::Map<const Eigen::Matrix4f>(local);
@@ -101,16 +100,16 @@ void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Ma
         }
     }
     if (node.light != nullptr) {
-        appendLight(*node.light, transform, model);
+        appendLight(*node.light, transform, scene);
     }
     for (cgltf_size i = 0; i < node.children_count; i++) {
-        walkNode(device, *node.children[i], transform, model);
+        walkNode(device, *node.children[i], transform, model, scene);
     }
 }
 
 } // namespace
 
-Model loadGltf(const gpu::Device& device, const std::filesystem::path& path) {
+Scene loadGltf(const gpu::Device& device, const std::filesystem::path& path) {
     cgltf_options options{};
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
@@ -125,13 +124,15 @@ Model loadGltf(const gpu::Device& device, const std::filesystem::path& path) {
         RLOG(LL_FATAL, "gltf: no default scene in %s", path.c_str());
     }
 
+    Scene scene;
     Model model;
     for (cgltf_size i = 0; i < data->scene->nodes_count; i++) {
-        walkNode(device, *data->scene->nodes[i], Eigen::Matrix4f::Identity(), model);
+        walkNode(device, *data->scene->nodes[i], Eigen::Matrix4f::Identity(), model, scene);
     }
 
     cgltf_free(data);
-    return model;
+    scene.addModel(std::move(model));
+    return scene;
 }
 
-} // namespace model
+} // namespace scene

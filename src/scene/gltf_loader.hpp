@@ -1,12 +1,12 @@
 #pragma once
 
 #include <gpu/device.hpp>
-#include <model/model.hpp>
+#include <scene/scene.hpp>
 
 #include <filesystem>
 
-namespace model {
+namespace scene {
 
-Model loadGltf(const gpu::Device&, const std::filesystem::path&);
+Scene loadGltf(const gpu::Device&, const std::filesystem::path&);
 
-} // namespace model
+} // namespace scene

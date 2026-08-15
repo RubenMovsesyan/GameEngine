@@ -1,6 +1,6 @@
-#include <model/model.hpp>
+#include <scene/model.hpp>
 
-namespace model {
+namespace scene {
 
 void Model::addPart(graphics::Mesh mesh, Eigen::Matrix4f transform) {
     m_parts.push_back(ModelPart{std::move(mesh), std::move(transform)});
@@ -12,8 +12,4 @@ void Model::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_tr
     }
 }
 
-void Model::addLight(graphics::Light light) {
-    m_lights.push_back(std::move(light));
-}
-
-} // namespace model
+} // namespace scene

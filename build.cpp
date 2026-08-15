@@ -6,13 +6,10 @@ int main(int argc, char** argv) {
 	initLog(4096);
 	Build build(BUILD_DIR, "clang++", argc, argv);
 
-	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
+	// mkdir has no staleness of its own to track -- idempotent, just needs to run before
+	// any shader Task below.
 	Command mkdir_shaders({"mkdir", "-p", ".build/shaders"});
 	mkdir_shaders.exec();
-	for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
-	    Command compile_shader({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name});
-	    compile_shader.exec();
-	}
 
 	BuildGroup& engine = build.addGroup();
 	engine.addCompileFlag("-std=c++23");
@@ -29,6 +26,15 @@ int main(int argc, char** argv) {
 	engine.addLink(Link<Dependency>("vulkan"));
 	engine.addLink(Link<Dependency>("pthread"));
 	engine.addLink(Link<Dependency>("glfw"));
+
+	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
+	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
+	// headers below get tracked as depending on them and rebuild when a shader changes.
+	std::unordered_map<std::string, std::reference_wrapper<Task>> shader_tasks;
+	for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
+	    Task& task = engine.addTask(Output(Command({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name})));
+	    shader_tasks.emplace(name, task);
+	}
 
 	// NVRHI, built from source: common bookkeeping, validation layer, Vulkan backend.
 	const std::vector<std::string> nvrhi_sources = {
@@ -80,6 +86,7 @@ int main(int argc, char** argv) {
 	    "src/app/window.cpp",
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",
+	    "src/app/input_state.cpp",
 
 	    "sandbox/model_test/main.cpp",
 	};
@@ -89,7 +96,15 @@ int main(int argc, char** argv) {
 	    objects.push_back(engine.addTask(Output(Object(source))));
 	}
 	for (const auto& source : engine_sources) {
-	    objects.push_back(engine.addTask(Output(Object(source))));
+	    Task& task = engine.addTask(Output(Object(source)));
+	    if (source == "src/graphics/renderer.cpp") {
+	        for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
+	            task.depends_on(shader_tasks.at(name));
+	        }
+	    } else if (source == "src/graphics/post_process_chain.cpp") {
+	        task.depends_on(shader_tasks.at("fullscreen_triangle.vert"));
+	    }
+	    objects.push_back(task);
 	}
 
 	Task& exe = engine.addTask(Output(Binary("sandbox/model_test")));

@@ -214,7 +214,7 @@ void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const 
     }
 
     m_view_position = camera.position();
-    m_inverse_view_projection = camera.viewProjectionMatrix().inverse();
+    m_inverse_view_projection = camera.inverseViewProjectionMatrix();
     GBufferPushConstants push{model, camera.viewProjectionMatrix()};
 
     VkExtent2D extent = m_swapchain->extent();

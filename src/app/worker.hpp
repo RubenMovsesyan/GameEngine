@@ -9,8 +9,7 @@ namespace app {
 
 class Application;
 
-// Type-erased handle so Application can hold workers with different UserData types in
-// one vector.
+// Type-erased so Application can hold workers with different UserData types in one vector.
 class WorkerBase {
     public:
         virtual ~WorkerBase() = default;
@@ -19,9 +18,7 @@ class WorkerBase {
         virtual void join() = 0;
 };
 
-// Owns the thread it runs on. The constructor only stores what it needs to run --
-// Application decides when to actually call run(), so a batch of workers can be
-// registered before any of them start.
+// Owns the thread it runs on; Application decides when run() is actually called.
 template <typename UserData>
 class Worker : public WorkerBase {
     public:
@@ -44,10 +41,7 @@ class Worker : public WorkerBase {
 
 namespace detail {
 
-// Extracts the UserData type from a work callable's second parameter -- so
-// Application::addWorker can infer Worker<UserData> instead of spelling it out.
-// Recurses through F::operator() for lambdas/functors; the two specializations below
-// stop the recursion for plain function pointers and (non-)const member functions.
+// Extracts UserData from a work callable's second parameter.
 template <typename F>
 struct WorkerCallableTraits : WorkerCallableTraits<decltype(&std::decay_t<F>::operator())> {};
 

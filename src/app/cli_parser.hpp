@@ -8,9 +8,6 @@
 #include <unordered_map>
 #include <variant>
 
-// Mirrors buildcpp's defineArg<T>/parseArgs/arg<T> (buildcpp/build.hpp) — same
-// type-erased-variant dispatch by category, plus `bool` as a "nothing" category for
-// presence-only flags (e.g. --verbose) that buildcpp's own version doesn't have.
 namespace app {
 
 template <typename T>
@@ -25,8 +22,7 @@ class CliParser {
 public:
     CliParser(int argc, char** argv) : argc_(argc), argv_(argv) {}
 
-    // T's active variant alternative is what parse() dispatches a --name's value
-    // into. T = bool means --name takes no value; presence alone sets it true.
+    // T = bool means --name takes no value; presence alone sets it true.
     template <CliArgValue T>
     void defineArg(const std::string& name) {
         arg_defs_[name] = T{};

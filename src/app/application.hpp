@@ -12,10 +12,7 @@
 
 namespace app {
 
-// Owns the window, the GPU device and swapchain, and the workers. Window handles
-// strictly window concerns and hands events back here. Rendering lives entirely off
-// this class -- graphics::Renderer owns the swapchain-present loop itself, run from a
-// worker (see main.cpp).
+// Owns the window, the GPU device and swapchain, and the workers.
 class Application {
     public:
         Application();
@@ -43,9 +40,7 @@ class Application {
         }
 
     private:
-        // Owns the VkSurfaceKHR: destructor order is declaration order reversed, and
-        // this must outlive the swapchain built from it but not outlive the instance
-        // it was created from -- see the member declaration order below.
+        // Must outlive the swapchain but not the instance -- see member declaration order below.
         class OwnedSurface {
             public:
                 OwnedSurface(VkInstance instance, VkSurfaceKHR surface) : m_instance(instance), m_surface(surface) {}

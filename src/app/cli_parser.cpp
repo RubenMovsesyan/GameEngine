@@ -4,8 +4,7 @@
 
 namespace app {
 
-// Unknown flags and unparseable values are fatal — a bad CLI argument shouldn't be
-// silently ignored.
+// Unknown flags and unparseable values are fatal.
 void CliParser::parse() {
     for (int i = 1; i < argc_; ++i) {
         std::string token = argv_[i];

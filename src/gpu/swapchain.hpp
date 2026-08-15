@@ -49,9 +49,7 @@ class Swapchain {
         VkFormat m_format = VK_FORMAT_UNDEFINED;
         VkExtent2D m_extent{};
 
-        // image_available is a ring keyed by frame, not image: acquire() doesn't know
-        // which image it'll get until it returns. render_finished is keyed by image
-        // index, since that's what present() waits on for that specific image.
+        // image_available is keyed by frame (image unknown until acquire() returns); render_finished by image index.
         std::vector<VkSemaphore> m_image_available{};
         std::vector<VkSemaphore> m_render_finished{};
         u32 m_frame = 0;

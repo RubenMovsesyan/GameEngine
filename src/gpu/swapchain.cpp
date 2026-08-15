@@ -64,8 +64,7 @@ void Swapchain::build(VkExtent2D want) {
     info.imageColorSpace = SWAPCHAIN_COLOR_SPACE;
     info.imageExtent = m_extent;
     info.imageArrayLayers = 1;
-    // COLOR_ATTACHMENT for drawing into it, TRANSFER_DST since clearTextureFloat outside
-    // a render pass maps to vkCmdClearColorImage, which requires it.
+    // TRANSFER_DST needed: clearTextureFloat outside a render pass uses vkCmdClearColorImage.
     info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     info.preTransform = caps.currentTransform;
@@ -100,8 +99,7 @@ void Swapchain::build(VkExtent2D want) {
         m_textures.push_back(m_device->nvrhi()->createHandleForNativeTexture(nvrhi::ObjectTypes::VK_Image, nvrhi::Object(image), desc));
     }
 
-    // Image count can change across a recreate (rare, but possible), so rebuild the
-    // semaphore pools to match rather than assuming the old sizing still holds.
+    // Image count can change across a recreate, so semaphore pools get rebuilt too.
     destroySemaphores();
     m_frame = 0;
     VkSemaphoreCreateInfo semaphore_info{};

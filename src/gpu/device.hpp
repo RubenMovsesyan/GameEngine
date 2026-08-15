@@ -25,21 +25,15 @@ class Device {
         Device& operator=(const Device&) = delete;
 
         nvrhi::IDevice* nvrhi() const { return m_nvrhi_device; }
-        // The VK-specific interface, unwrapped by the validation layer -- needed to
-        // stage the swapchain's binary acquire/present semaphores onto a submission.
+        // VK-specific interface, unwrapped by the validation layer.
         nvrhi::vulkan::IDevice* vulkanDevice() const { return m_raw_device; }
         VkPhysicalDevice physical() const { return m_physical; }
         VkDevice handle() const { return m_device; }
         VkQueue graphicsQueue() const { return m_graphics_queue; }
         u32 graphicsQueueFamily() const { return m_graphics_family; }
 
-        // Loans out a GPU buffer: allocates it, and if data is given, uploads it right
-        // there (a short-lived command list, submitted and waited on) so the caller gets
-        // back a buffer that's already populated.
+        // If data is given, uploads it synchronously before returning.
         nvrhi::BufferHandle createBuffer(const nvrhi::BufferDesc& desc, const void* data = nullptr, usize data_size = 0) const;
-
-        // Loans out a GPU texture -- allocation only, nothing to upload (render targets
-        // get their contents from rendering, not from CPU data).
         nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc& desc) const;
 
     private:

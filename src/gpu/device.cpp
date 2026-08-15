@@ -16,9 +16,7 @@ namespace gpu {
 
 namespace {
 
-// NVRHI's validation layer crashes (null message callback deref) if it needs to report
-// a problem and nothing was ever given to nvrhi::vulkan::DeviceDesc::errorCB -- route
-// its messages through RLOG instead.
+// Required: NVRHI's validation layer crashes without an errorCB set.
 class RlogMessageCallback : public nvrhi::IMessageCallback {
     public:
         void message(nvrhi::MessageSeverity severity, const char* messageText) override {
@@ -133,8 +131,7 @@ VkDevice createLogicalDevice(VkPhysicalDevice physical, u32 graphics_family, boo
     queue_info.queueCount = 1;
     queue_info.pQueuePriorities = &priority;
 
-    // NVRHI requires all three: timeline semaphores for queue tracking, dynamic
-    // rendering and synchronization2 for its command recording and barrier paths.
+    // NVRHI requires timeline semaphores, dynamic rendering, and synchronization2.
     VkPhysicalDeviceVulkan13Features features_1_3{};
     features_1_3.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     features_1_3.dynamicRendering = VK_TRUE;

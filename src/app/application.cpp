@@ -7,7 +7,7 @@ Application::OwnedSurface::~OwnedSurface() {
 }
 
 Application::Application()
-    : m_window(*this, 1280, 720, "GameEngine"),
+    : m_window(*this, m_input, 1280, 720, "GameEngine"),
       m_instance(gpu::InstanceConfig{.required_extensions = requiredInstanceExtensions()}),
       m_surface(m_instance.handle(), m_window.createSurface(m_instance)),
       m_device(m_instance, gpu::DeviceConfig{.present_surface = m_surface}),

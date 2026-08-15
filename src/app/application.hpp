@@ -1,5 +1,6 @@
 #pragma once
 
+#include <app/input_state.hpp>
 #include <app/window.hpp>
 #include <app/worker.hpp>
 #include <gpu/device.hpp>
@@ -29,6 +30,9 @@ class Application {
 
         gpu::Device& device() { return m_device; }
         gpu::Swapchain& swapchain() { return m_swapchain; }
+        InputState& input() { return m_input; }
+        bool isCursorCaptured() const { return m_window.isCursorCaptured(); }
+        void toggleCursorCapture() { m_window.toggleCursorCapture(); }
 
         // UserData is inferred from work's second parameter; args construct it.
         template <typename F, typename... Args>
@@ -63,6 +67,7 @@ class Application {
         OwnedSurface m_surface;
         gpu::Device m_device;
         gpu::Swapchain m_swapchain;
+        InputState m_input;
 
         std::vector<std::unique_ptr<WorkerBase>> m_workers;
 };

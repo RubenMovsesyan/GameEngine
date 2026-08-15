@@ -8,11 +8,15 @@
 #include <graphics/renderer.hpp>
 #include <scene/gltf_loader.hpp>
 
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 
-// Loads a glTF/glb model given at construction and orbits a fixed camera around it.
+// Loads a glTF/glb model given at construction; WASD + Space/Ctrl fly the camera.
 void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::filesystem::path& model_path) {
     RLOG(LL_INFO, "Starting Render Thread");
 
@@ -30,18 +34,66 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
     RLOG(LL_DEBUG, "Extent: " + std::to_string(extent.width) + " by " + std::to_string(extent.height));
     graphics::Camera camera{
         1.0472f, static_cast<f32>(extent.width) / static_cast<f32>(extent.height), 0.1f, 100.0f,
-        {0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}
+        {0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}
     };
     Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
 
-    while (app.running.load()) {
-        f32 t = std::chrono::duration<f32>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const Eigen::Vector3f world_up{0.0f, 1.0f, 0.0f};
+    constexpr f32 kMoveSpeed = 5.0f; // units/sec
+    constexpr f32 kLookSensitivity = 0.15f; // radians per pixel of mouse delta, per second
+    constexpr f32 kPitchLimit = 1.5533f; // ~89 degrees; avoids forward/world_up going parallel
 
-        constexpr f32 kOrbitRadius = 5.0f;
-        Eigen::Vector3f* position = camera.mutablePosition();
-        position->x() = kOrbitRadius * std::cos(t);
-        position->z() = kOrbitRadius * std::sin(t);
-        camera.setLookAt({0.0f, 0.0f, 0.0f});
+    // yaw=0, pitch=0 matches the camera's initial direction (0,0,-1) below, so
+    // mouse-look starts from exactly where the camera is already pointed.
+    f32 yaw = 0.0f;
+    f32 pitch = 0.0f;
+
+    auto last_time = std::chrono::steady_clock::now();
+
+    while (app.running.load()) {
+        auto now = std::chrono::steady_clock::now();
+        f32 dt = std::chrono::duration<f32>(now - last_time).count();
+        last_time = now;
+
+        app.input().beginFrame();
+
+        if (app.input().isKeyPressed(GLFW_KEY_ESCAPE)) {
+            app.toggleCursorCapture();
+        }
+
+        Eigen::Vector3f forward = camera.direction().normalized();
+        Eigen::Vector3f right = forward.cross(world_up).normalized();
+
+        if (app.input().isKeyDown(GLFW_KEY_W)) {
+            *camera.mutablePosition() += forward * kMoveSpeed * dt;
+        }
+        if (app.input().isKeyDown(GLFW_KEY_S)) {
+            *camera.mutablePosition() -= forward * kMoveSpeed * dt;
+        }
+        if (app.input().isKeyDown(GLFW_KEY_D)) {
+            *camera.mutablePosition() += right * kMoveSpeed * dt;
+        }
+        if (app.input().isKeyDown(GLFW_KEY_A)) {
+            *camera.mutablePosition() -= right * kMoveSpeed * dt;
+        }
+        if (app.input().isKeyDown(GLFW_KEY_SPACE)) {
+            *camera.mutablePosition() += world_up * kMoveSpeed * dt;
+        }
+        if (app.input().isKeyDown(GLFW_KEY_LEFT_CONTROL)) {
+            *camera.mutablePosition() -= world_up * kMoveSpeed * dt;
+        }
+
+        Eigen::Vector2f mouse_delta = app.input().mouseDelta();
+        if (app.isCursorCaptured() && (mouse_delta.x() != 0.0f || mouse_delta.y() != 0.0f)) {
+            yaw += mouse_delta.x() * kLookSensitivity * dt;
+            pitch = std::clamp(pitch - mouse_delta.y() * kLookSensitivity * dt, -kPitchLimit, kPitchLimit);
+
+            *camera.mutableDirection() = Eigen::Vector3f{
+                std::cos(pitch) * std::sin(yaw),
+                std::sin(pitch),
+                -std::cos(pitch) * std::cos(yaw),
+            };
+        }
 
         renderer.beginFrame();
         renderer.setLights(light_manager);

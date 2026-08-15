@@ -1,6 +1,7 @@
 #pragma once
 
 #include <graphics/camera.hpp>
+#include <graphics/light.hpp>
 #include <graphics/mesh.hpp>
 #include <graphics/renderer.hpp>
 
@@ -23,8 +24,12 @@ class Model {
         void addPart(graphics::Mesh mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity());
         void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&) const;
 
+        void addLight(graphics::Light light);
+        const std::vector<graphics::Light>& lights() const { return m_lights; }
+
     private:
         std::vector<ModelPart> m_parts;
+        std::vector<graphics::Light> m_lights;
 };
 
 } // namespace model

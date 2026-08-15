@@ -1,0 +1,32 @@
+#pragma once
+
+#include <common.h>
+
+#include <Eigen/Dense>
+
+namespace graphics {
+
+enum class LightType {
+    Directional,
+    Point,
+    Spot,
+};
+
+// Plain data -- KHR_lights_punctual's fields plus the node's world position/direction.
+// Which fields are meaningful depends on type: Directional uses direction only, Point
+// uses position + range, Spot uses all of position/direction/range/cone angles.
+class Light {
+    public:
+        LightType type;
+        Eigen::Vector3f color;      // linear RGB
+        f32 intensity;              // lux (Directional) or candela (Point/Spot) -- raw
+                                     // glTF units, unnormalized; the lighting pass decides
+                                     // how to map this to shader brightness later
+        Eigen::Vector3f position;   // world space; meaningful for Point/Spot
+        Eigen::Vector3f direction;  // world space, normalized; meaningful for Directional/Spot
+        f32 range;                 // meters; 0 means infinite range per glTF spec
+        f32 spot_inner_cone_angle; // radians; Spot only
+        f32 spot_outer_cone_angle; // radians; Spot only
+};
+
+} // namespace graphics

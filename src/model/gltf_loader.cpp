@@ -59,6 +59,37 @@ void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive
     model.addPart(graphics::Mesh::create(device, vertices, indices), transform);
 }
 
+graphics::LightType toLightType(cgltf_light_type type) {
+    switch (type) {
+        case cgltf_light_type_directional:
+            return graphics::LightType::Directional;
+        case cgltf_light_type_point:
+            return graphics::LightType::Point;
+        case cgltf_light_type_spot:
+            return graphics::LightType::Spot;
+        default:
+            RLOG(LL_FATAL, "gltf: unsupported light type");
+    }
+    __builtin_unreachable(); // RLOG(LL_FATAL, ...) exits the process
+}
+
+void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Model& model) {
+    // Rotation applied to local -Z, skipping inverse-transpose -- same simplification
+    // already used for mesh normals in gbuffer.vert, kept consistent.
+    const Eigen::Vector3f direction = (transform.block<3, 3>(0, 0) * Eigen::Vector3f(0.0f, 0.0f, -1.0f)).normalized();
+
+    model.addLight(graphics::Light{
+        .type = toLightType(light.type),
+        .color = Eigen::Vector3f(light.color[0], light.color[1], light.color[2]),
+        .intensity = light.intensity,
+        .position = transform.block<3, 1>(0, 3),
+        .direction = direction,
+        .range = light.range,
+        .spot_inner_cone_angle = light.spot_inner_cone_angle,
+        .spot_outer_cone_angle = light.spot_outer_cone_angle,
+    });
+}
+
 void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Matrix4f& parent_transform, Model& model) {
     float local[16];
     cgltf_node_transform_local(&node, local);
@@ -68,6 +99,9 @@ void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Ma
         for (cgltf_size i = 0; i < node.mesh->primitives_count; i++) {
             appendPrimitive(device, node.mesh->primitives[i], transform, model);
         }
+    }
+    if (node.light != nullptr) {
+        appendLight(*node.light, transform, model);
     }
     for (cgltf_size i = 0; i < node.children_count; i++) {
         walkNode(device, *node.children[i], transform, model);

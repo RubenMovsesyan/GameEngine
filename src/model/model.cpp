@@ -12,4 +12,8 @@ void Model::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_tr
     }
 }
 
+void Model::addLight(graphics::Light light) {
+    m_lights.push_back(std::move(light));
+}
+
 } // namespace model

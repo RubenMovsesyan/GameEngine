@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>app::Window — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="application.html">Application</a>
+  <a href="cli_parser.html">CliParser</a>
+  <a class="here" href="window.html">Window</a>
+  <a href="worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>app::Window</code></h1>
+<p class="lede">Strictly the window: GLFW, the surface, input polling. Nothing else in the engine touches GLFW directly.</p>
+
+<h2>Role</h2>
+<p>
+  Wraps a <code>GLFWwindow*</code> and creates the <code>VkSurfaceKHR</code> from it.
+  Holds a reference back to its owning <code>Application</code> so future callbacks
+  (resize, input) can reach into the application directly rather than routing through
+  free functions.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Instance</code> (to create a surface against) and GLFW. Owned by
+  <code>app::Application</code>, constructed first in its initializer list.
+</p>
+
+<h2>Public API</h2>
+<pre><code>std::span&lt;const char* const&gt; requiredInstanceExtensions();  // free function, calls glfwInit()
+
+class Window {
+    Window(Application&amp; app, int width, int height, const char* title);
+
+    Application&amp; application() const;
+    VkSurfaceKHR createSurface(const gpu::Instance&amp;) const;
+
+    bool shouldClose() const;
+    VkExtent2D framebufferExtent() const;
+    static void poll();
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><code>requiredInstanceExtensions()</code> is what feeds <code>gpu::InstanceConfig::required_extensions</code> — the one place GLFW's needs cross into <code>gpu/</code>, and it crosses as a plain <code>std::span</code>, not a GLFW type.</li>
+  <li>Move/copy deleted, same as every other owning-a-native-handle class in this engine.</li>
+</ul>
+
+<footer>Source: <code>src/app/window.hpp</code>, <code>src/app/window.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Mesh — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a class="here" href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Mesh</code></h1>
+<p class="lede">A GPU-resident vertex buffer + index buffer. The smallest drawable unit in the engine.</p>
+
+<h2>Role</h2>
+<p>
+  Everything drawable is a <code>Mesh</code> — one vertex buffer, one index buffer, both
+  allocated and uploaded via <code>gpu::Device::createBuffer</code>. No material, no
+  transform of its own (that's <code>scene::ModelPart</code>'s job).
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code>. Built by <code>scene::loadGltf</code> (one per
+  glTF primitive) and drawn by <code>graphics::Renderer::renderMesh()</code>.
+</p>
+
+<h2>Public API</h2>
+<pre><code>struct Vertex {
+    Eigen::Vector3f position;
+    Eigen::Vector3f normal;
+    Eigen::Vector2f uv;
+};
+
+class Mesh {
+    static Mesh create(const gpu::Device&, std::span&lt;const Vertex&gt; vertices, std::span&lt;const u32&gt; indices);
+
+    nvrhi::IBuffer* vertexBuffer() const;
+    nvrhi::IBuffer* indexBuffer() const;
+    u32 indexCount() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>Private constructor + static factory — matches every GPU-resource class in this engine (<code>Surface</code> does the same); protects the invariant that a <code>Mesh</code> always has real, uploaded buffers.</li>
+  <li><code>Vertex</code> matches glTF's <code>POSITION</code>/<code>NORMAL</code>/<code>TEXCOORD_0</code> attribute set directly — no per-vertex color, since albedo comes from textures in this pipeline's model (once a material system exists), not vertex color.</li>
+  <li>Indices are always <code>u32</code> — <code>scene::loadGltf</code> widens whatever width the source glTF accessor uses (u8/u16/u32) on load, so <code>Mesh</code>/<code>Renderer</code> never need to handle a variable index format.</li>
+</ul>
+
+<footer>Source: <code>src/graphics/mesh.hpp</code>, <code>src/graphics/mesh.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::LightManager — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a class="here" href="light_manager.html">LightManager</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::LightManager</code></h1>
+<p class="lede">Turns a set of Lights into one GPU-readable structured buffer, built explicitly rather than lazily.</p>
+
+<h2>Role</h2>
+<p>
+  Collects non-owning pointers to <code>Light</code>s via <code>add()</code>, then
+  <code>build()</code> packs all of them into a single structured buffer
+  (<code>StructuredBuffer_SRV</code>-shaped) and uploads it once. <code>buffer()</code>
+  and <code>count()</code> are what <code>Renderer::setLights()</code> reads each frame.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code> (for the upload) and <code>graphics::Light</code>.
+  <code>Renderer::setLights(const LightManager&amp;)</code> is the only consumer.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class LightManager {
+    explicit LightManager(const gpu::Device&);
+
+    void add(const Light&);       // non-owning: caller keeps the Light alive
+    void build();                 // uploads everything added so far
+    nvrhi::IBuffer* buffer() const;
+    u32 count() const;
+};</code></pre>
+
+<h2>Why <code>build()</code> is explicit, not lazy</h2>
+<p>
+  The first version of this class built its GPU buffer lazily, the first time
+  <code>buffer()</code> was called after a change. That broke in practice:
+  <code>gpu::Device::createBuffer</code> uploads data by opening its own short-lived
+  immediate command list — safe when called before the render loop starts (as
+  <code>Mesh::create</code> does), but <code>Renderer::setLights()</code> is called
+  <em>between</em> <code>beginFrame()</code> and <code>endFrame()</code>, i.e. while
+  <code>Renderer</code>'s own command list is already open. The first frame a real
+  light existed, the lazy build tried to open a second immediate command list mid-frame
+  and NVRHI's validation layer rejected it ("two or more immediate command lists cannot
+  be open at the same time"), then cascaded into three more errors from the never-opened
+  command list. Explicit <code>build()</code>, called once after all <code>add()</code>s
+  and safely outside any render-pass command list, sidesteps this entirely.
+</p>
+
+<h2>GPU layout</h2>
+<p>
+  The private <code>GpuLight</code> struct packs every field into four <code>vec4</code>s
+  — std430-safe by construction (each member naturally 16-byte aligned), no manual
+  padding math. <code>LightType</code> rides in as a plain float in the last component of
+  one of them, since everything else in the struct is already a <code>vec4</code>.
+</p>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><code>buffer()</code> returns <code>nullptr</code> if nothing was ever added — <code>Renderer</code> has its own placeholder buffer for that case (a <code>StructuredBuffer_SRV</code> binding can't take a null handle).</li>
+  <li>No <code>remove()</code> — not needed yet; add-only.</li>
+</ul>
+
+<footer>Source: <code>src/graphics/light_manager.hpp</code>, <code>src/graphics/light_manager.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

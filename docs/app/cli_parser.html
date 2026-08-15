@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>app::CliParser — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="application.html">Application</a>
+  <a class="here" href="cli_parser.html">CliParser</a>
+  <a href="window.html">Window</a>
+  <a href="worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>app::CliParser</code></h1>
+<p class="lede">Minimal typed --flag value parser. Mirrors buildcpp's own defineArg/parseArgs/arg pattern.</p>
+
+<h2>Role</h2>
+<p>
+  Define expected flags with their type up front, parse <code>argv</code> once, read
+  values back typed. A type-erased-by-<code>std::variant</code> dispatch, plus
+  <code>bool</code> as a presence-only "nothing" category (e.g. <code>--verbose</code>
+  with no value) that buildcpp's own version doesn't have.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on the standard library. Used directly in <code>main()</code>
+  (<code>sandbox/model_test/main.cpp</code>) to parse <code>--model &lt;path&gt;.glb</code>.
+</p>
+
+<h2>Public API</h2>
+<pre><code>template &lt;typename T&gt;
+concept CliArgValue = /* string, bool, or any integer/float type */;
+
+class CliParser {
+    CliParser(int argc, char** argv);
+
+    template &lt;CliArgValue T&gt; void defineArg(const std::string&amp; name);
+    void parse();
+    template &lt;CliArgValue T&gt; std::optional&lt;T&gt; arg(const std::string&amp; name) const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><code>defineArg&lt;bool&gt;</code> means "presence-only flag" — <code>parse()</code> sets it <code>true</code> just from seeing <code>--name</code>, no following value consumed.</li>
+  <li>Unknown flags and unparseable values are fatal (<code>RLOG(LL_FATAL, ...)</code>) — a bad CLI argument isn't silently ignored.</li>
+  <li><code>arg&lt;T&gt;()</code> returns <code>std::nullopt</code> both when the flag was never seen and when the wrong type is requested for a flag that was defined differently — same "absent" signal either way.</li>
+</ul>
+
+<footer>Source: <code>src/app/cli_parser.hpp</code>, <code>src/app/cli_parser.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

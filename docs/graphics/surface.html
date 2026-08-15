@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Surface — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a class="here" href="surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Surface</code></h1>
+<p class="lede">Either a swapchain image or an offscreen render target — same object either way, since both are "something to render into, or sample as a texture."</p>
+
+<h2>Role</h2>
+<p>
+  Bundles a texture with a matching one-color-attachment framebuffer. Two factories
+  cover the two cases this engine needs: wrapping an existing swapchain image, or
+  allocating a fresh offscreen texture (used for every intermediate render target —
+  the HDR lighting output, <code>PostProcessChain</code>'s ping-pong scratch buffers).
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code>. Used by <code>Renderer</code> (swapchain surfaces,
+  HDR color target) and <code>PostProcessChain</code> (ping-pong targets).
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Surface {
+    static Surface fromSwapchainImage(const gpu::Device&, nvrhi::TextureHandle, VkExtent2D);
+    static Surface createOffscreen(const gpu::Device&, VkExtent2D, nvrhi::Format format = nvrhi::Format::BGRA8_UNORM);
+
+    nvrhi::ITexture* texture() const;
+    nvrhi::IFramebuffer* framebuffer() const;
+    VkExtent2D extent() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>Private constructor + static factories, same pattern as <code>Mesh</code> — an invariant (texture and framebuffer always match) worth protecting.</li>
+  <li><code>createOffscreen</code>'s default format is <code>BGRA8_UNORM</code> (matches the swapchain), but every current caller that needs HDR passes <code>RGBA16_FLOAT</code> explicitly.</li>
+</ul>
+
+<footer>Source: <code>src/graphics/surface.hpp</code>, <code>src/graphics/surface.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Camera — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a class="here" href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Camera</code></h1>
+<p class="lede">View + projection matrices, Vulkan-convention, hand-derived (no glm/GLU dependency).</p>
+
+<h2>Role</h2>
+<p>
+  A look-at camera: position, target, a fixed world-up of <code>(0,1,0)</code>, and a
+  perspective projection built directly from FOV/aspect/near/far. No scene-graph
+  attachment, no controller logic — <code>mutablePosition()</code>/<code>setLookAt()</code>
+  exist so calling code (e.g. an orbit camera in a test harness) can drive it directly.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on Eigen. <code>graphics::Renderer::renderMesh()</code> reads
+  <code>viewProjectionMatrix()</code>/<code>position()</code> every call;
+  <code>scene::Model</code>/<code>scene::Scene::render()</code> just forward a
+  <code>const Camera&amp;</code> through.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Camera {
+    Camera(f32 fov_y_radians, f32 aspect_ratio, f32 near_plane, f32 far_plane,
+           const Eigen::Vector3f& position, const Eigen::Vector3f& target, const Eigen::Vector3f& up);
+
+    Eigen::Matrix4f transformationMatrix() const;              // world -> camera space
+    Eigen::Matrix4f viewProjectionMatrix() const;               // projection * transformationMatrix()
+    Eigen::Vector3f position() const;
+
+    Eigen::Vector3f* mutablePosition();                         // for driving it in place
+    void setLookAt(const Eigen::Vector3f& target);
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>Projection has no Y-flip</strong> (<code>m_projection(1,1) = f</code>, not
+    <code>-f</code>). Vulkan clip space is Y-down by default, and the textbook advice for
+    porting an OpenGL-style projection to Vulkan is to negate that term — but this
+    pipeline's view matrix already produces the correct on-screen orientation without
+    one. Adding the textbook flip mirrors the image (confirmed empirically: it also
+    inverted every mesh's apparent winding, i.e. rendered everything inside out). If
+    you ever "fix" an upside-down render by flipping this sign back, you must also flip
+    <code>graphics::Renderer</code>'s gbuffer <code>RasterState.frontCounterClockwise</code>
+    to match, or culling breaks instead. The two settings are a matched pair, not
+    independent — a Y-flip mirrors the transform, which necessarily inverts screen-space
+    winding parity too.
+  </li>
+  <li>Depth range is Vulkan's <code>[0,1]</code>, not OpenGL's <code>[-1,1]</code> — the row-2 near/far terms are derived for that directly, not adapted from a GL formula.</li>
+  <li><code>transformationMatrix()</code> is a standard right-handed look-at (<code>right = forward × up</code>, <code>up' = right × forward</code>), camera looking down -Z in view space — matches glTF's own camera convention, which matters since <code>scene::loadGltf</code> loads content authored under that convention.</li>
+</ul>
+
+<footer>Source: <code>src/graphics/camera.hpp</code>, <code>src/graphics/camera.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

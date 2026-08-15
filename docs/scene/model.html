@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scene::Model — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a class="here" href="model.html">Model</a>
+  <a href="scene.html">Scene</a>
+  <a href="gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>scene::Model</code></h1>
+<p class="lede">A flat collection of meshes, each with its own local transform. Geometry only — no lights, no materials.</p>
+
+<h2>Role</h2>
+<p>
+  Rendering a model means rendering each part individually: <code>render()</code> loops
+  its parts and calls <code>Renderer::renderMesh()</code> once per part, combining the
+  caller-supplied world transform with each part's local transform. No node hierarchy
+  or scene graph — a flat list is all that's needed for what's actually loaded today.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>graphics::Mesh</code>/<code>Renderer</code>/<code>Camera</code>.
+  Built by <code>scene::loadGltf</code> (one <code>Model</code> per glTF file, gathering
+  every mesh primitive in the node tree); owned by <code>scene::Scene</code>.
+</p>
+
+<h2>Public API</h2>
+<pre><code>struct ModelPart {
+    graphics::Mesh mesh;
+    Eigen::Matrix4f transform; // local to the model's own origin
+};
+
+class Model {
+    void addPart(graphics::Mesh mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity());
+    void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&) const;
+    u32 partCount() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>Meshes only, deliberately.</strong> An earlier version of this class also
+    held <code>Light</code>s directly, which didn't make sense — a light illuminates a
+    model, it isn't a kind of geometry. <code>scene::Scene</code> exists specifically to
+    hold both <code>Model</code>s and <code>Light</code>s together; <code>Model</code>
+    went back to exactly this shape.
+  </li>
+  <li>No static factory — unlike <code>Mesh</code>/<code>Surface</code>, <code>Model</code> doesn't allocate any GPU resource itself, it just aggregates already-created <code>Mesh</code>es, so ordinary construction + <code>addPart()</code> is enough.</li>
+</ul>
+
+<footer>Source: <code>src/scene/model.hpp</code>, <code>src/scene/model.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

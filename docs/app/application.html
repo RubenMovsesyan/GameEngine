@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>app::Application — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a class="here" href="application.html">Application</a>
+  <a href="cli_parser.html">CliParser</a>
+  <a href="window.html">Window</a>
+  <a href="worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>app::Application</code></h1>
+<p class="lede">Owns the window, the GPU device and swapchain, and the workers. The runtime shell everything else runs inside.</p>
+
+<h2>Role</h2>
+<p>
+  Constructs the whole GPU stack in one initializer list (window → instance → surface →
+  device → swapchain, in that order, since each depends on the previous) and runs
+  registered workers on their own threads while polling window events on the main
+  thread. Rendering itself lives entirely off <code>Application</code> —
+  <code>graphics::Renderer</code> owns its own present loop, run from a worker.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>app::Window</code>/<code>Worker</code>, <code>gpu::Instance</code>/<code>Device</code>/<code>Swapchain</code>.
+  Constructed directly by <code>main()</code>; every worker function receives a
+  reference to it.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Application {
+    Application();
+
+    void run();
+    std::atomic&lt;bool&gt; running = false;
+
+    gpu::Device&amp; device();
+    gpu::Swapchain&amp; swapchain();
+
+    template &lt;typename F, typename... Args&gt;
+    void addWorker(F&amp;&amp; work, Args&amp;&amp;... args);   // UserData inferred from work's 2nd parameter
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><code>addWorker</code> infers <code>UserData</code> from the work callable's second parameter type (via <code>detail::WorkerCallableTraits</code>, see <a href="worker.html">Worker</a>) — <code>args...</code> construct that <code>UserData</code>, so you never spell the type out explicitly.</li>
+  <li><code>running</code> is public and atomic on purpose — worker loops read it directly (<code>while (app.running.load())</code>) without needing an accessor.</li>
+  <li>The private <code>OwnedSurface</code> nested class exists purely for destruction ordering: it must outlive the swapchain built from it but not outlive the instance it was created from — member declaration order encodes that (C++ destroys members in reverse declaration order).</li>
+  <li>Destructor joins every worker before <code>vkDeviceWaitIdle</code> — no GPU resource gets torn down while a worker might still be using it.</li>
+</ul>
+
+<footer>Source: <code>src/app/application.hpp</code>, <code>src/app/application.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

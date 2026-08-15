@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu::Swapchain — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="instance.html">Instance</a>
+  <a href="device.html">Device</a>
+  <a class="here" href="swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>gpu::Swapchain</code></h1>
+<p class="lede">Wraps VkSwapchainKHR + its per-image sync primitives. Takes a bare VkSurfaceKHR, so it never learns what a window is.</p>
+
+<h2>Role</h2>
+<p>
+  Builds/rebuilds the swapchain against a surface and a wanted extent, hands out its
+  images as NVRHI textures, and manages the acquire/present semaphore pools. That's the
+  whole job — presentation mechanics, nothing about what gets drawn.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Built from a <code>gpu::Device</code> + a <code>VkSurfaceKHR</code> (owned by
+  <code>app::Application</code>). <code>graphics::Renderer</code> drives it every frame
+  via <code>acquire()</code>/<code>present()</code>.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Swapchain {
+    Swapchain(const Device&, VkSurfaceKHR, VkExtent2D want);
+
+    struct Acquired {
+        u32 image_index = 0;
+        bool ok = false; // false => out of date, recreate and skip the frame
+    };
+
+    [[nodiscard]] Acquired acquire();
+    [[nodiscard]] bool present(u32 image_index);
+    void recreate(VkExtent2D want);
+
+    nvrhi::TextureHandle texture(u32 i) const;
+    u32 imageCount() const;
+    VkExtent2D extent() const;
+    VkFormat format() const;
+
+    VkSemaphore imageAvailable() const;             // valid until the next acquire()
+    VkSemaphore renderFinished(u32 image_index) const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>Format is fixed: <code>VK_FORMAT_B8G8R8A8_UNORM</code> / <code>VK_COLOR_SPACE_SRGB_NONLINEAR_KHR</code>. No HDR/format negotiation.</li>
+  <li>Image usage includes <code>TRANSFER_DST</code> alongside <code>COLOR_ATTACHMENT</code> — required because <code>clearTextureFloat</code> outside a render pass lowers to <code>vkCmdClearColorImage</code>, which needs it.</li>
+  <li><code>image_available</code> semaphores are keyed by <em>frame</em> (which image you'll get isn't known until <code>acquire()</code> returns); <code>render_finished</code> is keyed by <em>image index</em>, since that's what <code>present()</code> waits on for that specific image. Different rings, different keys, on purpose.</li>
+  <li>Image count can change across a <code>recreate()</code> (rare, but the spec allows it), so semaphore pools get rebuilt every time rather than assuming the old sizing holds.</li>
+</ul>
+
+<footer>Source: <code>src/gpu/swapchain.hpp</code>, <code>src/gpu/swapchain.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

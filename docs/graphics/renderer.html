@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Renderer — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a class="here" href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Renderer</code></h1>
+<p class="lede">A deferred renderer driving its own swapchain-present loop, meant to run off a worker thread.</p>
+
+<h2>Role</h2>
+<p>
+  Three passes per frame: a geometry (G-buffer) pass per mesh, one full-screen lighting
+  pass, then a post-process chain that narrows HDR down to the display. Owns every GPU
+  pipeline/texture involved; callers only ever call the four methods below.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code>/<code>gpu::Swapchain</code>, and on
+  <code>Mesh</code>, <code>Camera</code>, <code>LightManager</code>,
+  <code>PostProcessChain</code>, <code>Surface</code>. Driven directly by whatever code
+  owns the render loop (currently <code>sandbox/model_test/main.cpp</code>, via a
+  worker thread started by <code>app::Application</code>).
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Renderer {
+    Renderer(const gpu::Device&, gpu::Swapchain&);
+
+    void beginFrame();
+    void renderMesh(const Mesh&, const Eigen::Matrix4f& model, const Camera&);
+    void setLights(const LightManager&);   // call between beginFrame() and endFrame()
+    void setExposure(f32);                 // brightness multiplier before the tonemap curve
+    void endFrame();
+};</code></pre>
+
+<h2>One frame</h2>
+
+<div class="diagram">
+<svg viewBox="0 0 760 190" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, monospace" font-size="12">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7aa2f7"/>
+    </marker>
+  </defs>
+  <rect x="10" y="40" width="170" height="90" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="95" y="65" fill="#d8dae0" text-anchor="middle" font-weight="600">G-buffer pass</text>
+  <text x="95" y="85" fill="#8b90a0" text-anchor="middle">per renderMesh()</text>
+  <text x="95" y="102" fill="#8b90a0" text-anchor="middle">writes albedo,</text>
+  <text x="95" y="117" fill="#8b90a0" text-anchor="middle">normal, depth</text>
+
+  <line x1="180" y1="85" x2="250" y2="85" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="250" y="20" width="180" height="150" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="340" y="45" fill="#d8dae0" text-anchor="middle" font-weight="600">Lighting pass</text>
+  <text x="340" y="65" fill="#8b90a0" text-anchor="middle">reads albedo, normal,</text>
+  <text x="340" y="80" fill="#8b90a0" text-anchor="middle">depth, light buffer</text>
+  <text x="340" y="100" fill="#8b90a0" text-anchor="middle">reconstructs world pos</text>
+  <text x="340" y="115" fill="#8b90a0" text-anchor="middle">from depth for point</text>
+  <text x="340" y="130" fill="#8b90a0" text-anchor="middle">lights, accumulates N·L</text>
+  <text x="340" y="150" fill="#7fd88f" text-anchor="middle">writes HDR color</text>
+
+  <line x1="430" y1="95" x2="500" y2="95" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <rect x="500" y="40" width="150" height="90" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="575" y="65" fill="#d8dae0" text-anchor="middle" font-weight="600">PostProcessChain</text>
+  <text x="575" y="85" fill="#8b90a0" text-anchor="middle">tonemap (default),</text>
+  <text x="575" y="100" fill="#8b90a0" text-anchor="middle">any registered</text>
+  <text x="575" y="115" fill="#8b90a0" text-anchor="middle">custom passes</text>
+
+  <line x1="650" y1="85" x2="720" y2="85" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="695" y="60" fill="#8b90a0" text-anchor="middle">swapchain</text>
+</svg>
+</div>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>Lighting no longer writes the swapchain directly.</strong> It writes an
+    <code>RGBA16_FLOAT</code> offscreen target (<code>m_hdr_color</code>) so light
+    values can exceed <code>1.0</code> without hard-clipping — real Blender-exported
+    intensities are physically large (see <a href="light.html">Light</a>), and an 8-bit
+    LDR target clips anything over 1.0 straight to white. <code>PostProcessChain</code>'s
+    last pass is what actually narrows HDR to the display.
+  </li>
+  <li>
+    <strong>Point-light shading needs per-fragment world position</strong>, which the
+    lighting pass doesn't have directly. Rather than adding a 4th G-buffer target for
+    it, the lighting shader reconstructs it from the existing depth buffer: sample
+    depth, build NDC from <code>(uv*2-1, depth)</code>, multiply by the inverse
+    view-projection matrix (computed once on the CPU per <code>renderMesh()</code> call,
+    cheaper than inverting per-pixel on the GPU), divide by w. This keeps the geometry
+    pass writing exactly what it always did.
+  </li>
+  <li>
+    <code>renderMesh()</code>/<code>setLights()</code> stash camera/light state for
+    <code>endFrame()</code> to read later — correct only when called once per frame with
+    one camera, which is the only way this engine calls them today.
+  </li>
+  <li>
+    NVRHI's Vulkan backend offsets sampler bindings by 128 by default; every binding
+    layout here zeroes it explicitly (<code>VulkanBindingOffsets().setSamplerOffset(0)</code>)
+    so shader source can use plain <code>binding = N</code> numbers.
+  </li>
+  <li>
+    <code>gbuffer_state.rasterState.setFrontCounterClockwise(true)</code> matches
+    <code>Camera</code>'s projection having no Y-flip — see
+    <a href="camera.html">Camera</a>'s note on why these two settings are a matched pair.
+  </li>
+  <li>
+    No frames-in-flight pacing — <code>vkDeviceWaitIdle</code> after every submit. Simple and correct; revisit if/when frame pacing actually matters for performance.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/renderer.hpp</code>, <code>src/graphics/renderer.cpp</code>, <code>src/graphics/shaders/</code></footer>
+
+</main>
+</div>
+</body>
+</html>

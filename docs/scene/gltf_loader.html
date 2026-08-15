@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scene::loadGltf — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="model.html">Model</a>
+  <a href="scene.html">Scene</a>
+  <a class="here" href="gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>scene::loadGltf</code></h1>
+<p class="lede">Parses a glTF/glb file with cgltf and returns a populated Scene. The only place in the engine that knows cgltf exists.</p>
+
+<h2>Role</h2>
+<p>
+  Parses the file, walks its node tree accumulating world transforms, and for each
+  node builds either mesh parts (added to a working <code>Model</code>) or a
+  <code>Light</code> (added directly to the <code>Scene</code>). One <code>Model</code>
+  per file, covering every mesh primitive found; every <code>KHR_lights_punctual</code>
+  light found goes into the same <code>Scene</code>.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code>, <code>scene::Scene</code>/<code>Model</code>,
+  <code>graphics::Mesh</code>/<code>Vertex</code>/<code>Light</code>, and <code>cgltf</code>
+  (vendored, single-header). Called directly by test/game code — <code>graphics/</code>
+  never depends on it or on cgltf; the dependency direction is strictly
+  <code>scene/</code> → <code>graphics/</code>, never the reverse.
+</p>
+
+<h2>Public API</h2>
+<pre><code>Scene loadGltf(const gpu::Device&, const std::filesystem::path&);</code></pre>
+
+<h2>What it does and doesn't support</h2>
+<ul>
+  <li>Triangle primitives only, indexed only — non-indexed or non-triangle primitives are a fatal error, not silently skipped.</li>
+  <li>Requires <code>POSITION</code>, <code>NORMAL</code>, and <code>TEXCOORD_0</code> on every primitive.</li>
+  <li>Node transforms: <code>cgltf_node_transform_local</code> fills a column-major <code>float[16]</code>, which matches <code>Eigen::Matrix4f</code>'s default storage directly — <code>Eigen::Map&lt;const Eigen::Matrix4f&gt;(local)</code> reads it with no conversion.</li>
+  <li>Light direction/position come from the owning node's accumulated world transform, not from the light itself — glTF stores punctual lights as node attachments, same as meshes. Direction uses the transform's 3×3 rotation block applied to local <code>(0,0,-1)</code>, skipping the inverse-transpose (a simplification, consistent with how mesh normals are handled in <code>gbuffer.vert</code> — correct for uniform scale, not for non-uniform).</li>
+  <li>No materials/textures (nothing exists to attach them to yet), no animation/skinning, no cameras/lights defined outside <code>KHR_lights_punctual</code>.</li>
+  <li>Fatal (not silently degraded) on: parse/buffer-load failure, no default scene, unsupported primitive/light type, missing required attributes — matches the engine-wide convention of <code>RLOG(LL_FATAL, ...)</code> for unrecoverable errors.</li>
+</ul>
+
+<footer>Source: <code>src/scene/gltf_loader.hpp</code>, <code>src/scene/gltf_loader.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

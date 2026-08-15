@@ -3,308 +3,126 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GameEngine — System Overview</title>
+<title>GameEngine — Documentation</title>
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/tokyo-night-dark.min.css">
-<script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/highlight.min.js"></script>
 </head>
 <body>
 <div class="wrap">
 
 <nav>
   <a class="brand" href="index.html">Game<span>Engine</span></a>
-  <span class="tag">C++23 · Vulkan · Linux</span>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
 
-  <h4>System</h4>
-  <a class="here" href="index.html">Overview</a>
-  <a href="#modules">Module map</a>
-  <a href="#build">Build system</a>
-  <a href="#newmodule">Adding a module</a>
-  <a href="#state">Current state</a>
+  <h4>gpu</h4>
+  <a href="gpu/instance.html">Instance</a>
+  <a href="gpu/device.html">Device</a>
+  <a href="gpu/swapchain.html">Swapchain</a>
 
-  <h4>Modules</h4>
-  <a href="../gpu/docs/index.html">gpu</a>
-  <a href="../gpu/docs/synchronization.html">gpu · synchronization</a>
-  <a href="../graphics/docs/index.html">graphics</a>
+  <h4>graphics</h4>
+  <a href="graphics/camera.html">Camera</a>
+  <a href="graphics/light.html">Light</a>
+  <a href="graphics/light_manager.html">LightManager</a>
+  <a href="graphics/mesh.html">Mesh</a>
+  <a href="graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="graphics/renderer.html">Renderer</a>
+  <a href="graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="scene/model.html">Model</a>
+  <a href="scene/scene.html">Scene</a>
+  <a href="scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="app/application.html">Application</a>
+  <a href="app/cli_parser.html">CliParser</a>
+  <a href="app/window.html">Window</a>
+  <a href="app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="utils/display.html">Display</a>
 </nav>
 
 <main>
 
-<h1>System Overview</h1>
+<h1>GameEngine</h1>
 <p class="lede">
-  A game engine built as independent modules. Each module is a top-level directory that
-  compiles to its own static library. Read this page first — it explains how the pieces
-  relate before you dive into either module.
+  A C++23/Vulkan game engine built on NVRHI, structured as five layers with a strict
+  one-way dependency chain. This page explains how they relate; each class has its own
+  page in the sidebar with real signatures and design decisions.
 </p>
 
-<h2 id="idea">The central idea</h2>
+<h2 id="layers">The layers</h2>
+
+<div class="box">
+  <div class="name">gpu/</div>
+  <div class="desc">Device primitives only: instance, physical/logical device, swapchain, buffer/texture loans via NVRHI. Never includes GLFW, never knows a window exists.</div>
+</div>
+<div class="box">
+  <div class="name">graphics/</div>
+  <div class="desc">Rendering mechanism: Mesh, Light, LightManager, Surface, the deferred Renderer, PostProcessChain. "How to draw," with no asset-format knowledge (no cgltf).</div>
+</div>
+<div class="box">
+  <div class="name">scene/</div>
+  <div class="desc">Composition: Model (a collection of meshes) and Scene (Models + Lights). The glTF loader lives here too — cgltf is an implementation detail of this layer alone.</div>
+</div>
+<div class="box">
+  <div class="name">app/</div>
+  <div class="desc">Runtime shell: Application (owns window/device/swapchain/workers), Window (GLFW), Worker/WorkerBase, CliParser.</div>
+</div>
+<div class="box">
+  <div class="name">utils/</div>
+  <div class="desc">Cross-cutting, dependency-free helpers — currently just the <code>Display</code> concept.</div>
+</div>
 
 <p>
-  The engine separates <strong>talking to the GPU</strong> from <strong>rendering</strong>.
-  That split exists so the GPU can later drive physics and general-purpose compute without
-  those subsystems depending on the renderer.
+  Dependency direction is one-way down this list: <code>app</code> depends on <code>scene</code>
+  depends on <code>graphics</code> depends on <code>gpu</code>. Nothing lower ever includes
+  something higher — e.g. <code>graphics/</code> never includes <code>cgltf.h</code>, that
+  stays inside <code>scene/gltf_loader.cpp</code> alone.
 </p>
 
-<p>
-  This is the second attempt at that split. The first one — <code>ShaderPlayground</code> —
-  declared it and never built it, in ways worth naming because every rule below is a direct
-  reaction to one of them:
-</p>
-
-<div class="scroll">
-<table>
-  <thead>
-    <tr><th>What went wrong there</th><th>What this repo does instead</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>Pipeline</code> — a rendering concept — was defined inside <code>gpu_core.hpp</code>, so the "GPU core" ended up including <code>shaderc</code> and <code>&lt;GLFW/glfw3.h&gt;</code>. 324 of 1049 lines in the GPU layer were pipeline and descriptor code.</td>
-      <td><code>gpu/</code> contains no rendering concepts at all, and a grep gate proves it never sees GLFW.</td>
-    </tr>
-    <tr>
-      <td><code>GpuQueue</code>, <code>GpuGraphicsQueue</code>, <code>GpuComputeQueue</code> were forward-declared and <code>friend</code>ed but <strong>never defined</strong>. The whole queue API was two public <code>uint32_t</code> family indices.</td>
-      <td>No queue wrapper is written, because <code>vk::raii::Queue</code> already is one. <code>Device</code> hands them out directly.</td>
-    </tr>
-    <tr>
-      <td><code>GpuCore</code> had <strong>11 <code>friend</code> declarations</strong>, so its private section was effectively public and its one accessor was bypassed everywhere.</td>
-      <td>Zero <code>friend</code> declarations. <code>Device::operator*</code> returns the <code>vk::raii::Device</code>, so there is nothing left to bypass.</td>
-    </tr>
-    <tr>
-      <td>Renderer and compute duplicated command pools, command buffers, fences, semaphores and frame-index bookkeeping — seven near-verbatim pairs.</td>
-      <td>One <code>gpu::FrameRing</code> and one <code>gpu::submit</code>, used by both.</td>
-    </tr>
-    <tr>
-      <td>Inheritance ran three deep. <code>handle_resize</code> was pure virtual, both implementations were empty, and nothing ever called it.</td>
-      <td>No virtual functions in either module. Composition only.</td>
-    </tr>
-    <tr>
-      <td>Compute↔graphics semaphore sync was declared in the API and <strong>commented out</strong> in the implementation.</td>
-      <td>Nothing to comment out: compute would use the same <code>submit</code> path graphics already exercises every frame.</td>
-    </tr>
-  </tbody>
-</table>
-</div>
-
-<div class="note good">
-  <strong>The rule that makes it real</strong>
-  <p>
-    <code>gpu/</code> never includes GLFW and never mentions <code>graphics/</code>. That is not a
-    convention anyone has to remember — it is checked mechanically, and the check is in
-    <code>AGENTS.md</code>:
-  </p>
-<pre><code class="language-bash">grep -rn 'GLFW\|glfw\|graphics/' gpu/     # only the comment in gpu/vk.hpp
-nm -uC .build/libgpu.a | grep -i glfw     # empty</code></pre>
-  <p>
-    As long as those stay clean, a future <code>physics/</code> can link <code>libgpu.a</code> without
-    dragging in a window or a renderer.
-  </p>
-</div>
-
-<h2 id="modules">Module map</h2>
-
-<div class="stack">
-  <div class="box">
-    <div class="name">sandbox/ → sandbox_app</div>
-    <div class="desc">Test executable. Owns the window, instance, surface, device and renderer, in that declaration order.</div>
-  </div>
-  <div class="arrow">▼ links</div>
-  <div class="cols">
-    <div class="box gfx">
-      <div class="name">graphics/ → libgraphics.a</div>
-      <div class="desc">Window (GLFW) and Renderer. The only module that knows a display exists.</div>
-    </div>
-    <div class="box" style="border-style:dashed">
-      <div class="name" style="color:var(--muted)">physics/ → libphysics.a</div>
-      <div class="desc">Not built yet. Will link gpu/ directly, never graphics/.</div>
-    </div>
-  </div>
-  <div class="arrow">▼ links</div>
-  <div class="box">
-    <div class="name">gpu/ → libgpu.a</div>
-    <div class="desc">Instance, device, queues, command submission, frame synchronization, swapchain, buffers. Speaks only Vulkan handles at its boundary.</div>
-  </div>
-</div>
-
-<p>Supporting directories, which are not modules:</p>
-
-<div class="scroll">
-<table>
-  <thead><tr><th>Path</th><th>What it is</th></tr></thead>
-  <tbody>
-    <tr><td><code>buildcpp/</code></td><td>Git submodule. The build system itself — <code>build.h</code>, a single-header C library.</td></tr>
-    <tr><td><code>common/</code></td><td>Shared across modules. One directory per external dependency; see <code>common/AGENTS.md</code>.</td></tr>
-    <tr><td><code>common/devtools/</code></td><td>Git submodule. <code>rlog.h</code> (logging), <code>common.h</code> (<code>u32</code>/<code>f32</code> typedefs), <code>attr.h</code>.</td></tr>
-    <tr><td><code>docs/</code></td><td>This page, plus the stylesheet every module's docs share.</td></tr>
-  </tbody>
-</table>
-</div>
-
-<h3>Layout inside a module</h3>
-
-<pre><code class="language-text">&lt;module&gt;/include/&lt;module&gt;/   public API — the only headers other modules may include
-&lt;module&gt;/src/                implementation and private headers
-&lt;module&gt;/docs/               how this module works (an HTML page, dark mode)</code></pre>
+<h2 id="frame">One frame, end to end</h2>
 
 <p>
-  Only <code>include/</code> goes on another module's include path, so the public boundary is
-  enforced by the build script rather than by discipline.
+  <code>app::Application</code> owns a worker thread running <code>graphics::Renderer</code>'s
+  own loop: <code>beginFrame()</code> → <code>renderMesh()</code> per mesh (geometry/G-buffer
+  pass) → <code>endFrame()</code> (lighting pass into an HDR target, then
+  <code>PostProcessChain</code> narrows that to the swapchain). See
+  <a href="graphics/renderer.html">Renderer</a> for the full pass breakdown and a diagram.
 </p>
 
 <h2 id="build">Build system</h2>
 
 <p>
-  There is no CMake. <code>build.c</code> is a C23 program that includes
-  <code>buildcpp/build.h</code> and describes the build directly.
+  No CMake. <code>build.cpp</code> is a C++ program using <code>buildcpp</code> (a git
+  submodule) to describe the build directly — one binary, <code>sandbox/model_test</code>,
+  no separate static libraries per module. Shaders are compiled to SPIR-V at build time
+  (<code>glslc -mfmt=c</code>) and embedded as C headers, so the binary carries its own
+  bytecode with no runtime shader loading.
 </p>
 
-<pre><code class="language-bash">clang -std=c23 build.c -o build   # once, to bootstrap
-./build                           # every time after</code></pre>
+<pre><code>./build -j $(nproc)   # or just: ./run
+</code></pre>
 
-<p>
-  <code>./build</code> rebuilds <em>itself</em> when <code>build.c</code> or
-  <code>buildcpp/build.h</code> changes, then re-runs. It also writes
-  <code>compile_commands.json</code> for clangd. Artifacts land in <code>.build/</code>.
-</p>
-
-<h3>Steps</h3>
-
-<p>
-  A build step is one compiler invocation set plus one output. Steps run in order, so
-  dependencies come first. Each step needs its own compiler and flags — nothing is
-  inherited — which is why <code>build.c</code> funnels the shared ones through one helper:
-</p>
-
-<pre><code class="language-c">// Applied to every step, so these can never drift between them.
-static void cxxStep(Build* build) {
-    buildStepSetCompiler(build, (char*)CXX);
-    buildAddCompilationFlag(build, (char*)CXX_STD);
-    buildAddCompilationFlag(build, "-DVULKAN_HPP_NO_CONSTRUCTORS");
-    buildAddCompilationFlag(build, "-DVMA_STATIC_VULKAN_FUNCTIONS=0");
-    buildAddCompilationFlag(build, "-DVMA_DYNAMIC_VULKAN_FUNCTIONS=1");
-    buildAddInclude(build, newDirectInclude("gpu/include"));
-    buildAddInclude(build, newDirectInclude("common"));
-}</code></pre>
-
-<div class="note warn">
-  <strong>Why that helper matters</strong>
-  <p>
-    <code>-DVULKAN_HPP_NO_CONSTRUCTORS</code> changes the definition of every
-    <code>vk::</code> struct — it strips their constructors so designated initializers work.
-    If one step had it and another didn't, the same struct would have two different
-    definitions across translation units: a silent ODR violation. Setting it in one place
-    that all three steps call makes a mismatch impossible.
-  </p>
-</div>
-
-<h3>Gotchas worth knowing before you edit build.c</h3>
+<h2 id="conventions">Conventions worth knowing before editing</h2>
 
 <div class="scroll">
 <table>
-  <thead><tr><th>Rule</th><th>Why</th></tr></thead>
+  <thead><tr><th>Convention</th><th>Why</th></tr></thead>
   <tbody>
-    <tr>
-      <td>Every source file needs an explicit <code>buildAddObject</code>.</td>
-      <td>There is no globbing. Adding a <code>.cpp</code> means adding a line.</td>
-    </tr>
-    <tr>
-      <td>A step's output must not share a name with a top-level source directory.</td>
-      <td>Object files mirror source paths into <code>.build/</code>, so <code>sandbox/src/main.cpp</code> makes <code>.build/sandbox</code> a <em>directory</em> — hence the executable is <code>sandbox_app</code>.</td>
-    </tr>
-    <tr>
-      <td>Use <code>newBuild</code>, never <code>newBuildWithCompiler</code>.</td>
-      <td>The build script recompiles itself with the default compiler using <code>-std=c23</code>. Point that at <code>clang++</code> and the self-rebuild breaks. Set <code>clang++</code> per step instead.</td>
-    </tr>
-    <tr>
-      <td>Link <code>graphics</code> before <code>gpu</code>.</td>
-      <td><code>ar</code> archives carry no dependency information and <code>ld</code> resolves them left to right, so dependents must precede their dependencies.</td>
-    </tr>
-    <tr>
-      <td><code>libfoo.a</code> outputs are archived with <code>ar rcs</code>, not linked.</td>
-      <td>A patch to <code>buildcpp</code> detects the <code>.a</code> suffix. Archives take no link flags, so consumers declare their own links.</td>
-    </tr>
+    <tr><td>Every module is a plain directory under <code>src/</code>, headers next to sources, no separate <code>include/</code>.</td><td>Matches this repo's flat layout; the include root is just <code>src</code>.</td></tr>
+    <tr><td>GPU resource classes (<code>Mesh</code>, <code>Surface</code>) use a private constructor + static factory.</td><td>They allocate real GPU resources with an invariant to protect; plain data types (<code>Light</code>, <code>ModelPart</code>) don't need this.</td></tr>
+    <tr><td>New post-process effects: write a <code>.frag</code>, add it to <code>build.cpp</code>'s shader list, <code>addPass()</code> it.</td><td>Compile-time extension only — no runtime shader loading exists.</td></tr>
+    <tr><td>A class that wants debug printing implements <code>std::string display() const</code> and <code>static_assert(utils::Display&lt;T&gt;)</code>.</td><td>See <a href="utils/display.html">Display</a>.</td></tr>
   </tbody>
 </table>
 </div>
 
-<h3>System dependencies</h3>
-
-<pre><code class="language-bash">sudo pacman -S vulkan-headers vulkan-validation-layers vulkan-memory-allocator glfw</code></pre>
-
-<p>
-  All install into <code>/usr/include</code>, so no extra include paths are needed. Note that
-  <code>vulkan-icd-loader</code> alone is <em>not</em> enough — that ships only
-  <code>libvulkan.so</code>, with no headers.
-</p>
-
-<h2 id="newmodule">Adding a module</h2>
-
-<ol>
-  <li>Create <code>&lt;module&gt;/include/&lt;module&gt;/</code>, <code>&lt;module&gt;/src/</code> and <code>&lt;module&gt;/docs/</code>.</li>
-  <li>Add a build step in <code>build.c</code> <em>before</em> its dependents, calling <code>cxxStep(build)</code>, then its own <code>buildAddInclude</code>, its objects, and <code>buildStepSetOutput(build, "lib&lt;module&gt;.a")</code>.</li>
-  <li>Add <code>buildAddInclude(build, newDirectInclude("&lt;module&gt;/include"))</code> to every step that consumes it.</li>
-  <li>Add <code>buildAddLink(build, newPathLinkWithDep("&lt;module&gt;", BUILD_DIR))</code> to the executable step, positioned before the modules it depends on.</li>
-  <li>Write <code>&lt;module&gt;/docs/index.html</code>, linking <code>../../docs/style.css</code>.</li>
-</ol>
-
-<p>
-  A module that wants the GPU links <code>gpu/</code> and nothing else. It must not link
-  <code>graphics/</code> unless it genuinely needs a window.
-</p>
-
-<h2 id="state">Current state</h2>
-
-<p>
-  The engine opens a window and draws one hardcoded triangle over an animated clear
-  colour. The milestone after proving the <code>gpu</code>/<code>graphics</code> seam was
-  proving the pipeline/shader path end to end, still with the least amount of machinery
-  that does that honestly.
-</p>
-
-<p>What is verified today:</p>
-
-<ul>
-  <li>Validation layers enabled and confirmed live by a positive control — deleting the final image barrier makes the layer fire immediately through <code>rlog</code>.</li>
-  <li>Clean exit with <strong>zero</strong> object-leak reports at <code>vkDestroyInstance</code>, which is the proof that destruction ordering is right.</li>
-  <li>~1800 frames sustained with no validation output, so the frame ring wraps hundreds of times without a semaphore-reuse violation.</li>
-  <li>VMA exercised by a real host-visible allocation with write and readback.</li>
-  <li>A dynamic-rendering graphics pipeline draws a shader-hardcoded triangle with interpolated vertex colours — no vertex buffer yet, see <a href="../graphics/docs/index.html#extending">graphics/'s notes</a>.</li>
-</ul>
-
-<p>Deliberately <em>not</em> built yet, and not scaffolded for:</p>
-
-<p>
-  <span class="pill">vertex buffers</span>
-  <span class="pill">descriptor sets</span>
-  <span class="pill">staging buffers</span>
-  <span class="pill">async compute</span>
-  <span class="pill">depth buffer</span>
-  <span class="pill">MSAA</span>
-  <span class="pill">present-mode choice</span>
-</p>
-
-<p>
-  <code>QueueFamilies::transfer</code> is selected but unused. Selecting it costs two lines
-  now; changing the struct's shape later would touch every construction site.
-</p>
-
-<hr>
-
-<p>
-  Next: <a href="../gpu/docs/index.html">the <code>gpu</code> module</a> for how the device
-  and submission work, or <a href="../graphics/docs/index.html">the <code>graphics</code>
-  module</a> for how a frame actually gets drawn.
-</p>
-
 <footer>
-  GameEngine documentation · source of truth is the code in
-  <code>gpu/</code> and <code>graphics/</code>
+  GameEngine documentation · source of truth is the code under <code>src/</code>
 </footer>
 
 </main>
 </div>
-
-<script>
-  if (window.hljs) { hljs.highlightAll(); }
-</script>
 </body>
 </html>

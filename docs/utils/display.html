@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>utils::Display — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a class="here" href="display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>utils::Display</code></h1>
+<p class="lede">A Rust-style trait, implemented as a C++20 concept: any type with a display() -> std::string method satisfies it.</p>
+
+<h2>Role</h2>
+<p>
+  A structural contract for debug printing, checked at compile time. There's no base
+  class to inherit and no registration step — a type opts in just by defining the
+  method, and a <code>static_assert</code> next to the class turns "does this actually
+  satisfy the concept" into a build-time guarantee rather than something discovered by
+  trying to call it later.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on <code>&lt;concepts&gt;</code>/<code>&lt;string&gt;</code>. Implemented today
+  by <code>graphics::Light</code> and <code>scene::Scene</code>, each with a
+  <code>static_assert(utils::Display&lt;T&gt;)</code> right after the class definition.
+</p>
+
+<h2>Definition</h2>
+<pre><code>template &lt;typename T&gt;
+concept Display = requires(const T value) {
+    { value.display() } -&gt; std::same_as&lt;std::string&gt;;
+};</code></pre>
+
+<h2>Implementing it on a new class</h2>
+<pre><code>class Thing {
+    public:
+        std::string display() const;
+};
+
+static_assert(utils::Display&lt;Thing&gt;);</code></pre>
+<p>
+  That's the whole contract — one <code>const</code> method returning a
+  <code>std::string</code>. Nothing else about the class needs to change, and nothing
+  needs to know about <code>Display</code> to call <code>.display()</code> directly;
+  the concept exists so generic code <em>could</em> require it (<code>template
+  &lt;utils::Display T&gt; ...</code>), not because anything does yet.
+</p>
+
+<footer>Source: <code>src/utils/display.hpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

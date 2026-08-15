@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu::Instance — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a class="here" href="instance.html">Instance</a>
+  <a href="device.html">Device</a>
+  <a href="swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>gpu::Instance</code></h1>
+<p class="lede">The VkInstance wrapper — the very first Vulkan object, and the root everything else (device, surface) is created from.</p>
+
+<h2>Role</h2>
+<p>
+  Owns exactly one <code>VkInstance</code>. Enables the Khronos validation layer when
+  available (warns and continues without it otherwise, rather than failing). Nothing
+  else — no device selection, no surface, no window concepts reach this class.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on nothing but the Vulkan headers. <code>gpu::Device</code> is constructed from
+  one; <code>app::Window::requiredInstanceExtensions()</code> supplies the extension list
+  <code>InstanceConfig::required_extensions</code> needs (GLFW's required surface
+  extensions) — <code>gpu/</code> itself never calls into GLFW.
+</p>
+
+<h2>Public API</h2>
+<pre><code>struct InstanceConfig {
+    const char* app_name = "GameEngine";
+    std::span&lt;const char* const&gt; required_extensions{};
+    bool validation = true;
+};
+
+class Instance {
+    explicit Instance(const InstanceConfig& cfg = {});
+    VkInstance handle() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>Move/copy are deleted — an <code>Instance</code> is never relocated, only referenced.</li>
+  <li>Validation layer absence is a warning (<code>RLOG(LL_WARN, ...)</code>), not fatal — the engine still runs, just without the extra diagnostics.</li>
+  <li>Uses Vulkan 1.3 (<code>VK_API_VERSION_1_3</code>) unconditionally; NVRHI's requirements (dynamic rendering, synchronization2, timeline semaphores — see <a href="device.html">Device</a>) assume that floor.</li>
+</ul>
+
+<footer>Source: <code>src/gpu/instance.hpp</code>, <code>src/gpu/instance.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

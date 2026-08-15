@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::PostProcessChain — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="mesh.html">Mesh</a>
+  <a class="here" href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::PostProcessChain</code></h1>
+<p class="lede">An ordered, extensible chain of full-screen shader passes run after the lighting pass. The last pass writes the swapchain.</p>
+
+<h2>Role</h2>
+<p>
+  Each registered pass is one fragment shader: reads one input texture, writes one
+  output. The chain manages ping-ponging between two HDR scratch targets for you — you
+  never touch that plumbing directly, just <code>addPass()</code> and (optionally)
+  <code>setPushConstants()</code> per frame. The default (and currently only) built-in
+  pass is <code>tonemap.frag</code>: exposure multiply + an ACES approximation curve,
+  fused into one pass since they're always used together.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code>, <code>Surface</code>. Owned and driven by
+  <code>Renderer</code>, which registers the default tonemap pass at construction.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class PostProcessChain {
+    explicit PostProcessChain(const gpu::Device&);
+
+    u32 addPass(const u32* fragment_spirv, usize word_count, usize push_constant_size);
+    void rebuild(VkExtent2D extent, nvrhi::Format swapchain_format);
+    void setPushConstants(u32 pass_index, const void* data, usize size);
+    void run(nvrhi::ICommandList*, nvrhi::ITexture* hdr_input, const Surface& swapchain_target);
+};</code></pre>
+
+<h2>Adding your own pass</h2>
+<ol>
+  <li>Write a <code>.frag</code> under <code>src/graphics/shaders/</code>. Same shape as <code>tonemap.frag</code>: sample <code>tInput</code>@binding 0 + <code>sLinear</code>@binding 1, read <code>vUv</code>, write <code>outColor</code>.</li>
+  <li>Add its filename to <code>build.cpp</code>'s shader-compile list.</li>
+  <li>Wherever the chain is built (currently <code>Renderer</code>'s constructor), <code>#include</code> the generated header and call <code>addPass()</code>, capturing the returned index if you'll need <code>setPushConstants()</code> later.</li>
+  <li>Call <code>rebuild()</code> again — pipeline creation needs the complete, final pass list, since only the <em>last</em> pass targets the swapchain's LDR format and every other pass targets the HDR scratch format.</li>
+</ol>
+<p>
+  Extension is compile-time only, matching every other shader in this engine — there's
+  no runtime shader loading or hot-reload. Registration order matters: passes run in the
+  order registered, and whichever runs last is the one that writes the swapchain.
+</p>
+
+<h2>Pass flow (N = 3 example)</h2>
+
+<div class="diagram">
+<svg viewBox="0 0 760 170" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, monospace" font-size="12">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7aa2f7"/>
+    </marker>
+  </defs>
+
+  <text x="60" y="30" fill="#7fd88f" text-anchor="middle">HDR input</text>
+  <line x1="60" y1="40" x2="60" y2="70" stroke="#7fd88f" stroke-width="2" marker-end="url(#arrow2)"/>
+
+  <rect x="10" y="70" width="120" height="55" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="70" y="93" fill="#d8dae0" text-anchor="middle" font-weight="600">pass 0</text>
+  <text x="70" y="110" fill="#8b90a0" text-anchor="middle">-&gt; ping_pong[0]</text>
+
+  <line x1="130" y1="97" x2="200" y2="97" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow2)"/>
+
+  <rect x="200" y="70" width="120" height="55" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="260" y="93" fill="#d8dae0" text-anchor="middle" font-weight="600">pass 1</text>
+  <text x="260" y="110" fill="#8b90a0" text-anchor="middle">-&gt; ping_pong[1]</text>
+
+  <line x1="320" y1="97" x2="390" y2="97" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow2)"/>
+
+  <rect x="390" y="70" width="120" height="55" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="450" y="93" fill="#d8dae0" text-anchor="middle" font-weight="600">pass 2 (last)</text>
+  <text x="450" y="110" fill="#8b90a0" text-anchor="middle">-&gt; swapchain</text>
+
+  <line x1="510" y1="97" x2="580" y2="97" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow2)"/>
+  <text x="640" y="101" fill="#8b90a0" text-anchor="middle">display</text>
+
+  <text x="70" y="150" fill="#8b90a0" text-anchor="middle" font-size="11">only 2 scratch Surfaces exist —</text>
+  <text x="260" y="150" fill="#8b90a0" text-anchor="middle" font-size="11">reused/alternated regardless of chain length</text>
+</svg>
+</div>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>Only two HDR scratch <code>Surface</code>s exist regardless of chain length — passes alternate between them, and the <em>last</em> pass writes the real swapchain target instead of a scratch buffer.</li>
+  <li>Every pass shares one binding layout (input texture @0, sampler @1); push constants get their own separate layout per pass, only created if that pass's <code>push_constant_size &gt; 0</code>.</li>
+  <li>Strictly one-texture-in/one-texture-out per pass. Multi-input or multi-target effects (bloom, SSAO) don't fit this shape — they'd need downsample/upsample chains with several intermediate targets, which this class doesn't provide.</li>
+</ul>
+
+<footer>Source: <code>src/graphics/post_process_chain.hpp</code>, <code>src/graphics/post_process_chain.cpp</code>, <code>src/graphics/shaders/tonemap.frag</code></footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -35,6 +35,7 @@
   <h4>app</h4>
   <a href="application.html">Application</a>
   <a href="cli_parser.html">CliParser</a>
+  <a href="input_state.html">InputState</a>
   <a class="here" href="window.html">Window</a>
   <a href="worker.html">Worker</a>
 
@@ -49,36 +50,49 @@
 
 <h2>Role</h2>
 <p>
-  Wraps a <code>GLFWwindow*</code> and creates the <code>VkSurfaceKHR</code> from it.
-  Holds a reference back to its owning <code>Application</code> so future callbacks
-  (resize, input) can reach into the application directly rather than routing through
-  free functions.
+  Wraps a <code>GLFWwindow*</code>, creates the <code>VkSurfaceKHR</code> from it, and
+  registers GLFW's key/mouse-button/cursor-pos/scroll callbacks — the only place any of
+  that GLFW machinery is touched. Each callback is a free-function trampoline that
+  recovers the <code>Window*</code> via <code>glfwGetWindowUserPointer</code> and
+  forwards straight into <code>InputState</code>. Also owns cursor capture (hide +
+  lock for mouse-look).
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>gpu::Instance</code> (to create a surface against) and GLFW. Owned by
-  <code>app::Application</code>, constructed first in its initializer list.
+  Depends on <code>gpu::Instance</code> (to create a surface against),
+  <code>InputState</code> (forwards GLFW events into it), and GLFW. Owned by
+  <code>app::Application</code>, constructed first in its initializer list — takes
+  <code>Application</code>'s <code>InputState</code> by reference directly rather than
+  reaching for it through <code>Application</code>, since <code>Application</code>'s own
+  header includes <code>Window</code>'s, and routing the other way round would be a
+  circular include.
 </p>
 
 <h2>Public API</h2>
 <pre><code>std::span&lt;const char* const&gt; requiredInstanceExtensions();  // free function, calls glfwInit()
 
 class Window {
-    Window(Application&amp; app, int width, int height, const char* title);
+    Window(Application&amp; app, InputState&amp; input, int width, int height, const char* title);
 
     Application&amp; application() const;
+    InputState&amp; input() const;
     VkSurfaceKHR createSurface(const gpu::Instance&amp;) const;
 
     bool shouldClose() const;
     VkExtent2D framebufferExtent() const;
     static void poll();
+
+    void setCursorCaptured(bool captured);   // GLFW_CURSOR_DISABLED (hidden, locked, relative motion) or NORMAL
+    void toggleCursorCapture();
+    bool isCursorCaptured() const;
 };</code></pre>
 
 <h2>Worth knowing</h2>
 <ul>
   <li><code>requiredInstanceExtensions()</code> is what feeds <code>gpu::InstanceConfig::required_extensions</code> — the one place GLFW's needs cross into <code>gpu/</code>, and it crosses as a plain <code>std::span</code>, not a GLFW type.</li>
   <li>Move/copy deleted, same as every other owning-a-native-handle class in this engine.</li>
+  <li><code>setCursorCaptured(true)</code> is what makes mouse-look usable — GLFW's <code>DISABLED</code> cursor mode hides the cursor and reports unbounded relative motion instead of clamping at the window edge. <code>main.cpp</code>'s <code>renderLoop</code> toggles it on Escape via <code>app::Application::toggleCursorCapture()</code>; see <a href="application.html">Application</a>.</li>
 </ul>
 
 <footer>Source: <code>src/app/window.hpp</code>, <code>src/app/window.cpp</code></footer>

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>app::InputState — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/surface.html">Surface</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="application.html">Application</a>
+  <a href="cli_parser.html">CliParser</a>
+  <a class="here" href="input_state.html">InputState</a>
+  <a href="window.html">Window</a>
+  <a href="worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>app::InputState</code></h1>
+<p class="lede">Thread-safe keyboard/mouse state: down/pressed/released per key or button, mouse position/delta, scroll delta.</p>
+
+<h2>Role</h2>
+<p>
+  GLFW delivers input via callbacks fired during <code>glfwPollEvents()</code>, which
+  has to run on the main thread. Workers (the render loop, any future game-logic
+  worker) run on separate threads and need to read "what's the input right now" without
+  racing the callback thread, and need "pressed" (this frame only) and "held" (every
+  frame it's down) to actually mean different things.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on Eigen and the standard library (<code>&lt;shared_mutex&gt;</code>).
+  Owned by <code>app::Application</code>; written to by <code>app::Window</code>'s GLFW
+  callback trampolines; read by whatever worker drives the game loop (currently
+  <code>sandbox/model_test/main.cpp</code>'s <code>renderLoop</code>, which also uses it
+  for the Escape/cursor-capture toggle via <code>app::Application::toggleCursorCapture()</code>).
+</p>
+
+<h2>Public API</h2>
+<pre><code>class InputState {
+    // Called from the GLFW callback thread (main thread) only.
+    void handleKey(int key, int action);
+    void handleMouseButton(int button, int action);
+    void handleCursorPos(f64 x, f64 y);
+    void handleScroll(f64 x_offset, f64 y_offset);
+
+    // Call once per frame from whichever worker drives the game loop.
+    void beginFrame();
+
+    bool isKeyDown(int key) const;
+    bool isKeyPressed(int key) const;
+    bool isKeyReleased(int key) const;
+    bool isMouseButtonDown(int button) const;
+    bool isMouseButtonPressed(int button) const;
+    bool isMouseButtonReleased(int button) const;
+    Eigen::Vector2f mousePosition() const;
+    Eigen::Vector2f mouseDelta() const;
+    Eigen::Vector2f scrollDelta() const;
+};</code></pre>
+<p>
+  Keys/buttons are raw GLFW <code>int</code> codes (<code>GLFW_KEY_W</code>,
+  <code>GLFW_MOUSE_BUTTON_LEFT</code>, ...), not a wrapped engine-native enum — a
+  deliberate call, not an oversight: GLFW's codes are already a stable, widely-known
+  standard, and hand-mapping every key into a new enum is ceremony nobody asked for. The
+  cost is that a caller needs <code>#include &lt;GLFW/glfw3.h&gt;</code> for the
+  constants, a small crack in "only <code>Window</code> touches GLFW."
+</p>
+
+<h2>Reader-writer lock, not a plain mutex</h2>
+<p>
+  Query methods take a <code>std::shared_lock</code> — any number of worker threads can
+  read concurrently. Anything that mutates state (<code>handle*()</code> and
+  <code>beginFrame()</code>) takes a <code>std::unique_lock</code> — exclusive, since
+  both the callback thread and the frame-boundary call write into the same arrays.
+</p>
+
+<h2>Three tiers of state</h2>
+<ol>
+  <li><strong>Live "is it down" state</strong> — one bool array per key/button, written
+    directly by GLFW callbacks, read directly by <code>isKeyDown()</code>/
+    <code>isMouseButtonDown()</code>. No snapshot involved: "is this down right now" has
+    an unambiguous answer at any instant, it doesn't need a reference point.</li>
+  <li><strong>Live accumulators for edge events</strong> — separate "pressed since last
+    frame" / "released since last frame" arrays, set the instant a
+    <code>GLFW_PRESS</code>/<code>GLFW_RELEASE</code> callback fires, plus a
+    continuously-summed scroll-delta accumulator. Because these record the event as it
+    happens rather than sampling state later, a key that's pressed <em>and</em> released
+    entirely between two <code>beginFrame()</code> calls still gets seen — a
+    naive "diff two point-in-time samples" approach would miss it.</li>
+  <li><strong>Snapshot state</strong> — what <code>isKeyPressed()</code>,
+    <code>isKeyReleased()</code>, <code>mouseDelta()</code>, and <code>scrollDelta()</code>
+    actually read. Only <code>beginFrame()</code> writes it: copies each accumulator
+    into its snapshot and clears the accumulator, and computes mouse delta as
+    <code>current_live_position - position_at_last_beginFrame()</code>.</li>
+</ol>
+<p>
+  The snapshot exists to give "pressed" one well-defined meaning for the whole frame —
+  not primarily about lag or thread races (the mutex already handles those). Without
+  it, "was Space just pressed" would mean "since whenever <em>this particular
+  caller</em> last asked," which falls apart the moment more than one system reads
+  input in the same frame: different callers, or the same caller reading twice, could
+  get different answers depending on exactly when they ask. <code>beginFrame()</code>
+  gives every reader for the rest of that frame the same stable answer.
+</p>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><code>who calls beginFrame()</code>: whichever worker acts as the game/render
+    loop, once per iteration — not baked into <code>Application::run()</code>, since
+    that loop just polls GLFW on the main thread at whatever cadence the OS delivers
+    events, not the same cadence as a render/game frame.</li>
+  <li>Bounds-checked against out-of-range key/button indices (GLFW can report
+    <code>GLFW_KEY_UNKNOWN</code>, <code>-1</code>) — out-of-range calls are silently
+    ignored rather than indexing off the end of an array.</li>
+  <li>Escape/cursor-capture toggling lives in <code>main.cpp</code>'s <code>renderLoop</code>,
+    not <code>Application</code> — it uses the snapshot-based <code>isKeyPressed()</code>
+    since that loop already calls <code>beginFrame()</code> every iteration; see
+    <a href="application.html">Application</a>.</li>
+</ul>
+
+<footer>Source: <code>src/app/input_state.hpp</code>, <code>src/app/input_state.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

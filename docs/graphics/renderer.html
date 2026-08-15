@@ -35,6 +35,7 @@
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
   <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
   <a href="../app/window.html">Window</a>
   <a href="../app/worker.html">Worker</a>
 
@@ -127,10 +128,26 @@
     <strong>Point-light shading needs per-fragment world position</strong>, which the
     lighting pass doesn't have directly. Rather than adding a 4th G-buffer target for
     it, the lighting shader reconstructs it from the existing depth buffer: sample
-    depth, build NDC from <code>(uv*2-1, depth)</code>, multiply by the inverse
-    view-projection matrix (computed once on the CPU per <code>renderMesh()</code> call,
-    cheaper than inverting per-pixel on the GPU), divide by w. This keeps the geometry
-    pass writing exactly what it always did.
+    depth, build NDC, multiply by the inverse view-projection matrix, divide by w. That
+    matrix comes straight from <a href="camera.html">Camera</a>'s own cache
+    (<code>inverseViewProjectionMatrix()</code>) — <code>Renderer</code> doesn't compute
+    any matrix inverse itself. This keeps the geometry pass writing exactly what it
+    always did.
+  </li>
+  <li>
+    <strong>NDC.y is negated in <code>reconstructWorldPosition</code></strong>
+    (<code>lighting.frag</code>): <code>-(uv.y * 2.0 - 1.0)</code>, not the plain
+    <code>uv.y * 2.0 - 1.0</code> every other NDC component uses. NVRHI's Vulkan backend
+    flips Y at the viewport level for every draw (<code>VKViewportWithDXCoords</code> in
+    <code>vulkan-graphics.cpp</code>, the standard negative-height viewport trick),
+    completely separate from anything the projection matrix does. Rasterizing and
+    sampling the G-buffer both go through that same viewport convention automatically,
+    so they stay self-consistent without anyone thinking about it — but
+    <code>reconstructWorldPosition</code> is pure math bypassing the viewport entirely,
+    so it has to undo that flip by hand. Symptom when this was missing: point-light
+    shading on a perfectly static object visibly shifted as the <em>camera</em> moved
+    vertically (light appeared to move opposite the camera on Y only, since the
+    viewport's flip is Y-only) — a real bug, not a hypothetical one.
   </li>
   <li>
     <code>renderMesh()</code>/<code>setLights()</code> stash camera/light state for

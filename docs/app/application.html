@@ -35,6 +35,7 @@
   <h4>app</h4>
   <a class="here" href="application.html">Application</a>
   <a href="cli_parser.html">CliParser</a>
+  <a href="input_state.html">InputState</a>
   <a href="window.html">Window</a>
   <a href="worker.html">Worker</a>
 
@@ -72,6 +73,9 @@
 
     gpu::Device&amp; device();
     gpu::Swapchain&amp; swapchain();
+    InputState&amp; input();
+    bool isCursorCaptured() const;   // forwards to Window::isCursorCaptured()
+    void toggleCursorCapture();      // forwards to Window::toggleCursorCapture()
 
     template &lt;typename F, typename... Args&gt;
     void addWorker(F&amp;&amp; work, Args&amp;&amp;... args);   // UserData inferred from work's 2nd parameter
@@ -83,6 +87,16 @@
   <li><code>running</code> is public and atomic on purpose — worker loops read it directly (<code>while (app.running.load())</code>) without needing an accessor.</li>
   <li>The private <code>OwnedSurface</code> nested class exists purely for destruction ordering: it must outlive the swapchain built from it but not outlive the instance it was created from — member declaration order encodes that (C++ destroys members in reverse declaration order).</li>
   <li>Destructor joins every worker before <code>vkDeviceWaitIdle</code> — no GPU resource gets torn down while a worker might still be using it.</li>
+  <li>
+    <code>Application</code> only exposes cursor-capture <em>mechanism</em>
+    (<code>isCursorCaptured()</code>/<code>toggleCursorCapture()</code>, both thin
+    forwards to <code>Window</code>) — deciding <em>when</em> to toggle (e.g. on
+    Escape) is left to whoever drives the game loop
+    (<code>sandbox/model_test/main.cpp</code>'s <code>renderLoop</code>), since that's
+    also the thing calling <code>InputState::beginFrame()</code> and can use the
+    snapshot-based <code>isKeyPressed()</code> correctly. <code>run()</code>'s own poll
+    loop doesn't touch input policy at all.
+  </li>
 </ul>
 
 <footer>Source: <code>src/app/application.hpp</code>, <code>src/app/application.cpp</code></footer>

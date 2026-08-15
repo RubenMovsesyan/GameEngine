@@ -35,6 +35,7 @@
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
   <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
   <a href="../app/window.html">Window</a>
   <a href="../app/worker.html">Worker</a>
 
@@ -49,32 +50,79 @@
 
 <h2>Role</h2>
 <p>
-  A look-at camera: position, target, a fixed world-up of <code>(0,1,0)</code>, and a
-  perspective projection built directly from FOV/aspect/near/far. No scene-graph
-  attachment, no controller logic — <code>mutablePosition()</code>/<code>setLookAt()</code>
-  exist so calling code (e.g. an orbit camera in a test harness) can drive it directly.
+  A camera with an explicit position and a direction it points in, a fixed world-up of
+  <code>(0,1,0)</code>, and a perspective projection built directly from
+  FOV/aspect/near/far. No scene-graph attachment, no controller logic —
+  <code>mutablePosition()</code>/<code>mutableDirection()</code> exist so calling code
+  (e.g. WASD movement + mouse-look in a test harness) can drive it directly. Every
+  matrix (view, view-projection, and their inverses) is cached and only rebuilt when
+  something actually marks the camera dirty.
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
   Depends only on Eigen. <code>graphics::Renderer::renderMesh()</code> reads
-  <code>viewProjectionMatrix()</code>/<code>position()</code> every call;
-  <code>scene::Model</code>/<code>scene::Scene::render()</code> just forward a
-  <code>const Camera&amp;</code> through.
+  <code>viewProjectionMatrix()</code>/<code>inverseViewProjectionMatrix()</code>/<code>position()</code>
+  every call; <code>scene::Model</code>/<code>scene::Scene::render()</code> just forward
+  a <code>const Camera&amp;</code> through.
 </p>
 
 <h2>Public API</h2>
 <pre><code>class Camera {
     Camera(f32 fov_y_radians, f32 aspect_ratio, f32 near_plane, f32 far_plane,
-           const Eigen::Vector3f& position, const Eigen::Vector3f& target, const Eigen::Vector3f& up);
+           const Eigen::Vector3f& position, const Eigen::Vector3f& direction, const Eigen::Vector3f& up);
 
-    Eigen::Matrix4f transformationMatrix() const;              // world -> camera space
-    Eigen::Matrix4f viewProjectionMatrix() const;               // projection * transformationMatrix()
-    Eigen::Vector3f position() const;
+    const Eigen::Matrix4f& transformationMatrix() const;       // world -> camera space
+    const Eigen::Matrix4f& viewProjectionMatrix() const;        // projection * transformationMatrix()
+    const Eigen::Matrix4f& inverseViewProjectionMatrix() const; // for reconstructing world position from depth
+    const Eigen::Vector3f& position() const;
+    const Eigen::Vector3f& direction() const;
 
-    Eigen::Vector3f* mutablePosition();                         // for driving it in place
-    void setLookAt(const Eigen::Vector3f& target);
+    Eigen::Vector3f* mutablePosition();   // for driving it in place; unconditionally marks dirty
+    Eigen::Vector3f* mutableDirection();  // same
 };</code></pre>
+
+<h2>Direction, not a look-at target</h2>
+<p>
+  Earlier this stored a <code>target</code> point and derived <code>forward = target -
+  position</code> every rebuild — which meant moving the camera changed where it looked
+  unless the caller also re-issued a matching <code>setLookAt()</code> every frame, just
+  to hold direction steady. Storing <code>direction</code> directly instead means
+  position and orientation are fully independent: WASD movement never touches direction,
+  mouse-look never touches position, and neither needs to know about the other. There's
+  no <code>setLookAt()</code> anymore — orient the camera by writing through
+  <code>mutableDirection()</code> directly (e.g. from yaw/pitch, see <a
+  href="../app/input_state.html">InputState</a>'s mouse delta).
+</p>
+
+<h2>Caching</h2>
+<p>
+  <code>m_projection</code>/<code>m_inverse_projection</code> are built once, in the
+  constructor — nothing in this class can change fov/aspect/near/far after construction,
+  so there's nothing to invalidate them. <code>m_view</code>/<code>m_view_inverse</code>/
+  <code>m_view_projection</code>/<code>m_inverse_view_projection</code> rebuild lazily,
+  on the next accessor call after <code>mutablePosition()</code> or
+  <code>mutableDirection()</code> was called — both mark a <code>m_dirty</code> flag
+  unconditionally on every call, even if the caller doesn't end up writing a different
+  value through the returned pointer, since the class has no way to know afterward
+  whether anything actually changed. A frame that never touches either pointer costs
+  nothing beyond the flag check.
+</p>
+<p>
+  The rebuilt inverse view-projection is <strong>not</strong> a generic 4x4 matrix
+  inverse — both factors it's built from have cheap closed forms:
+</p>
+<ul>
+  <li><code>m_view</code> is a rigid transform (rotation + translation, no scale). Its
+    inverse is just the rotation block transposed (free — the same
+    <code>right</code>/<code>up</code>/<code>forward</code> vectors are already on hand)
+    with the <em>original, pre-transform</em> camera position restored as the
+    translation column.</li>
+  <li><code>m_projection</code> is sparse (5 nonzero entries); its inverse has a 5-entry
+    closed form too, computed once in the constructor alongside the forward matrix.</li>
+  <li><code>inverse_view_projection = view_inverse * inverse_projection</code> — one 4x4
+    multiply of two already-cheap matrices, not an inverse of their product.</li>
+</ul>
 
 <h2>Worth knowing</h2>
 <ul>

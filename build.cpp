@@ -6,11 +6,10 @@ int main(int argc, char** argv) {
 	initLog(4096);
 	Build build(BUILD_DIR, "clang++", argc, argv);
 
-	// Shaders -> SPIR-V embedded as C headers (glslc -mfmt=c), so the binary carries its
-	// own bytecode. Runs every build: a handful of tiny files, not worth caching.
+	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
 	Command mkdir_shaders({"mkdir", "-p", ".build/shaders"});
 	mkdir_shaders.exec();
-	for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "lighting.vert", "lighting.frag"}) {
+	for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
 	    Command compile_shader({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name});
 	    compile_shader.exec();
 	}
@@ -31,8 +30,7 @@ int main(int argc, char** argv) {
 	engine.addLink(Link<Dependency>("pthread"));
 	engine.addLink(Link<Dependency>("glfw"));
 
-	// NVRHI, built from source (no CMake): common bookkeeping, the validation layer,
-	// and the Vulkan backend. D3D11/D3D12 left out — Linux only, no DirectX.
+	// NVRHI, built from source: common bookkeeping, validation layer, Vulkan backend.
 	const std::vector<std::string> nvrhi_sources = {
 	    "external/NVRHI/src/common/format-info.cpp",
 	    "external/NVRHI/src/common/misc.cpp",
@@ -71,9 +69,13 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderer.cpp",
 	    "src/graphics/camera.cpp",
 	    "src/graphics/mesh.cpp",
+	    "src/graphics/light.cpp",
+	    "src/graphics/light_manager.cpp",
+	    "src/graphics/post_process_chain.cpp",
 
-	    "src/model/model.cpp",
-	    "src/model/gltf_loader.cpp",
+	    "src/scene/model.cpp",
+	    "src/scene/scene.cpp",
+	    "src/scene/gltf_loader.cpp",
 
 	    "src/app/window.cpp",
 	    "src/app/application.cpp",

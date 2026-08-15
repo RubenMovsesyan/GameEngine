@@ -10,12 +10,10 @@ Camera::Camera(
 )
     : m_fov_y(fov_y_radians), m_aspect_ratio(aspect_ratio), m_near_plane(near_plane), m_far_plane(far_plane),
       m_position(position), m_target(target), m_up(up), m_projection(Eigen::Matrix4f::Zero()) {
-    // Vulkan clip space: depth [0, 1], Y down. The -f on row 1 and the near/far terms on
-    // row 2 account for that -- an OpenGL-style perspective matrix would need an extra
-    // Y-flip and depth remap to be correct here.
+    // Vulkan clip space, depth [0, 1]. No Y-flip on row 1 -- pairs with Renderer's gbuffer frontCounterClockwise=true.
     f32 f = 1.0f / std::tan(m_fov_y / 2.0f);
     m_projection(0, 0) = f / m_aspect_ratio;
-    m_projection(1, 1) = -f;
+    m_projection(1, 1) = f;
     m_projection(2, 2) = m_far_plane / (m_near_plane - m_far_plane);
     m_projection(2, 3) = (m_near_plane * m_far_plane) / (m_near_plane - m_far_plane);
     m_projection(3, 2) = -1.0f;

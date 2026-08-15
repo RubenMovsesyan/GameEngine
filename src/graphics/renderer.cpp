@@ -10,29 +10,31 @@ constexpr u32 kGBufferVertSpv[] =
 constexpr u32 kGBufferFragSpv[] =
 #include "gbuffer.frag.h"
     ;
-constexpr u32 kLightingVertSpv[] =
-#include "lighting.vert.h"
+constexpr u32 kFullscreenTriangleVertSpv[] =
+#include "fullscreen_triangle.vert.h"
     ;
 constexpr u32 kLightingFragSpv[] =
 #include "lighting.frag.h"
     ;
+constexpr u32 kTonemapFragSpv[] =
+#include "tonemap.frag.h"
+    ;
 
-// lighting.vert derives a full-screen-covering triangle purely from gl_VertexIndex (0,
-// 1, 2) -- no vertex/index buffer, so this is the entire "mesh" for that pass.
 constexpr u32 kFullscreenTriangleVertexCount = 3;
 
-// model kept separate from view_projection -- normals need model's rotation, not a
-// clip-space-projected matrix. view_position isn't needed here; it moved to the
-// lighting pass instead (see LightingPushConstants).
+struct TonemapPushConstants {
+    f32 exposure;
+};
+
 struct GBufferPushConstants {
     Eigen::Matrix4f model;
     Eigen::Matrix4f view_projection;
 };
 
-// Not read by the lighting math yet -- reserved for view-dependent shading (specular)
-// once that exists.
 struct LightingPushConstants {
+    Eigen::Matrix4f inverse_view_projection;
     Eigen::Vector4f view_position;
+    u32 light_count;
 };
 
 nvrhi::ShaderHandle loadShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const u32* spirv, usize word_count) {
@@ -66,7 +68,9 @@ nvrhi::TextureHandle createGBufferTexture(const gpu::Device& device, VkExtent2D 
 
 namespace graphics {
 
-Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_device(&device), m_swapchain(&swapchain) {
+Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
+    : m_device(&device), m_swapchain(&swapchain), m_hdr_color(Surface::createOffscreen(device, swapchain.extent(), nvrhi::Format::RGBA16_FLOAT)),
+      m_post_process(device) {
     m_cmd = device.nvrhi()->createCommandList();
     rebuildSwapchainSurfaces();
     rebuildGBuffer();
@@ -90,7 +94,8 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
                                                   .setDepthFormat(nvrhi::Format::D32);
 
     nvrhi::RenderState gbuffer_state{};
-    // Real mesh data with real winding, unlike the old single hardcoded triangle -- back-face culling is correct here.
+    // Matches camera.cpp's projection parity (no Y-flip there).
+    gbuffer_state.rasterState.setFrontCounterClockwise(true);
 
     nvrhi::BindingLayoutHandle gbuffer_push_constant_layout = nvrhi_device->createBindingLayout(
         nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Vertex).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
@@ -109,25 +114,24 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
         nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants))), gbuffer_push_constant_layout
     );
 
-    // Lighting pass: fullscreen triangle, samples albedo+normal, N.L against a
-    // hardcoded light direction.
-    nvrhi::ShaderHandle lighting_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kLightingVertSpv, std::size(kLightingVertSpv));
+    nvrhi::ShaderHandle lighting_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kFullscreenTriangleVertSpv, std::size(kFullscreenTriangleVertSpv));
     nvrhi::ShaderHandle lighting_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kLightingFragSpv, std::size(kLightingFragSpv));
 
-    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it so the
-    // shader's plain `binding = 2` matches (see graphics::Surface-era discovery of this).
+    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
     m_lighting_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
                                                                         .setVisibility(nvrhi::ShaderType::Pixel)
                                                                         .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
                                                                         .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
                                                                         .addItem(nvrhi::BindingLayoutItem::Sampler(2))
+                                                                        .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3))
+                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(4))
                                                                         .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
 
     m_lighting_push_constant_layout = nvrhi_device->createBindingLayout(
         nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Pixel).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(LightingPushConstants)))
     );
 
-    nvrhi::FramebufferInfo lighting_fb_info = nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::BGRA8_UNORM);
+    nvrhi::FramebufferInfo lighting_fb_info = nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::RGBA16_FLOAT);
 
     m_lighting_pipeline = nvrhi_device->createGraphicsPipeline(
         nvrhi::GraphicsPipelineDesc()
@@ -143,6 +147,21 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain) : m_dev
     m_lighting_push_constant_binding_set = nvrhi_device->createBindingSet(
         nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(LightingPushConstants))), m_lighting_push_constant_layout
     );
+
+    // Placeholder for slot 3 -- never read (light_count is 0 whenever this is bound).
+    nvrhi::BufferDesc empty_light_desc{};
+    empty_light_desc.byteSize = sizeof(Eigen::Vector4f);
+    empty_light_desc.structStride = sizeof(Eigen::Vector4f);
+    empty_light_desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    empty_light_desc.keepInitialState = true;
+    empty_light_desc.debugName = "empty light buffer";
+    m_empty_light_buffer = device.createBuffer(empty_light_desc);
+
+    m_tonemap_pass = m_post_process.addPass(kTonemapFragSpv, std::size(kTonemapFragSpv), sizeof(TonemapPushConstants));
+    rebuildPostProcessTargets();
+
+    constexpr f32 kDefaultExposure = 0.001f; // real Blender-exported intensities are huge; expect to tune this per scene
+    setExposure(kDefaultExposure);
 }
 
 void Renderer::rebuildSwapchainSurfaces() {
@@ -164,6 +183,12 @@ void Renderer::rebuildGBuffer() {
     );
 }
 
+void Renderer::rebuildPostProcessTargets() {
+    VkExtent2D extent = m_swapchain->extent();
+    m_hdr_color = Surface::createOffscreen(*m_device, extent, nvrhi::Format::RGBA16_FLOAT);
+    m_post_process.rebuild(extent, nvrhi::Format::BGRA8_UNORM);
+}
+
 void Renderer::beginFrame() {
     m_acquired = m_swapchain->acquire();
     if (!m_acquired.ok) {
@@ -171,15 +196,13 @@ void Renderer::beginFrame() {
         m_swapchain->recreate(m_swapchain->extent());
         rebuildSwapchainSurfaces();
         rebuildGBuffer();
+        rebuildPostProcessTargets();
         return;
     }
 
     m_cmd->open();
 
-    // The G-buffer is never cleared otherwise -- without this, the depth test runs
-    // against whatever garbage was already in that VRAM allocation, which can fail
-    // every fragment and leave albedo untouched (a black screen with no errors to show
-    // for it).
+    // Must clear every frame -- an uncleared depth buffer fails the depth test against stale VRAM contents.
     m_cmd->clearTextureFloat(m_albedo, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
     m_cmd->clearTextureFloat(m_normal, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 0.0f));
     m_cmd->clearDepthStencilTexture(m_depth, nvrhi::AllSubresources, true, 1.0f, false, 0);
@@ -191,6 +214,7 @@ void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const 
     }
 
     m_view_position = camera.position();
+    m_inverse_view_projection = camera.viewProjectionMatrix().inverse();
     GBufferPushConstants push{model, camera.viewProjectionMatrix()};
 
     VkExtent2D extent = m_swapchain->extent();
@@ -208,6 +232,15 @@ void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const 
     m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh.indexCount()));
 }
 
+void Renderer::setLights(const LightManager& lights) {
+    m_light_buffer = lights.buffer();
+    m_light_count = lights.count();
+}
+
+void Renderer::setExposure(f32 exposure) {
+    m_post_process.setPushConstants(m_tonemap_pass, &exposure, sizeof(exposure));
+}
+
 void Renderer::endFrame() {
     if (!m_acquired.ok) {
         return; // beginFrame already recreated the swapchain; nothing to submit
@@ -219,7 +252,9 @@ void Renderer::endFrame() {
         nvrhi::BindingSetDesc()
             .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_albedo))
             .addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_normal))
-            .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler)),
+            .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler))
+            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, m_light_buffer ? m_light_buffer : m_empty_light_buffer.Get()))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(4, m_depth)),
         m_lighting_binding_layout
     );
 
@@ -227,14 +262,18 @@ void Renderer::endFrame() {
 
     nvrhi::GraphicsState state{};
     state.pipeline = m_lighting_pipeline;
-    state.framebuffer = target.framebuffer();
+    state.framebuffer = m_hdr_color.framebuffer();
     state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
     state.bindings = {lighting_binding_set, m_lighting_push_constant_binding_set};
 
     m_cmd->setGraphicsState(state);
-    LightingPushConstants lighting_push{Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f)};
+    LightingPushConstants lighting_push{
+        m_inverse_view_projection, Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f), m_light_count
+    };
     m_cmd->setPushConstants(&lighting_push, sizeof(lighting_push));
     m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
+
+    m_post_process.run(m_cmd, m_hdr_color.texture(), target);
 
     m_cmd->close();
 
@@ -243,15 +282,14 @@ void Renderer::endFrame() {
     vk_device->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, m_swapchain->renderFinished(m_acquired.image_index), 0);
     m_device->nvrhi()->executeCommandList(m_cmd);
 
-    // ponytail: no frames-in-flight pacing yet -- see .old/gpu/frame.hpp for the
-    // fence-per-slot ring that replaces this once perf matters.
-    vkDeviceWaitIdle(m_device->handle());
+    vkDeviceWaitIdle(m_device->handle()); // no frames-in-flight pacing yet
 
     if (!m_swapchain->present(m_acquired.image_index)) {
         vkDeviceWaitIdle(m_device->handle());
         m_swapchain->recreate(m_swapchain->extent());
         rebuildSwapchainSurfaces();
         rebuildGBuffer();
+        rebuildPostProcessTargets();
     }
 }
 

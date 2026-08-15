@@ -20,8 +20,6 @@ class Camera {
         Eigen::Matrix4f viewProjectionMatrix() const { return m_projection * transformationMatrix(); }
         Eigen::Vector3f position() const { return m_position; }
 
-        // For test/control code: modify position in place, or retarget what the camera
-        // looks at. up is left alone -- always (0, 1, 0) for now, per the caller.
         Eigen::Vector3f* mutablePosition() { return &m_position; }
         void setLookAt(const Eigen::Vector3f& target) { m_target = target; }
 

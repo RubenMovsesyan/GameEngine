@@ -4,9 +4,7 @@
 
 namespace graphics {
 
-// A render target that is either the window (swapchain-backed, present-only) or an
-// offscreen texture (render-target + sampled, so a later pass can bind it as input).
-// Either way, the same object: something to render into, or to draw with as a texture.
+// Either a swapchain image or an offscreen render target -- same object either way.
 class Surface {
     public:
         static Surface fromSwapchainImage(const gpu::Device&, nvrhi::TextureHandle, VkExtent2D);

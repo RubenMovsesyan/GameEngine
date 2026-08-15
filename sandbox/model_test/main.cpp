@@ -4,8 +4,9 @@
 #include <app/application.hpp>
 #include <app/cli_parser.hpp>
 #include <graphics/camera.hpp>
+#include <graphics/light_manager.hpp>
 #include <graphics/renderer.hpp>
-#include <model/gltf_loader.hpp>
+#include <scene/gltf_loader.hpp>
 
 #include <chrono>
 #include <cmath>
@@ -15,7 +16,15 @@
 void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::filesystem::path& model_path) {
     RLOG(LL_INFO, "Starting Render Thread");
 
-    model::Model scene = model::loadGltf(app.device(), model_path);
+    scene::Scene scene = scene::loadGltf(app.device(), model_path);
+    RLOG(LL_DEBUG, scene.display());
+
+    graphics::LightManager light_manager{app.device()};
+    for (const graphics::Light& light : scene.lights()) {
+	RLOG(LL_DEBUG, "Added light: " + light.display());
+        light_manager.add(light);
+    }
+    light_manager.build();
 
     VkExtent2D extent = app.swapchain().extent();
     RLOG(LL_DEBUG, "Extent: " + std::to_string(extent.width) + " by " + std::to_string(extent.height));
@@ -35,6 +44,7 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
         camera.setLookAt({0.0f, 0.0f, 0.0f});
 
         renderer.beginFrame();
+        renderer.setLights(light_manager);
         scene.render(renderer, world_transform, camera);
         renderer.endFrame();
     }

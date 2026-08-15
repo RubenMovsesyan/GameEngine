@@ -7,9 +7,7 @@ layout(location = 2) in vec2 inUV;
 layout(location = 0) out vec3 vNormal;
 layout(location = 1) out vec2 vUV;
 
-// model kept separate from view_projection (not pre-combined) since the normal needs
-// model's rotation, not clip-space projection. Only handles rotation correctly -- a
-// non-uniform model scale would need the inverse-transpose of model instead.
+// mat3(pc.model) only handles rotation correctly -- non-uniform scale needs inverse-transpose.
 layout(push_constant) uniform PushConstants {
     mat4 model;
     mat4 view_projection;

@@ -18,7 +18,8 @@ class Renderer {
 
         void beginFrame();
 
-        void renderMesh(const Mesh&, const Eigen::Matrix4f& model, const Camera&);
+        template <Mesh T>
+        void renderMesh(T& mesh, const Eigen::Matrix4f& model, const Camera&);
 
         // Call between beginFrame() and endFrame().
         void setLights(const LightManager&);
@@ -48,6 +49,8 @@ class Renderer {
 
         nvrhi::InputLayoutHandle m_mesh_input_layout;
         nvrhi::GraphicsPipelineHandle m_gbuffer_pipeline;
+        nvrhi::InputLayoutHandle m_instanced_mesh_input_layout;
+        nvrhi::GraphicsPipelineHandle m_gbuffer_instanced_pipeline;
         nvrhi::BindingSetHandle m_gbuffer_push_constant_binding_set;
 
         nvrhi::GraphicsPipelineHandle m_lighting_pipeline;

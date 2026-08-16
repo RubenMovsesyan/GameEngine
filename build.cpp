@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
 	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
 	// headers below get tracked as depending on them and rebuild when a shader changes.
 	std::unordered_map<std::string, std::reference_wrapper<Task>> shader_tasks;
-	for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
+	for (const std::string& name : {"gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
 	    Task& task = engine.addTask(Output(Command({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name})));
 	    shader_tasks.emplace(name, task);
 	}
@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
 	    if (source == "src/graphics/renderer.cpp") {
-	        for (const std::string& name : {"gbuffer.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
+	        for (const std::string& name : {"gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
 	            task.depends_on(shader_tasks.at(name));
 	        }
 	    } else if (source == "src/graphics/post_process_chain.cpp") {

@@ -7,6 +7,9 @@ namespace {
 constexpr u32 kGBufferVertSpv[] =
 #include "gbuffer.vert.h"
     ;
+constexpr u32 kGBufferInstancedVertSpv[] =
+#include "gbuffer_instanced.vert.h"
+    ;
 constexpr u32 kGBufferFragSpv[] =
 #include "gbuffer.frag.h"
     ;
@@ -114,6 +117,35 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
         nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants))), gbuffer_push_constant_layout
     );
 
+    // Instanced geometry pass: same shader I/O plus a per-instance mat4 at buffer slot 1.
+    nvrhi::VertexAttributeDesc instanced_mesh_attrs[] = {
+        mesh_attrs[0],
+        mesh_attrs[1],
+        mesh_attrs[2],
+        nvrhi::VertexAttributeDesc()
+            .setName("INSTANCE_TRANSFORM")
+            .setFormat(nvrhi::Format::RGBA32_FLOAT)
+            .setArraySize(4)
+            .setBufferIndex(1)
+            .setOffset(0)
+            .setElementStride(sizeof(Eigen::Matrix4f))
+            .setIsInstanced(true),
+    };
+
+    nvrhi::ShaderHandle gbuffer_instanced_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kGBufferInstancedVertSpv, std::size(kGBufferInstancedVertSpv));
+    m_instanced_mesh_input_layout =
+        nvrhi_device->createInputLayout(instanced_mesh_attrs, static_cast<u32>(std::size(instanced_mesh_attrs)), gbuffer_instanced_vs);
+
+    m_gbuffer_instanced_pipeline = nvrhi_device->createGraphicsPipeline(
+        nvrhi::GraphicsPipelineDesc()
+            .setInputLayout(m_instanced_mesh_input_layout)
+            .setVertexShader(gbuffer_instanced_vs)
+            .setPixelShader(gbuffer_fs)
+            .setRenderState(gbuffer_state)
+            .addBindingLayout(gbuffer_push_constant_layout),
+        gbuffer_fb_info
+    );
+
     nvrhi::ShaderHandle lighting_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kFullscreenTriangleVertSpv, std::size(kFullscreenTriangleVertSpv));
     nvrhi::ShaderHandle lighting_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kLightingFragSpv, std::size(kLightingFragSpv));
 
@@ -208,7 +240,12 @@ void Renderer::beginFrame() {
     m_cmd->clearDepthStencilTexture(m_depth, nvrhi::AllSubresources, true, 1.0f, false, 0);
 }
 
-void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const Camera& camera) {
+template <Mesh T>
+void Renderer::renderMesh(T& mesh, const Eigen::Matrix4f& model, const Camera& camera) {
+    if constexpr (requires { mesh.uploadIfDirty(*m_device); }) {
+        mesh.uploadIfDirty(*m_device);
+    }
+
     if (!m_acquired.ok) {
         return;
     }
@@ -220,17 +257,28 @@ void Renderer::renderMesh(const Mesh& mesh, const Eigen::Matrix4f& model, const 
     VkExtent2D extent = m_swapchain->extent();
 
     nvrhi::GraphicsState state{};
-    state.pipeline = m_gbuffer_pipeline;
     state.framebuffer = m_gbuffer_framebuffer;
     state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-    state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(mesh.vertexBuffer()).setSlot(0).setOffset(0)};
+    if constexpr (requires { mesh.instanceBuffer(); }) {
+        state.pipeline = m_gbuffer_instanced_pipeline;
+        state.vertexBuffers = {
+            nvrhi::VertexBufferBinding().setBuffer(mesh.vertexBuffer()).setSlot(0).setOffset(0),
+            nvrhi::VertexBufferBinding().setBuffer(mesh.instanceBuffer()).setSlot(1).setOffset(0),
+        };
+    } else {
+        state.pipeline = m_gbuffer_pipeline;
+        state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(mesh.vertexBuffer()).setSlot(0).setOffset(0)};
+    }
     state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indexBuffer()).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
     state.bindings = {m_gbuffer_push_constant_binding_set};
 
     m_cmd->setGraphicsState(state);
     m_cmd->setPushConstants(&push, sizeof(push));
-    m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh.indexCount()));
+    m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh.indexCount()).setInstanceCount(mesh.instanceCount()));
 }
+
+template void Renderer::renderMesh<StandardMesh>(StandardMesh&, const Eigen::Matrix4f&, const Camera&);
+template void Renderer::renderMesh<InstancedMesh>(InstancedMesh&, const Eigen::Matrix4f&, const Camera&);
 
 void Renderer::setLights(const LightManager& lights) {
     m_light_buffer = lights.buffer();

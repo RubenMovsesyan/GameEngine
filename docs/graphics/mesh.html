@@ -46,19 +46,25 @@
 <main>
 
 <h1><code>graphics::Mesh</code></h1>
-<p class="lede">A GPU-resident vertex buffer + index buffer. The smallest drawable unit in the engine.</p>
+<p class="lede">A C++20 concept, not a class: anything with a vertex buffer, an index buffer, and an instance count. <code>StandardMesh</code> and <code>InstancedMesh</code> are the two things that satisfy it.</p>
 
 <h2>Role</h2>
 <p>
-  Everything drawable is a <code>Mesh</code> — one vertex buffer, one index buffer, both
-  allocated and uploaded via <code>gpu::Device::createBuffer</code>. No material, no
-  transform of its own (that's <code>scene::ModelPart</code>'s job).
+  <code>Mesh</code> used to be one concrete class. It became a concept so <code>Renderer::renderMesh()</code>
+  and <code>scene::Model</code> could work with either a single non-instanced mesh or a mesh drawn many
+  times with per-instance transforms, without an inheritance hierarchy or a runtime type tag —
+  <code>std::same_as</code>-checked structural requirements instead, verified at compile time via
+  <code>static_assert(Mesh&lt;StandardMesh&gt;)</code>/<code>static_assert(Mesh&lt;InstancedMesh&gt;)</code>
+  right below each class (same pattern as <a href="../utils/display.html">Display</a>).
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>gpu::Device</code>. Built by <code>scene::loadGltf</code> (one per
-  glTF primitive) and drawn by <code>graphics::Renderer::renderMesh()</code>.
+  Both concrete types depend on <code>gpu::Device</code>. <code>StandardMesh</code> is built by
+  <code>scene::loadGltf</code> (one per glTF primitive); either type can end up inside a
+  <code>scene::ModelPart</code> via <code>scene::ModelPart::convertToStandard()</code>/
+  <code>convertToInstanced()</code>. Drawn by the templated
+  <code>graphics::Renderer::renderMesh&lt;T&gt;()</code>, explicitly instantiated for both types.
 </p>
 
 <h2>Public API</h2>
@@ -68,19 +74,89 @@
     Eigen::Vector2f uv;
 };
 
-class Mesh {
-    static Mesh create(const gpu::Device&, std::span&lt;const Vertex&gt; vertices, std::span&lt;const u32&gt; indices);
+template &lt;typename T&gt;
+concept Mesh = requires(const T&amp; value) {
+    { value.vertexBuffer() } -&gt; std::same_as&lt;nvrhi::IBuffer*&gt;;
+    { value.indexBuffer() } -&gt; std::same_as&lt;nvrhi::IBuffer*&gt;;
+    { value.indexCount() } -&gt; std::same_as&lt;u32&gt;;
+    { value.instanceCount() } -&gt; std::same_as&lt;u32&gt;;
+};
+
+class StandardMesh {
+    static StandardMesh create(const gpu::Device&amp;, std::span&lt;const Vertex&gt; vertices, std::span&lt;const u32&gt; indices);
+    static StandardMesh fromInstanced(const InstancedMesh&amp;);   // shares buffers, drops instance data
 
     nvrhi::IBuffer* vertexBuffer() const;
     nvrhi::IBuffer* indexBuffer() const;
     u32 indexCount() const;
+    u32 instanceCount() const;   // always 1
+};
+
+class InstancedMesh {
+    static InstancedMesh create(const gpu::Device&amp;, std::span&lt;const Vertex&gt; vertices, std::span&lt;const u32&gt; indices);
+    static InstancedMesh fromStandard(const StandardMesh&amp;);    // shares buffers, starts with 0 instances
+
+    nvrhi::IBuffer* vertexBuffer() const;
+    nvrhi::IBuffer* indexBuffer() const;
+    u32 indexCount() const;
+    u32 instanceCount() const;
+
+    u32 addInstance(const Eigen::Matrix4f&amp; transform);
+    void removeInstance(u32 index);
+    Eigen::Matrix4f* mutableInstance(u32 index);
+
+    nvrhi::IBuffer* instanceBuffer() const;
+    void uploadIfDirty(const gpu::Device&amp;);
 };</code></pre>
 
 <h2>Worth knowing</h2>
 <ul>
-  <li>Private constructor + static factory — matches every GPU-resource class in this engine (<code>Surface</code> does the same); protects the invariant that a <code>Mesh</code> always has real, uploaded buffers.</li>
-  <li><code>Vertex</code> matches glTF's <code>POSITION</code>/<code>NORMAL</code>/<code>TEXCOORD_0</code> attribute set directly — no per-vertex color, since albedo comes from textures in this pipeline's model (once a material system exists), not vertex color.</li>
-  <li>Indices are always <code>u32</code> — <code>scene::loadGltf</code> widens whatever width the source glTF accessor uses (u8/u16/u32) on load, so <code>Mesh</code>/<code>Renderer</code> never need to handle a variable index format.</li>
+  <li>
+    <strong>Private constructor + static factory</strong> on both classes — matches every
+    GPU-resource class in this engine (<code>Surface</code> does the same); protects the invariant
+    that a mesh always has real, uploaded buffers. This is also why the concept only requires
+    accessors, never a constructor: construction is deliberately not part of the shared interface.
+  </li>
+  <li>
+    <strong><code>instanceCount()</code> always returns at least 1</strong> — a non-instanced draw
+    is just an instanced draw with one instance. This matches
+    <code>nvrhi::DrawArguments::instanceCount</code>'s own default of <code>1</code>, so
+    <code>Renderer::renderMesh()</code> can call
+    <code>.setInstanceCount(mesh.instanceCount())</code> unconditionally for either type without a
+    branch.
+  </li>
+  <li>
+    <strong><code>fromInstanced()</code>/<code>fromStandard()</code> reuse the source's GPU
+    buffers</strong> instead of re-uploading vertex/index data — they only copy the
+    <code>nvrhi::BufferHandle</code>s (which is why they take a <code>const&amp;</code> to the
+    other type and only call its public accessors, no friend declarations needed). Converting
+    <code>InstancedMesh</code> → <code>StandardMesh</code> is lossy: the per-instance transform
+    list is simply not carried over. Nothing here reads GPU memory back to CPU, so there's no way
+    to recover it after the fact — this only works because
+    <code>scene::ModelPart::convertToStandard()</code>/<code>convertToInstanced()</code> is the
+    only caller, and it treats the loss as expected.
+  </li>
+  <li>
+    <strong>Dirty-flag upload, not automatic sync.</strong> <code>addInstance()</code>/
+    <code>removeInstance()</code>/<code>mutableInstance()</code> only touch the CPU-side
+    <code>std::vector&lt;Eigen::Matrix4f&gt;</code> and set a dirty flag;
+    <code>uploadIfDirty()</code> is what actually rebuilds <code>instanceBuffer()</code> from
+    scratch (no partial updates) and clears the flag. <code>mutableInstance()</code> marks dirty
+    <em>unconditionally</em> on every call, same reasoning as
+    <a href="camera.html">Camera</a>'s <code>mutablePosition()</code>: the class can't know
+    whether the caller actually wrote a different value through the returned pointer.
+  </li>
+  <li>
+    <strong><code>uploadIfDirty()</code> can't run while a frame's command list is open.</strong>
+    <code>gpu::Device::createBuffer()</code> opens its own immediate command list internally: the
+    same "two immediate command lists open at once" class of bug this engine hit before with
+    <code>LightManager</code>'s lazy build. <code>Renderer::renderMesh&lt;T&gt;()</code> calls
+    <code>uploadIfDirty()</code> automatically every frame (so future per-frame instance edits
+    stay in sync), but the <em>first</em> upload — right after populating instances, before the
+    render loop's first <code>beginFrame()</code> — has to happen explicitly by the caller, same
+    as <code>LightManager::build()</code>. See
+    <a href="renderer.html">Renderer</a>'s notes on the instanced pipeline for the full story.
+  </li>
 </ul>
 
 <footer>Source: <code>src/graphics/mesh.hpp</code>, <code>src/graphics/mesh.cpp</code></footer>

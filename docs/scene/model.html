@@ -54,25 +54,35 @@
   its parts and calls <code>Renderer::renderMesh()</code> once per part, combining the
   caller-supplied world transform with each part's local transform. No node hierarchy
   or scene graph — a flat list is all that's needed for what's actually loaded today.
+  Each part can independently be a <code>StandardMesh</code> or an <code>InstancedMesh</code>
+  — see <a href="../graphics/mesh.html">Mesh</a>.
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>graphics::Mesh</code>/<code>Renderer</code>/<code>Camera</code>.
+  Depends on <a href="../graphics/mesh.html"><code>graphics::Mesh</code></a> (the concept,
+  <code>StandardMesh</code>, <code>InstancedMesh</code>)/<code>Renderer</code>/<code>Camera</code>.
   Built by <code>scene::loadGltf</code> (one <code>Model</code> per glTF file, gathering
-  every mesh primitive in the node tree); owned by <code>scene::Scene</code>.
+  every mesh primitive in the node tree, always as <code>StandardMesh</code>); owned by
+  <code>scene::Scene</code>.
 </p>
 
 <h2>Public API</h2>
 <pre><code>struct ModelPart {
-    graphics::Mesh mesh;
+    std::variant&lt;graphics::StandardMesh, graphics::InstancedMesh&gt; mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
+
+    void convertToStandard();    // shares buffers, no re-upload; warns and no-ops if already that kind
+    void convertToInstanced();   // lossy for the reverse direction -- see graphics::Mesh
 };
 
 class Model {
-    void addPart(graphics::Mesh mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity());
-    void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&) const;
+    template &lt;graphics::Mesh T&gt;
+    void addPart(T mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity());
+    void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
+
     u32 partCount() const;
+    std::vector&lt;ModelPart&gt;& mutableParts();
 };</code></pre>
 
 <h2>Worth knowing</h2>
@@ -84,7 +94,38 @@ class Model {
     hold both <code>Model</code>s and <code>Light</code>s together; <code>Model</code>
     went back to exactly this shape.
   </li>
-  <li>No static factory — unlike <code>Mesh</code>/<code>Surface</code>, <code>Model</code> doesn't allocate any GPU resource itself, it just aggregates already-created <code>Mesh</code>es, so ordinary construction + <code>addPart()</code> is enough.</li>
+  <li>No static factory — unlike <code>Mesh</code>/<code>Surface</code>, <code>Model</code> doesn't allocate any GPU resource itself, it just aggregates already-created meshes, so ordinary construction + <code>addPart()</code> is enough.</li>
+  <li>
+    <strong><code>addPart&lt;T&gt;()</code> is templated, constrained by <code>graphics::Mesh</code>,
+    and explicitly instantiated</strong> for <code>StandardMesh</code>/<code>InstancedMesh</code>
+    in <code>model.cpp</code> — same pattern as <code>Renderer::renderMesh&lt;T&gt;()</code>. Keeps
+    the real function body out of the header while still accepting either mesh kind at the call
+    site; a third <code>Mesh</code>-satisfying type would need its own explicit instantiation line
+    added.
+  </li>
+  <li>
+    <strong><code>render()</code> is non-<code>const</code></strong>, and iterates
+    <code>ModelPart&amp;</code> not <code>const ModelPart&amp;</code> — it ultimately calls
+    <code>Renderer::renderMesh(T&amp; mesh, ...)</code>, which needs mutable access so an
+    <code>InstancedMesh</code> can upload its dirty instance buffer and clear the flag during
+    render. This is why <code>scene::Scene::render()</code> is non-<code>const</code> too;
+    <code>StandardMesh</code> pays the same non-<code>const</code> requirement for free even
+    though it never actually mutates.
+  </li>
+  <li>
+    Dispatch to the right <code>renderMesh&lt;T&gt;()</code> instantiation happens via
+    <code>std::visit</code> over <code>ModelPart::mesh</code> with a generic lambda — the compiler
+    picks the right template instantiation per alternative, no manual type switch in
+    <code>Model::render()</code>.
+  </li>
+  <li>
+    <strong>No CPU-side vertex/index retention.</strong> <code>convertToStandard()</code>/
+    <code>convertToInstanced()</code> reuse the existing GPU buffers rather than rebuilding from
+    original geometry (which <code>ModelPart</code> doesn't keep a copy of) — see
+    <a href="../graphics/mesh.html"><code>StandardMesh::fromInstanced()</code>/<code>InstancedMesh::fromStandard()</code></a>.
+    Converting instanced → standard therefore drops the per-instance transform list; there's no
+    way to recover it afterward.
+  </li>
 </ul>
 
 <footer>Source: <code>src/scene/model.hpp</code>, <code>src/scene/model.cpp</code></footer>

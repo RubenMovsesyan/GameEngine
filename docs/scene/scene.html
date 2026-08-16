@@ -69,8 +69,9 @@
     void addModel(Model model);
     void addLight(graphics::Light light);
 
-    void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&) const;
+    void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
     const std::vector&lt;graphics::Light&gt;&amp; lights() const;
+    std::vector&lt;Model&gt;&amp; mutableModels();
 
     std::string display() const;   // implements utils::Display
 };</code></pre>
@@ -84,7 +85,18 @@
     of <code>Model</code> no longer having anywhere to put lights parsed out of a glTF
     file, not a first cut at that bigger registry.
   </li>
-  <li>No <code>models()</code> accessor — nothing reads the list back out yet, matching how <code>Model</code> itself has no <code>parts()</code> getter.</li>
+  <li>
+    <strong><code>render()</code> is non-<code>const</code></strong>, cascading from
+    <a href="model.html"><code>Model::render()</code></a> needing mutable access so an
+    <code>InstancedMesh</code> part can upload its dirty instance buffer during render.
+  </li>
+  <li>
+    <code>mutableModels()</code> exists so callers can reach into a loaded
+    <code>Scene</code>'s <code>Model</code>s/<code>ModelPart</code>s after the fact — e.g.
+    converting parts to <code>InstancedMesh</code> and populating instances post-load, which
+    <code>sandbox/model_test/main.cpp</code> does. No <code>const</code> overload, matching how
+    <code>Model::mutableParts()</code> is also mutable-only.
+  </li>
   <li><code>display()</code> lists model part-counts and light types — see <a href="../utils/display.html">Display</a>.</li>
 </ul>
 

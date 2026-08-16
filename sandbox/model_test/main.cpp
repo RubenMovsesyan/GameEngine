@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <variant>
 
 // Loads a glTF/glb model given at construction; WASD + Space/Ctrl fly the camera.
 void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::filesystem::path& model_path) {
@@ -22,6 +23,25 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
 
     scene::Scene scene = scene::loadGltf(app.device(), model_path);
     RLOG(LL_DEBUG, scene.display());
+
+    // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane, 2 units apart.
+    constexpr u32 kGridSize = 10;
+    constexpr f32 kGridSpacing = 3.0f;
+    for (scene::Model& model : scene.mutableModels()) {
+        for (scene::ModelPart& part : model.mutableParts()) {
+            part.convertToInstanced();
+            graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
+            for (u32 x = 0; x < kGridSize; x++) {
+                for (u32 z = 0; z < kGridSize; z++) {
+                    Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+                    transform(0, 3) = (static_cast<f32>(x) - (kGridSize - 1) / 2.0f) * kGridSpacing;
+                    transform(2, 3) = (static_cast<f32>(z) - (kGridSize - 1) / 2.0f) * kGridSpacing;
+                    instanced.addInstance(transform);
+                }
+            }
+            instanced.uploadIfDirty(app.device()); // must run before the frame loop -- see Renderer docs
+        }
+    }
 
     graphics::LightManager light_manager{app.device()};
     for (const graphics::Light& light : scene.lights()) {

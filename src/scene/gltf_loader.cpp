@@ -56,7 +56,7 @@ void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive
         indices[i] = static_cast<u32>(cgltf_accessor_read_index(primitive.indices, i));
     }
 
-    model.addPart(graphics::Mesh::create(device, vertices, indices), transform);
+    model.addPart(graphics::StandardMesh::create(device, vertices, indices), transform);
 }
 
 graphics::LightType toLightType(cgltf_light_type type) {

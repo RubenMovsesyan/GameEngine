@@ -26,8 +26,8 @@ void Scene::addLight(graphics::Light light) {
     m_lights.push_back(std::move(light));
 }
 
-void Scene::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_transform, const graphics::Camera& camera) const {
-    for (const Model& model : m_models) {
+void Scene::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_transform, const graphics::Camera& camera) {
+    for (Model& model : m_models) {
         model.render(renderer, world_transform, camera);
     }
 }

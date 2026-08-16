@@ -17,8 +17,9 @@ class Scene {
         void addModel(Model model);
         void addLight(graphics::Light light);
 
-        void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&) const;
+        void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
         const std::vector<graphics::Light>& lights() const { return m_lights; }
+        std::vector<Model>& mutableModels() { return m_models; }
 
         std::string display() const;
 

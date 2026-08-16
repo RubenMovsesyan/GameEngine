@@ -6,22 +6,30 @@
 
 #include <Eigen/Dense>
 
+#include <variant>
 #include <vector>
 
 namespace scene {
 
 struct ModelPart {
-    graphics::Mesh mesh;
+    std::variant<graphics::StandardMesh, graphics::InstancedMesh> mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
+
+    // Shares the existing vertex/index buffers -- no re-upload. Warns and no-ops if already that kind.
+    void convertToStandard();
+    // Lossy: an InstancedMesh's per-instance transforms are dropped, not carried over.
+    void convertToInstanced();
 };
 
 // A flat collection of meshes, each with its own local transform.
 class Model {
     public:
-        void addPart(graphics::Mesh mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity());
-        void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&) const;
+        template <graphics::Mesh T>
+        void addPart(T mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity());
+        void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
         u32 partCount() const { return static_cast<u32>(m_parts.size()); }
+        std::vector<ModelPart>& mutableParts() { return m_parts; }
 
     private:
         std::vector<ModelPart> m_parts;

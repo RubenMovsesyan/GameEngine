@@ -253,6 +253,7 @@ void Renderer::beginFrame() {
         return;
     }
 
+    m_frame_lock = m_device->lockSubmit();
     m_cmd->open();
 
     // Must clear every frame -- an uncleared depth buffer fails the depth test against stale VRAM contents.
@@ -367,6 +368,8 @@ void Renderer::endFrame() {
         rebuildGBuffer();
         rebuildPostProcessTargets();
     }
+
+    m_frame_lock.unlock();
 }
 
 } // namespace graphics

@@ -194,6 +194,8 @@ Device::~Device() {
 }
 
 nvrhi::BufferHandle Device::createBuffer(const nvrhi::BufferDesc& desc, const void* data, usize data_size) const {
+    std::lock_guard<std::recursive_mutex> lock(m_submit_mutex);
+
     nvrhi::BufferHandle buffer = m_nvrhi_device->createBuffer(desc);
 
     if (data != nullptr) {
@@ -209,6 +211,8 @@ nvrhi::BufferHandle Device::createBuffer(const nvrhi::BufferDesc& desc, const vo
 }
 
 nvrhi::TextureHandle Device::createTexture(const nvrhi::TextureDesc& desc, const void* data, usize row_pitch) const {
+    std::lock_guard<std::recursive_mutex> lock(m_submit_mutex);
+
     nvrhi::TextureHandle texture = m_nvrhi_device->createTexture(desc);
 
     if (data != nullptr) {

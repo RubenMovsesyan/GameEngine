@@ -7,6 +7,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <mutex>
+
 namespace gpu {
 
 struct DeviceConfig {
@@ -37,6 +39,9 @@ class Device {
         // If data is given, uploads it synchronously before returning.
         nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc& desc, const void* data = nullptr, usize row_pitch = 0) const;
 
+        // Lets a caller hold the same submit lock across a whole span of GPU work (e.g. a frame).
+        std::unique_lock<std::recursive_mutex> lockSubmit() const { return std::unique_lock<std::recursive_mutex>(m_submit_mutex); }
+
     private:
         VkPhysicalDevice m_physical = VK_NULL_HANDLE;
         u32 m_graphics_family = 0;
@@ -44,6 +49,7 @@ class Device {
         VkQueue m_graphics_queue = VK_NULL_HANDLE;
         nvrhi::vulkan::DeviceHandle m_raw_device;
         nvrhi::DeviceHandle m_nvrhi_device;
+        mutable std::recursive_mutex m_submit_mutex;
 };
 
 } // namespace gpu

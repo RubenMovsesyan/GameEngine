@@ -8,6 +8,7 @@
 #include <graphics/texture.hpp>
 #include <gpu/swapchain.hpp>
 
+#include <mutex>
 #include <vector>
 
 namespace graphics {
@@ -37,6 +38,7 @@ class Renderer {
 
         const gpu::Device* m_device;
         nvrhi::CommandListHandle m_cmd;
+        std::unique_lock<std::recursive_mutex> m_frame_lock; // held beginFrame() to endFrame() -- see docs
 
         gpu::Swapchain* m_swapchain;
         std::vector<Surface> m_swapchain_surfaces;

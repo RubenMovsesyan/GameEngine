@@ -26,6 +26,7 @@
   <a href="../graphics/post_process_chain.html">PostProcessChain</a>
   <a href="../graphics/renderer.html">Renderer</a>
   <a href="../graphics/surface.html">Surface</a>
+  <a href="../graphics/texture.html">Texture</a>
 
   <h4>scene</h4>
   <a href="model.html">Model</a>
@@ -60,10 +61,12 @@
 <h2>Depends on / depended on by</h2>
 <p>
   Depends on <code>gpu::Device</code>, <code>scene::Scene</code>/<code>Model</code>,
-  <code>graphics::StandardMesh</code>/<code>Vertex</code>/<code>Light</code>, and <code>cgltf</code>
-  (vendored, single-header). Called directly by test/game code — <code>graphics/</code>
-  never depends on it or on cgltf; the dependency direction is strictly
-  <code>scene/</code> → <code>graphics/</code>, never the reverse.
+  <code>graphics::StandardMesh</code>/<code>Vertex</code>/<code>Light</code>/
+  <a href="../graphics/texture.html"><code>Texture</code></a>, <code>cgltf</code>
+  (vendored, single-header), and <code>stb_image</code> (vendored, single-header, image
+  decode only). Called directly by test/game code — <code>graphics/</code> never depends
+  on cgltf or stb_image; the dependency direction is strictly <code>scene/</code> →
+  <code>graphics/</code>, never the reverse.
 </p>
 
 <h2>Public API</h2>
@@ -75,8 +78,39 @@
   <li>Requires <code>POSITION</code>, <code>NORMAL</code>, and <code>TEXCOORD_0</code> on every primitive.</li>
   <li>Node transforms: <code>cgltf_node_transform_local</code> fills a column-major <code>float[16]</code>, which matches <code>Eigen::Matrix4f</code>'s default storage directly — <code>Eigen::Map&lt;const Eigen::Matrix4f&gt;(local)</code> reads it with no conversion.</li>
   <li>Light direction/position come from the owning node's accumulated world transform, not from the light itself — glTF stores punctual lights as node attachments, same as meshes. Direction uses the transform's 3×3 rotation block applied to local <code>(0,0,-1)</code>, skipping the inverse-transpose (a simplification, consistent with how mesh normals are handled in <code>gbuffer.vert</code> — correct for uniform scale, not for non-uniform).</li>
-  <li>No materials/textures (nothing exists to attach them to yet), no animation/skinning, no cameras/lights defined outside <code>KHR_lights_punctual</code>.</li>
-  <li>Fatal (not silently degraded) on: parse/buffer-load failure, no default scene, unsupported primitive/light type, missing required attributes — matches the engine-wide convention of <code>RLOG(LL_FATAL, ...)</code> for unrecoverable errors.</li>
+  <li>
+    <strong>Base-color texture only</strong> — a primitive's
+    <code>pbr_metallic_roughness.base_color_texture</code>, loaded via
+    <a href="../graphics/texture.html"><code>Texture::loadAsyncThread()</code></a> onto
+    <code>ModelPart::texture</code>. Normal/metallic-roughness/occlusion textures aren't
+    loaded; no material system exists to use them yet. No animation/skinning, no
+    cameras/lights defined outside <code>KHR_lights_punctual</code>.
+  </li>
+  <li>
+    <strong>Texture bytes, combined or separate.</strong> <code>loadTexture()</code>
+    resolves a texture's raw compressed bytes three ways, always into one owned
+    <code>std::vector&lt;u8&gt;</code> regardless of source (required so the bytes
+    survive being moved into the background decode thread, past this function's own
+    return): <code>cgltf_image::buffer_view</code> set → combined/embedded in the
+    <code>.glb</code>, copied out of the buffer <code>cgltf_load_buffers</code> already
+    loaded; <code>uri</code> starting with <code>data:...base64,</code> → decoded via
+    cgltf's own <code>cgltf_load_buffer_base64()</code>, which needs the decoded size up
+    front (unlike buffers, images don't carry a declared byte length in the glTF JSON) —
+    computed from the base64 string length via the standard
+    <code>(len/4)*3 - padding</code> formula; plain <code>uri</code> → a separate file,
+    resolved against <code>gltf_path.parent_path()</code> after
+    <code>cgltf_decode_uri()</code>, read with <code>std::ifstream</code>.
+    <code>sandbox/model_test/test_assets/smile_cube.gltf</code> +
+    <code>smile_cube.bin</code> + <code>smile.jpg</code> is the one asset in the repo
+    exercising the separate-file path end to end.
+  </li>
+  <li>
+    Decode (<code>stb_image</code>) and GPU upload happen inside the callable handed to
+    <code>Texture::loadAsyncThread()</code>, so they run on the detached background
+    thread, not here — byte resolution above is the only synchronous part of texture
+    loading in this function.
+  </li>
+  <li>Fatal (not silently degraded) on: parse/buffer-load failure, no default scene, unsupported primitive/light type, missing required attributes, undecodable texture image — matches the engine-wide convention of <code>RLOG(LL_FATAL, ...)</code> for unrecoverable errors. The texture-decode fatal can fire from the background thread; a process-wide exit is fine from any thread.</li>
 </ul>
 
 <footer>Source: <code>src/scene/gltf_loader.hpp</code>, <code>src/scene/gltf_loader.cpp</code></footer>

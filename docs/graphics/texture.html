@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Texture — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+  <a class="here" href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Texture</code></h1>
+<p class="lede">A GPU-resident 2D texture. Can load synchronously from already-decoded pixels, or asynchronously on a detached background thread while a fuchsia/black checkerboard placeholder stands in.</p>
+
+<h2>Role</h2>
+<p>
+  Wraps one <code>nvrhi::TextureHandle</code> the same way <a href="mesh.html">Mesh</a>
+  wraps vertex/index buffers. Its second job — background loading — exists because glTF
+  texture decode (<code>stb_image</code>) plus GPU upload was stalling the whole scene
+  load; <code>loadAsyncThread()</code> returns instantly with a placeholder and swaps in
+  the real texture once a detached thread finishes decoding and uploading it.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code> (<code>createTexture()</code>, guarded internally
+  by <code>Device</code>'s own submit mutex — see <a href="../gpu/device.html">Device</a>).
+  Built by <code>scene::loadGltf</code> for each primitive's base-color texture; held on
+  <code>scene::ModelPart::texture</code>; read every frame by
+  <code>graphics::Renderer::renderMesh()</code> for the G-buffer pass's albedo binding.
+</p>
+
+<h2>Public API</h2>
+<pre><code>struct DecodedPixels {
+    std::vector&lt;u8&gt; pixels; // tightly packed RGBA8
+    u32 width = 0;
+    u32 height = 0;
+};
+
+class Texture {
+    static Texture create(const gpu::Device&, std::span&lt;const u8&gt; pixels, u32 width, u32 height,
+                           nvrhi::Format format = nvrhi::Format::RGBA8_UNORM);
+    static Texture createPlaceholder(const gpu::Device&); // 2x2 fuchsia/black checkerboard, synchronous
+
+    static Texture loadAsyncThread(const gpu::Device&, std::function&lt;DecodedPixels()&gt; decode,
+                                    nvrhi::Format format = nvrhi::Format::RGBA8_UNORM);
+
+    nvrhi::ITexture* texture() const;
+    u32 width() const;
+    u32 height() const;
+    bool isReady() const; // false while still showing the placeholder
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>The mutex can't be a direct <code>Texture</code> data member.</strong>
+    <code>ModelPart::texture</code> is a <code>std::optional&lt;Texture&gt;</code> living
+    inside <code>std::vector&lt;ModelPart&gt;</code> — the vector needs its elements
+    movable (e.g. on growth), and <code>std::shared_mutex</code> is neither copyable nor
+    movable. Worse, a detached background thread can't safely hold a raw
+    <code>Texture*</code>/<code>this</code> either, since the wrapper object itself can
+    be relocated (vector reallocation, <code>optional</code> moves) while the thread is
+    still running, dangling the pointer. Fix: the mutex and mutable state live in a
+    private heap-allocated <code>State</code> struct, and <code>Texture</code> is just a
+    thin <code>std::shared_ptr&lt;State&gt;</code> handle — cheap to copy/move, and a
+    background thread captures the <code>shared_ptr</code> by value, keeping
+    <code>State</code> alive for as long as it needs regardless of what happens to any
+    <code>Texture</code> copy.
+  </li>
+  <li>
+    <strong><code>loadAsyncThread()</code> stays decode-agnostic.</strong> The caller
+    supplies a <code>std::function&lt;DecodedPixels()&gt;</code> that turns raw
+    compressed bytes into pixels — <code>graphics/</code> never touches
+    <code>stb_image</code> directly, matching the existing rule that asset-format
+    knowledge stays in <code>scene/</code>. <code>scene::loadGltf</code> is the only
+    caller today and supplies the <code>stb_image</code> call.
+  </li>
+  <li>
+    <strong><code>createPlaceholder()</code> reuses <code>create()</code> internally,
+    then forces <code>ready</code> back to <code>false</code>.</strong>
+    <code>create()</code> always marks its result ready (it's a real, complete texture
+    by construction) — the placeholder needs to say the opposite (this is a stand-in,
+    not the requested texture), so <code>createPlaceholder()</code> overrides the flag
+    after building it rather than duplicating the upload logic.
+  </li>
+  <li>
+    <strong>Known, accepted gap from choosing "detach" over "join":</strong> a background
+    load thread captures <code>&amp;device</code> by reference and keeps running after
+    <code>loadAsyncThread()</code> returns. If <code>app::Application</code> tears down
+    <code>gpu::Device</code> while a load is still in flight, that's a use-after-free —
+    <code>Application::~Application()</code> only joins its tracked
+    <code>Worker</code>s, not stray detached threads. Not fixed (no
+    thread-registry/join-on-shutdown mechanism exists); a real gap this design choice
+    creates, not an oversight.
+  </li>
+  <li>
+    Row pitch for uploads is computed via <code>nvrhi::getFormatInfo(format).bytesPerBlock</code>
+    (the same call NVRHI's own Vulkan backend uses internally) rather than hardcoding 4
+    bytes/pixel.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/texture.hpp</code>, <code>src/graphics/texture.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

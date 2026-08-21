@@ -26,6 +26,7 @@
   <a href="../graphics/post_process_chain.html">PostProcessChain</a>
   <a href="../graphics/renderer.html">Renderer</a>
   <a href="../graphics/surface.html">Surface</a>
+  <a href="../graphics/texture.html">Texture</a>
 
   <h4>scene</h4>
   <a href="../scene/model.html">Model</a>
@@ -81,12 +82,37 @@ class Device {
     u32 graphicsQueueFamily() const;
 
     nvrhi::BufferHandle createBuffer(const nvrhi::BufferDesc&, const void* data = nullptr, usize data_size = 0) const;
-    nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc&) const;
+    nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc&, const void* data = nullptr, usize row_pitch = 0) const;
+    std::unique_lock&lt;std::recursive_mutex&gt; lockSubmit() const;
 };</code></pre>
 
 <h2>Worth knowing</h2>
 <ul>
-  <li><code>createBuffer</code> uploads synchronously when given data — opens a throwaway command list, writes, submits, waits. Fine for one-off asset loads; calling it mid-frame while another command list is already open triggers NVRHI's "two immediate command lists open at once" validation error (this bit <code>LightManager</code> once — see its explicit <code>build()</code> step).</li>
+  <li><code>createBuffer</code>/<code>createTexture</code> upload synchronously when given data — open a throwaway command list, write, submit, wait. Fine for one-off asset loads; calling either mid-frame while another command list is already open triggers NVRHI's "two immediate command lists open at once" validation error (this bit <code>LightManager</code> once — see its explicit <code>build()</code> step — and <code>InstancedMesh</code>'s instance-buffer upload, see <a href="../graphics/renderer.html">Renderer</a>).</li>
+  <li>
+    <strong><code>m_submit_mutex</code> (a <code>std::recursive_mutex</code>) guards both
+    functions' entire bodies, and <code>lockSubmit()</code> lets a caller hold that same
+    lock across a wider span.</strong> Added once <a href="../graphics/texture.html">Texture</a>
+    could load on a detached background thread. A mutex around
+    <code>createBuffer</code>/<code>createTexture</code> alone only stops two threads
+    calling <em>those two functions</em> at the same time — it does nothing about a
+    background <code>createTexture()</code> landing while <code>Renderer</code>'s own
+    long-lived <code>m_cmd</code> is open for an entire frame (opened in
+    <code>beginFrame()</code>, not closed until <code>endFrame()</code>), since that
+    command list is never created through <code>Device</code> at all. Confirmed by
+    testing: with only the per-call mutex, <code>smile_cube.gltf</code> (which triggers a
+    background texture load) hit "two immediate command lists open at once"
+    intermittently — a genuine timing race, not a same-thread ordering bug like the
+    <code>LightManager</code>/<code>InstancedMesh</code> cases above. Fix:
+    <code>Renderer::beginFrame()</code> calls <code>lockSubmit()</code> and holds the
+    returned lock in a member until <code>endFrame()</code> releases it, so the whole
+    frame is inside the same critical section as any background
+    <code>createBuffer</code>/<code>createTexture</code> call. The mutex is recursive
+    specifically so <code>Renderer</code> can still call into
+    <code>createBuffer</code>/<code>createTexture</code> itself (directly, or via
+    something like <code>InstancedMesh::uploadIfDirty()</code>) while already holding the
+    frame lock, without self-deadlocking.
+  </li>
   <li>Requires Vulkan 1.3 dynamic rendering + synchronization2, and 1.2 timeline semaphores — NVRHI's hard requirements, not optional.</li>
   <li><code>vulkanDevice()</code> exists specifically because the swapchain's binary acquire/present semaphores need to be staged onto a submission below the validation layer's abstraction.</li>
 </ul>

@@ -16,7 +16,7 @@ namespace scene {
 struct ModelPart {
     std::variant<graphics::StandardMesh, graphics::InstancedMesh> mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
-    std::optional<graphics::Texture> texture; // base color; not sampled yet
+    std::optional<graphics::Texture> texture; // base color
 
     // Shares the existing vertex/index buffers -- no re-upload. Warns and no-ops if already that kind.
     void convertToStandard();

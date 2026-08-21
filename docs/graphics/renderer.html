@@ -26,6 +26,7 @@
   <a href="post_process_chain.html">PostProcessChain</a>
   <a class="here" href="renderer.html">Renderer</a>
   <a href="surface.html">Surface</a>
+  <a href="texture.html">Texture</a>
 
   <h4>scene</h4>
   <a href="../scene/model.html">Model</a>
@@ -58,8 +59,9 @@
 <h2>Depends on / depended on by</h2>
 <p>
   Depends on <code>gpu::Device</code>/<code>gpu::Swapchain</code>, and on
-  <a href="mesh.html"><code>Mesh</code></a>, <code>Camera</code>, <code>LightManager</code>,
-  <code>PostProcessChain</code>, <code>Surface</code>. Driven directly by whatever code
+  <a href="mesh.html"><code>Mesh</code></a>, <a href="texture.html"><code>Texture</code></a>,
+  <code>Camera</code>, <code>LightManager</code>, <code>PostProcessChain</code>,
+  <code>Surface</code>. Driven directly by whatever code
   owns the render loop (currently <code>sandbox/model_test/main.cpp</code>, via a
   worker thread started by <code>app::Application</code>).
 </p>
@@ -71,7 +73,7 @@
     void beginFrame();
 
     template &lt;Mesh T&gt;
-    void renderMesh(T& mesh, const Eigen::Matrix4f& model, const Camera&);
+    void renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::Matrix4f& model, const Camera&);
 
     void setLights(const LightManager&);   // call between beginFrame() and endFrame()
     void setExposure(f32);                 // brightness multiplier before the tonemap curve
@@ -204,6 +206,34 @@
     loop — mirroring <code>LightManager::build()</code>'s explicit, once, outside-any-frame
     pattern. Skipping that call and letting the first upload happen inside the first
     <code>renderMesh()</code> reproduces the crash.
+  </li>
+  <li>
+    <strong>Albedo comes from a per-draw texture binding, sampled in <code>gbuffer.frag</code>.</strong>
+    <code>renderMesh&lt;T&gt;()</code> takes an <code>albedo_texture</code> pointer and
+    builds one <code>nvrhi::BindingSetHandle</code> per call from
+    <code>m_gbuffer_texture_binding_layout</code> (<code>Texture_SRV(0)</code> +
+    <code>Sampler(1)</code>, one shared <code>m_gbuffer_sampler</code> for every
+    texture — no per-texture wrap/filter settings from the glTF sampler yet). When
+    <code>albedo_texture</code> is null (a <code>ModelPart</code> with no material),
+    <code>m_white_texture</code> (a 1×1 white pixel built once in the constructor) is
+    bound instead — same "a null handle isn't valid there" reasoning as
+    <code>m_empty_light_buffer</code>. Built fresh every draw call, same as the lighting
+    pass already rebuilds its own binding set every frame — not a new performance
+    concern for this renderer's existing stance.
+  </li>
+  <li>
+    <strong>Descriptor set index is assigned by <code>addBindingLayout()</code> call
+    order, not declaration order in the shader.</strong> GLSL bindings with no explicit
+    <code>set=</code> qualifier (all shaders in this engine) default to <code>set 0</code>.
+    The G-buffer pipelines originally added the push-constant layout first and the
+    texture/sampler layout second, putting <em>push constants</em> at set 0 — the
+    validation layer immediately flagged <code>tAlbedo</code>/<code>sLinear</code> as
+    "not declared in pSetLayouts[0]". Fixed by adding
+    <code>m_gbuffer_texture_binding_layout</code> first (matching the lighting pass,
+    which already got this order right: <code>m_lighting_binding_layout</code> before
+    <code>m_lighting_push_constant_layout</code>) — and <code>state.bindings</code>'s
+    element order in <code>renderMesh()</code> has to match: texture binding set first,
+    push-constant binding set second.
   </li>
   <li>
     No frames-in-flight pacing — <code>vkDeviceWaitIdle</code> after every submit. Simple and correct; revisit if/when frame pacing actually matters for performance.

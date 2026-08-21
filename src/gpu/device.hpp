@@ -34,7 +34,8 @@ class Device {
 
         // If data is given, uploads it synchronously before returning.
         nvrhi::BufferHandle createBuffer(const nvrhi::BufferDesc& desc, const void* data = nullptr, usize data_size = 0) const;
-        nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc& desc) const;
+        // If data is given, uploads it synchronously before returning.
+        nvrhi::TextureHandle createTexture(const nvrhi::TextureDesc& desc, const void* data = nullptr, usize row_pitch = 0) const;
 
     private:
         VkPhysicalDevice m_physical = VK_NULL_HANDLE;

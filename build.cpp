@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderer.cpp",
 	    "src/graphics/camera.cpp",
 	    "src/graphics/mesh.cpp",
+	    "src/graphics/texture.cpp",
 	    "src/graphics/light.cpp",
 	    "src/graphics/light_manager.cpp",
 	    "src/graphics/post_process_chain.cpp",

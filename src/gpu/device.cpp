@@ -208,8 +208,19 @@ nvrhi::BufferHandle Device::createBuffer(const nvrhi::BufferDesc& desc, const vo
     return buffer;
 }
 
-nvrhi::TextureHandle Device::createTexture(const nvrhi::TextureDesc& desc) const {
-    return m_nvrhi_device->createTexture(desc);
+nvrhi::TextureHandle Device::createTexture(const nvrhi::TextureDesc& desc, const void* data, usize row_pitch) const {
+    nvrhi::TextureHandle texture = m_nvrhi_device->createTexture(desc);
+
+    if (data != nullptr) {
+        nvrhi::CommandListHandle cmd = m_nvrhi_device->createCommandList();
+        cmd->open();
+        cmd->writeTexture(texture, 0, 0, data, row_pitch);
+        cmd->close();
+        m_nvrhi_device->executeCommandList(cmd);
+        vkDeviceWaitIdle(m_device);
+    }
+
+    return texture;
 }
 
 } // namespace gpu

@@ -104,12 +104,32 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
         nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Vertex).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
     );
 
+    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
+    m_gbuffer_texture_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
+                                                                              .setVisibility(nvrhi::ShaderType::Pixel)
+                                                                              .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
+                                                                              .addItem(nvrhi::BindingLayoutItem::Sampler(1))
+                                                                              .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
+    m_gbuffer_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
+
+    constexpr u8 kWhitePixel[4] = {255, 255, 255, 255};
+    nvrhi::TextureDesc white_texture_desc{};
+    white_texture_desc.width = 1;
+    white_texture_desc.height = 1;
+    white_texture_desc.format = nvrhi::Format::RGBA8_UNORM;
+    white_texture_desc.isShaderResource = true;
+    white_texture_desc.initialState = nvrhi::ResourceStates::ShaderResource;
+    white_texture_desc.keepInitialState = true;
+    white_texture_desc.debugName = "white placeholder texture";
+    m_white_texture = device.createTexture(white_texture_desc, kWhitePixel, 4);
+
     m_gbuffer_pipeline = nvrhi_device->createGraphicsPipeline(
         nvrhi::GraphicsPipelineDesc()
             .setInputLayout(m_mesh_input_layout)
             .setVertexShader(gbuffer_vs)
             .setPixelShader(gbuffer_fs)
             .setRenderState(gbuffer_state)
+            .addBindingLayout(m_gbuffer_texture_binding_layout)
             .addBindingLayout(gbuffer_push_constant_layout),
         gbuffer_fb_info
     );
@@ -142,6 +162,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
             .setVertexShader(gbuffer_instanced_vs)
             .setPixelShader(gbuffer_fs)
             .setRenderState(gbuffer_state)
+            .addBindingLayout(m_gbuffer_texture_binding_layout)
             .addBindingLayout(gbuffer_push_constant_layout),
         gbuffer_fb_info
     );
@@ -241,7 +262,7 @@ void Renderer::beginFrame() {
 }
 
 template <Mesh T>
-void Renderer::renderMesh(T& mesh, const Eigen::Matrix4f& model, const Camera& camera) {
+void Renderer::renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::Matrix4f& model, const Camera& camera) {
     if constexpr (requires { mesh.uploadIfDirty(*m_device); }) {
         mesh.uploadIfDirty(*m_device);
     }
@@ -270,15 +291,22 @@ void Renderer::renderMesh(T& mesh, const Eigen::Matrix4f& model, const Camera& c
         state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(mesh.vertexBuffer()).setSlot(0).setOffset(0)};
     }
     state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indexBuffer()).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
-    state.bindings = {m_gbuffer_push_constant_binding_set};
+
+    nvrhi::BindingSetHandle texture_binding_set = m_device->nvrhi()->createBindingSet(
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, albedo_texture ? albedo_texture->texture() : m_white_texture.Get()))
+            .addItem(nvrhi::BindingSetItem::Sampler(1, m_gbuffer_sampler)),
+        m_gbuffer_texture_binding_layout
+    );
+    state.bindings = {texture_binding_set, m_gbuffer_push_constant_binding_set};
 
     m_cmd->setGraphicsState(state);
     m_cmd->setPushConstants(&push, sizeof(push));
     m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh.indexCount()).setInstanceCount(mesh.instanceCount()));
 }
 
-template void Renderer::renderMesh<StandardMesh>(StandardMesh&, const Eigen::Matrix4f&, const Camera&);
-template void Renderer::renderMesh<InstancedMesh>(InstancedMesh&, const Eigen::Matrix4f&, const Camera&);
+template void Renderer::renderMesh<StandardMesh>(StandardMesh&, const Texture*, const Eigen::Matrix4f&, const Camera&);
+template void Renderer::renderMesh<InstancedMesh>(InstancedMesh&, const Texture*, const Eigen::Matrix4f&, const Camera&);
 
 void Renderer::setLights(const LightManager& lights) {
     m_light_buffer = lights.buffer();

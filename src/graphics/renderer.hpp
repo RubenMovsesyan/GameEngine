@@ -5,6 +5,7 @@
 #include <graphics/mesh.hpp>
 #include <graphics/post_process_chain.hpp>
 #include <graphics/surface.hpp>
+#include <graphics/texture.hpp>
 #include <gpu/swapchain.hpp>
 
 #include <vector>
@@ -19,7 +20,7 @@ class Renderer {
         void beginFrame();
 
         template <Mesh T>
-        void renderMesh(T& mesh, const Eigen::Matrix4f& model, const Camera&);
+        void renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::Matrix4f& model, const Camera&);
 
         // Call between beginFrame() and endFrame().
         void setLights(const LightManager&);
@@ -52,6 +53,10 @@ class Renderer {
         nvrhi::InputLayoutHandle m_instanced_mesh_input_layout;
         nvrhi::GraphicsPipelineHandle m_gbuffer_instanced_pipeline;
         nvrhi::BindingSetHandle m_gbuffer_push_constant_binding_set;
+        nvrhi::BindingLayoutHandle m_gbuffer_texture_binding_layout;
+        nvrhi::SamplerHandle m_gbuffer_sampler;
+        // Bound whenever a ModelPart has no texture -- a null texture handle isn't valid there.
+        nvrhi::TextureHandle m_white_texture;
 
         nvrhi::GraphicsPipelineHandle m_lighting_pipeline;
         nvrhi::BindingLayoutHandle m_lighting_binding_layout;

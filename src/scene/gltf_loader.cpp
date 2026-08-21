@@ -32,12 +32,10 @@ std::optional<graphics::Texture> loadTexture(const gpu::Device& device, const cg
     const cgltf_image& image = *tex->image;
 
     std::vector<u8> owned_bytes;
-    const u8* bytes = nullptr;
-    usize byte_count = 0;
 
     if (image.buffer_view != nullptr) {
-        bytes = static_cast<const u8*>(image.buffer_view->buffer->data) + image.buffer_view->offset;
-        byte_count = image.buffer_view->size;
+        const u8* view_bytes = static_cast<const u8*>(image.buffer_view->buffer->data) + image.buffer_view->offset;
+        owned_bytes.assign(view_bytes, view_bytes + image.buffer_view->size);
     } else if (image.uri != nullptr) {
         std::string_view uri = image.uri;
         constexpr std::string_view kBase64Marker = "base64,";
@@ -62,26 +60,28 @@ std::optional<graphics::Texture> loadTexture(const gpu::Device& device, const cg
             }
             owned_bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
         }
-        bytes = owned_bytes.data();
-        byte_count = owned_bytes.size();
     } else {
         RLOG(LL_FATAL, "gltf: texture image has neither buffer_view nor uri");
     }
 
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    stbi_uc* pixels = stbi_load_from_memory(bytes, static_cast<int>(byte_count), &width, &height, &channels, STBI_rgb_alpha);
-    if (pixels == nullptr) {
-        RLOG(LL_FATAL, "gltf: failed to decode texture image (%s)", stbi_failure_reason());
-    }
+    auto decode = [bytes = std::move(owned_bytes)]() -> graphics::DecodedPixels {
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
+        if (pixels == nullptr) {
+            RLOG(LL_FATAL, "gltf: failed to decode texture image (%s)", stbi_failure_reason());
+        }
+        graphics::DecodedPixels result{
+            std::vector<u8>(pixels, pixels + static_cast<usize>(width) * static_cast<usize>(height) * 4), static_cast<u32>(width),
+            static_cast<u32>(height)
+        };
+        stbi_image_free(pixels);
+        RLOG(LL_DEBUG, "gltf: loaded texture %ux%u", result.width, result.height);
+        return result;
+    };
 
-    graphics::Texture texture = graphics::Texture::create(
-        device, std::span(pixels, static_cast<usize>(width) * static_cast<usize>(height) * 4), static_cast<u32>(width), static_cast<u32>(height), format
-    );
-    stbi_image_free(pixels);
-    RLOG(LL_DEBUG, "gltf: loaded texture %dx%d", width, height);
-    return texture;
+    return graphics::Texture::loadAsyncThread(device, std::move(decode), format);
 }
 
 void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive, const Eigen::Matrix4f& transform,

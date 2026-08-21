@@ -21,16 +21,17 @@ void ModelPart::convertToInstanced() {
 }
 
 template <graphics::Mesh T>
-void Model::addPart(T mesh, Eigen::Matrix4f transform) {
-    m_parts.push_back(ModelPart{std::move(mesh), std::move(transform)});
+void Model::addPart(T mesh, Eigen::Matrix4f transform, std::optional<graphics::Texture> texture) {
+    m_parts.push_back(ModelPart{std::move(mesh), std::move(transform), std::move(texture)});
 }
 
-template void Model::addPart<graphics::StandardMesh>(graphics::StandardMesh, Eigen::Matrix4f);
-template void Model::addPart<graphics::InstancedMesh>(graphics::InstancedMesh, Eigen::Matrix4f);
+template void Model::addPart<graphics::StandardMesh>(graphics::StandardMesh, Eigen::Matrix4f, std::optional<graphics::Texture>);
+template void Model::addPart<graphics::InstancedMesh>(graphics::InstancedMesh, Eigen::Matrix4f, std::optional<graphics::Texture>);
 
 void Model::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_transform, const graphics::Camera& camera) {
     for (ModelPart& part : m_parts) {
-        std::visit([&](auto& mesh) { renderer.renderMesh(mesh, world_transform * part.transform, camera); }, part.mesh);
+        const graphics::Texture* texture = part.texture ? &*part.texture : nullptr;
+        std::visit([&](auto& mesh) { renderer.renderMesh(mesh, texture, world_transform * part.transform, camera); }, part.mesh);
     }
 }
 

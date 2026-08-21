@@ -131,8 +131,12 @@ int main(int argc, char** argv) {
     cli.parse();
 
     std::optional<std::string> model_arg = cli.arg<std::string>("model");
-    if (!model_arg.has_value() || std::filesystem::path(*model_arg).extension() != ".glb") {
-        RLOG(LL_FATAL, "--model <path>.glb is required");
+    if (!model_arg.has_value()) {
+        RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
+    }
+    std::filesystem::path model_ext = std::filesystem::path(*model_arg).extension();
+    if (model_ext != ".glb" && model_ext != ".gltf") {
+        RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
     }
     const std::filesystem::path model_path = *model_arg;
 

@@ -30,8 +30,22 @@ int main(int argc, char** argv) {
 	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
 	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
 	// headers below get tracked as depending on them and rebuild when a shader changes.
+	const std::vector<std::string> shader_names = {
+	    "gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"};
+
+	// A Command Output is always considered stale (see Output::isStale), so guard the
+	// glslc invocation ourselves: only add the Task when the .h is missing or older than
+	// its shader source. Skipped shaders just don't get a Task -- the depends_on() wiring
+	// below tolerates a missing entry.
+	auto shaderStale = [](const std::string& name) {
+	    std::filesystem::path src = "src/graphics/shaders/" + name;
+	    std::filesystem::path hdr = ".build/shaders/" + name + ".h";
+	    return !std::filesystem::exists(hdr) || std::filesystem::last_write_time(src) > std::filesystem::last_write_time(hdr);
+	};
+
 	std::unordered_map<std::string, std::reference_wrapper<Task>> shader_tasks;
-	for (const std::string& name : {"gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
+	for (const std::string& name : shader_names) {
+	    if (!shaderStale(name)) continue;
 	    Task& task = engine.addTask(Output(Command({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name})));
 	    shader_tasks.emplace(name, task);
 	}
@@ -76,6 +90,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/camera.cpp",
 	    "src/graphics/mesh.cpp",
 	    "src/graphics/texture.cpp",
+	    "src/graphics/material.cpp",
 	    "src/graphics/light.cpp",
 	    "src/graphics/light_manager.cpp",
 	    "src/graphics/post_process_chain.cpp",
@@ -99,11 +114,13 @@ int main(int argc, char** argv) {
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
 	    if (source == "src/graphics/renderer.cpp") {
-	        for (const std::string& name : {"gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"}) {
-	            task.depends_on(shader_tasks.at(name));
+	        for (const std::string& name : shader_names) {
+	            auto it = shader_tasks.find(name);
+	            if (it != shader_tasks.end()) task.depends_on(it->second);
 	        }
 	    } else if (source == "src/graphics/post_process_chain.cpp") {
-	        task.depends_on(shader_tasks.at("fullscreen_triangle.vert"));
+	        auto it = shader_tasks.find("fullscreen_triangle.vert");
+	        if (it != shader_tasks.end()) task.depends_on(it->second);
 	    }
 	    objects.push_back(task);
 	}

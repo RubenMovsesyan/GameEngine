@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Material — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a class="here" href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="surface.html">Surface</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Material</code></h1>
+<p class="lede">glTF's metallic-roughness material model: two optional textures plus the scalar factors that always apply.</p>
+
+<h2>Role</h2>
+<p>
+  Carries what the geometry pass needs to write real per-surface metallic/roughness
+  into the G-buffer's material channel, instead of the flat placeholder it used to
+  write. Mirrors what <code>cgltf_pbr_metallic_roughness</code> actually defines:
+  <code>base_color_texture</code>/<code>metallic_roughness_texture</code> are genuinely
+  optional (same optionality <code>Texture</code> loading already had for base color),
+  <code>base_color_factor</code>/<code>metallic_factor</code>/<code>roughness_factor</code>
+  are always meaningful (default <code>(1,1,1,1)</code>/<code>1.0</code>/<code>1.0</code>
+  regardless of whether a texture exists).
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on <code>gpu::Device</code> and <a href="texture.html"><code>Texture</code></a>.
+  Built by <code>scene::loadGltf</code>'s <code>loadMaterial()</code> (one per glTF
+  primitive, unconditionally — a primitive with no <code>cgltf_material</code> still
+  gets a <code>Material</code>, just one with both textures absent and every factor at
+  its glTF default). Held on <code>scene::ModelPart::material</code>; read every frame
+  by <a href="renderer.html"><code>Renderer::renderMesh()</code></a> for the G-buffer
+  pass's texture and factors-buffer bindings.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Material {
+    static Material create(const gpu::Device&, std::optional&lt;Texture&gt; base_color_texture,
+                            std::optional&lt;Texture&gt; metallic_roughness_texture,
+                            const Eigen::Vector4f& base_color_factor, f32 metallic_factor, f32 roughness_factor);
+
+    const std::optional&lt;Texture&gt;& baseColorTexture() const;
+    const std::optional&lt;Texture&gt;& metallicRoughnessTexture() const;
+    nvrhi::IBuffer* factorsBuffer() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>First draft of this design baked the factors into synthesized pixels;
+    that was wrong.</strong> The obvious first move was: make
+    <code>metallic_roughness</code> a required, always-real <code>Texture</code>,
+    synthesizing a solid 1×1 color to carry the factors when glTF has no texture. That
+    breaks the symmetry glTF itself defines — <code>metallic_roughness_texture</code> is
+    optional, exactly like <code>base_color_texture</code> already was — and forces
+    every texture-less material through a GPU upload for what's really just two floats.
+    Corrected to keep the texture genuinely optional and carry the factors as an actual
+    tiny buffer instead.
+  </li>
+  <li>
+    <strong>The factors live in a real GPU buffer, not a push constant.</strong>
+    <code>GBufferPushConstants</code> (<code>renderer.cpp</code>) is already
+    <code>2×mat4 = 128 bytes</code> — exactly Vulkan's spec-guaranteed minimum
+    <code>maxPushConstantsSize</code>, which some real desktop hardware (AMD in
+    particular) provides and no more. There's no safe headroom to grow it. Instead,
+    <code>create()</code> builds a tiny read-only structured buffer (same shape
+    <code>LightManager::build()</code> already uses for the light array — one struct
+    instead of an array) holding <code>{base_color_factor, metallic_factor,
+    roughness_factor}</code>, bound at a new <code>StructuredBuffer_SRV</code> slot.
+  </li>
+  <li>
+    <strong>Factors are multiplied in-shader, after sampling</strong> — not baked into
+    texture pixels at load time. This matters for <code>base_color_factor</code>
+    specifically: <code>base_color_texture</code>'s format is <code>SRGBA8_UNORM</code>,
+    so the GPU sRGB-decodes it on sample; the stored bytes are gamma-encoded, and
+    <code>base_color_factor</code> is a linear-space multiplier. Multiplying the raw
+    stored bytes before upload would be gamma-wrong. Multiplying <em>after</em>
+    <code>texture()</code> in <code>gbuffer.frag</code> operates on the already-decoded
+    linear value, so it's correct with zero extra work.
+  </li>
+  <li>
+    <strong>"No texture" and "no metalness/roughness" are different things, and
+    <code>Material</code> keeps them separate.</strong> When
+    <code>metallic_roughness_texture</code> is absent, <code>Renderer</code> binds its
+    shared <code>m_white_texture</code> fallback (same one <code>base_color_texture</code>
+    already falls back to) — sampling white reads <code>(1,1,1,1)</code>, so
+    <code>sampled.g * roughness_factor == roughness_factor</code> exactly, matching
+    glTF's own spec: the implicit sample when no texture exists is <code>1.0</code>.
+    The actual value for a texture-less material lives entirely in the factor, in the
+    buffer — the texture slot never needs to lie about it.
+  </li>
+  <li>
+    Private constructor + static factory, matching every other GPU-resource class here
+    (<code>Texture</code>, <code>Mesh</code>, <code>Surface</code>) — protects the
+    invariant that <code>m_factors_buffer</code> is always built.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/material.hpp</code>, <code>src/graphics/material.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

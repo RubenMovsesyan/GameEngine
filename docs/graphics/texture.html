@@ -22,6 +22,7 @@
   <a href="camera.html">Camera</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
   <a href="mesh.html">Mesh</a>
   <a href="post_process_chain.html">PostProcessChain</a>
   <a href="renderer.html">Renderer</a>
@@ -51,7 +52,8 @@
 
 <h2>Role</h2>
 <p>
-  Wraps one <code>nvrhi::TextureHandle</code> the same way <a href="mesh.html">Mesh</a>
+  Wraps one <code>nvrhi::TextureHandle</code> the same way <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
   wraps vertex/index buffers. Its second job — background loading — exists because glTF
   texture decode (<code>stb_image</code>) plus GPU upload was stalling the whole scene
   load; <code>loadAsyncThread()</code> returns instantly with a placeholder and swaps in

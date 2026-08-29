@@ -22,6 +22,7 @@
   <a href="camera.html">Camera</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
   <a href="mesh.html">Mesh</a>
   <a href="post_process_chain.html">PostProcessChain</a>
   <a class="here" href="renderer.html">Renderer</a>
@@ -59,7 +60,8 @@
 <h2>Depends on / depended on by</h2>
 <p>
   Depends on <code>gpu::Device</code>/<code>gpu::Swapchain</code>, and on
-  <a href="mesh.html"><code>Mesh</code></a>, <a href="texture.html"><code>Texture</code></a>,
+  <a href="mesh.html"><code>Mesh</code></a>, <a href="material.html"><code>Material</code></a>,
+  <a href="texture.html"><code>Texture</code></a>,
   <code>Camera</code>, <code>LightManager</code>, <code>PostProcessChain</code>,
   <code>Surface</code>. Driven directly by whatever code
   owns the render loop (currently <code>sandbox/model_test/main.cpp</code>, via a
@@ -73,7 +75,7 @@
     void beginFrame();
 
     template &lt;Mesh T&gt;
-    void renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::Matrix4f& model, const Camera&);
+    void renderMesh(T& mesh, const Material& material, const Eigen::Matrix4f& model, const Camera&);
 
     void setLights(const LightManager&);   // call between beginFrame() and endFrame()
     void setExposure(f32);                 // brightness multiplier before the tonemap curve
@@ -92,18 +94,18 @@
   <rect x="10" y="40" width="170" height="90" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
   <text x="95" y="65" fill="#d8dae0" text-anchor="middle" font-weight="600">G-buffer pass</text>
   <text x="95" y="85" fill="#8b90a0" text-anchor="middle">per renderMesh()</text>
-  <text x="95" y="102" fill="#8b90a0" text-anchor="middle">writes albedo,</text>
-  <text x="95" y="117" fill="#8b90a0" text-anchor="middle">normal, depth</text>
+  <text x="95" y="102" fill="#8b90a0" text-anchor="middle">writes albedo, normal,</text>
+  <text x="95" y="117" fill="#8b90a0" text-anchor="middle">material, depth</text>
 
   <line x1="180" y1="85" x2="250" y2="85" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
 
   <rect x="250" y="20" width="180" height="150" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
   <text x="340" y="45" fill="#d8dae0" text-anchor="middle" font-weight="600">Lighting pass</text>
   <text x="340" y="65" fill="#8b90a0" text-anchor="middle">reads albedo, normal,</text>
-  <text x="340" y="80" fill="#8b90a0" text-anchor="middle">depth, light buffer</text>
-  <text x="340" y="100" fill="#8b90a0" text-anchor="middle">reconstructs world pos</text>
-  <text x="340" y="115" fill="#8b90a0" text-anchor="middle">from depth for point</text>
-  <text x="340" y="130" fill="#8b90a0" text-anchor="middle">lights, accumulates N·L</text>
+  <text x="340" y="80" fill="#8b90a0" text-anchor="middle">material, depth, lights</text>
+  <text x="340" y="100" fill="#8b90a0" text-anchor="middle">reconstructs world pos,</text>
+  <text x="340" y="115" fill="#8b90a0" text-anchor="middle">shades Cook-Torrance</text>
+  <text x="340" y="130" fill="#8b90a0" text-anchor="middle">GGX per light</text>
   <text x="340" y="150" fill="#7fd88f" text-anchor="middle">writes HDR color</text>
 
   <line x1="430" y1="95" x2="500" y2="95" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
@@ -208,18 +210,46 @@
     <code>renderMesh()</code> reproduces the crash.
   </li>
   <li>
-    <strong>Albedo comes from a per-draw texture binding, sampled in <code>gbuffer.frag</code>.</strong>
-    <code>renderMesh&lt;T&gt;()</code> takes an <code>albedo_texture</code> pointer and
-    builds one <code>nvrhi::BindingSetHandle</code> per call from
-    <code>m_gbuffer_texture_binding_layout</code> (<code>Texture_SRV(0)</code> +
-    <code>Sampler(1)</code>, one shared <code>m_gbuffer_sampler</code> for every
-    texture — no per-texture wrap/filter settings from the glTF sampler yet). When
-    <code>albedo_texture</code> is null (a <code>ModelPart</code> with no material),
-    <code>m_white_texture</code> (a 1×1 white pixel built once in the constructor) is
-    bound instead — same "a null handle isn't valid there" reasoning as
-    <code>m_empty_light_buffer</code>. Built fresh every draw call, same as the lighting
-    pass already rebuilds its own binding set every frame — not a new performance
-    concern for this renderer's existing stance.
+    <strong>The G-buffer's per-draw binding set carries a whole
+    <a href="material.html"><code>Material</code></a> now, sampled in <code>gbuffer.frag</code>.</strong>
+    <code>renderMesh&lt;T&gt;()</code> takes a <code>const Material&amp;</code> and builds
+    one <code>nvrhi::BindingSetHandle</code> per call from
+    <code>m_gbuffer_texture_binding_layout</code>: <code>Texture_SRV(0)</code> base
+    color, <code>Texture_SRV(1)</code> metallic-roughness, <code>Sampler(2)</code> one
+    shared <code>m_gbuffer_sampler</code> for both (no per-texture wrap/filter settings
+    from the glTF sampler yet), <code>StructuredBuffer_SRV(3)</code> the material's
+    factors buffer. Either texture slot falls back to <code>m_white_texture</code> (a
+    1×1 white pixel built once in the constructor) when a <code>Material</code>'s
+    texture is absent — same "a null handle isn't valid there" reasoning as
+    <code>m_empty_light_buffer</code>, and correct per spec: sampling white reads
+    <code>1.0</code>, so the shader's factor multiply alone produces the right value.
+    Built fresh every draw call, same as the lighting pass already rebuilds its own
+    binding set every frame — not a new performance concern for this renderer's
+    existing stance.
+  </li>
+  <li>
+    <strong><code>m_material</code> went from declared-but-dead to a real G-buffer
+    target.</strong> It existed from the start of texture support but was never
+    attached to <code>m_gbuffer_framebuffer</code> or written by <code>gbuffer.frag</code>.
+    Wiring it in touched three spots: <code>gbuffer_fb_info</code> gained a third
+    <code>addColorFormat(RGBA8_UNORM)</code>, <code>rebuildGBuffer()</code>'s framebuffer
+    gained a third <code>addColorAttachment(m_material)</code>, and
+    <code>beginFrame()</code>'s per-frame clears gained a third call — all three had to
+    move together, or the framebuffer/format counts stop matching what the pipeline
+    was created with.
+  </li>
+  <li>
+    <strong>Lighting reads <code>m_material</code> at a new <code>Texture_SRV(5)</code>
+    and shades Cook-Torrance GGX</strong> instead of Lambertian-only — packed as
+    G = roughness, B = metallic (R reserved for occlusion later, unused). No new push
+    constant needed: <code>view_position</code> was already uploaded every frame from
+    <code>camera.position()</code>, sitting unused since the HDR/point-light work,
+    comment said "reserved for specular" from the start. The diffuse term picked up the
+    <code>1/π</code> Lambertian normalization it didn't have before (needed for
+    energy-consistency with the new specular term), which makes diffuse ~3.14× dimmer at
+    the same light intensity — <code>kDefaultExposure</code> moved from
+    <code>0.001f</code> to <code>0.003f</code> to compensate. See
+    <a href="material.html">Material</a> for what's actually in the G/B channels.
   </li>
   <li>
     <strong>Descriptor set index is assigned by <code>addBindingLayout()</code> call

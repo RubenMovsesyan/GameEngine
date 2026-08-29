@@ -22,6 +22,7 @@
   <a href="../graphics/camera.html">Camera</a>
   <a href="../graphics/light.html">Light</a>
   <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/material.html">Material</a>
   <a href="../graphics/mesh.html">Mesh</a>
   <a href="../graphics/post_process_chain.html">PostProcessChain</a>
   <a href="../graphics/renderer.html">Renderer</a>
@@ -47,7 +48,7 @@
 <main>
 
 <h1><code>scene::Model</code></h1>
-<p class="lede">A flat collection of meshes, each with its own local transform. Geometry only — no lights, no materials.</p>
+<p class="lede">A flat collection of meshes, each with its own local transform and material. Geometry only — no lights.</p>
 
 <h2>Role</h2>
 <p>
@@ -56,14 +57,15 @@
   caller-supplied world transform with each part's local transform. No node hierarchy
   or scene graph — a flat list is all that's needed for what's actually loaded today.
   Each part can independently be a <code>StandardMesh</code> or an <code>InstancedMesh</code>
-  — see <a href="../graphics/mesh.html">Mesh</a>.
+  — see <a href="../graphics/material.html">Material</a>
+  <a href="../graphics/mesh.html">Mesh</a>.
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
   Depends on <a href="../graphics/mesh.html"><code>graphics::Mesh</code></a> (the concept,
   <code>StandardMesh</code>, <code>InstancedMesh</code>)/<code>Renderer</code>/<code>Camera</code>/
-  <a href="../graphics/texture.html"><code>Texture</code></a>.
+  <a href="../graphics/material.html"><code>Material</code></a>.
   Built by <code>scene::loadGltf</code> (one <code>Model</code> per glTF file, gathering
   every mesh primitive in the node tree, always as <code>StandardMesh</code>); owned by
   <code>scene::Scene</code>.
@@ -73,7 +75,7 @@
 <pre><code>struct ModelPart {
     std::variant&lt;graphics::StandardMesh, graphics::InstancedMesh&gt; mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
-    std::optional&lt;graphics::Texture&gt; texture; // base color
+    graphics::Material material;
 
     void convertToStandard();    // shares buffers, no re-upload; warns and no-ops if already that kind
     void convertToInstanced();   // lossy for the reverse direction -- see graphics::Mesh
@@ -81,8 +83,7 @@
 
 class Model {
     template &lt;graphics::Mesh T&gt;
-    void addPart(T mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity(),
-                 std::optional&lt;graphics::Texture&gt; texture = std::nullopt);
+    void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material);
     void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
     u32 partCount() const;
@@ -123,14 +124,19 @@ class Model {
     <code>Model::render()</code>.
   </li>
   <li>
-    <strong><code>texture</code> is optional and rides along, untouched by <code>Model</code>
-    itself.</strong> <code>addPart()</code>'s trailing parameter defaults to
-    <code>std::nullopt</code>; whatever's there (or not) just gets forwarded into
-    <code>Renderer::renderMesh()</code> during <code>render()</code>. Since
-    <a href="../graphics/texture.html"><code>Texture</code></a> can be mid-background-load
-    when a part is added, <code>Model</code> never needs to know or care whether it's
-    holding the real texture or still the placeholder — <code>Texture</code>'s own
-    thread-safe accessors handle that.
+    <strong><code>material</code> is always present and rides along, untouched by
+    <code>Model</code> itself.</strong> <code>addPart()</code>'s trailing
+    <code>Material</code> parameter has no default — building one needs a
+    <code>gpu::Device</code>, so unlike the old
+    <code>std::optional&lt;Texture&gt; = std::nullopt</code> shape, there's no
+    device-free default to fall back to. <code>scene::loadGltf</code> is the only
+    caller and always builds a real one via <code>loadMaterial()</code>, including for
+    a primitive with no glTF material at all (defaults, both textures absent). Whatever
+    the <code>Material</code> holds just gets forwarded into
+    <code>Renderer::renderMesh()</code> during <code>render()</code> — optionality (a
+    texture present or not, still background-loading or not) lives entirely inside
+    <code>Material</code>/<code>Texture</code> now, one level down from
+    <code>Model</code>.
   </li>
   <li>
     <strong>No CPU-side vertex/index retention.</strong> <code>convertToStandard()</code>/

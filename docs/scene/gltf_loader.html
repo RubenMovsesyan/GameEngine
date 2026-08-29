@@ -22,6 +22,7 @@
   <a href="../graphics/camera.html">Camera</a>
   <a href="../graphics/light.html">Light</a>
   <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/material.html">Material</a>
   <a href="../graphics/mesh.html">Mesh</a>
   <a href="../graphics/post_process_chain.html">PostProcessChain</a>
   <a href="../graphics/renderer.html">Renderer</a>
@@ -62,6 +63,7 @@
 <p>
   Depends on <code>gpu::Device</code>, <code>scene::Scene</code>/<code>Model</code>,
   <code>graphics::StandardMesh</code>/<code>Vertex</code>/<code>Light</code>/
+  <a href="../graphics/material.html"><code>Material</code></a>/
   <a href="../graphics/texture.html"><code>Texture</code></a>, <code>cgltf</code>
   (vendored, single-header), and <code>stb_image</code> (vendored, single-header, image
   decode only). Called directly by test/game code — <code>graphics/</code> never depends
@@ -79,15 +81,19 @@
   <li>Node transforms: <code>cgltf_node_transform_local</code> fills a column-major <code>float[16]</code>, which matches <code>Eigen::Matrix4f</code>'s default storage directly — <code>Eigen::Map&lt;const Eigen::Matrix4f&gt;(local)</code> reads it with no conversion.</li>
   <li>Light direction/position come from the owning node's accumulated world transform, not from the light itself — glTF stores punctual lights as node attachments, same as meshes. Direction uses the transform's 3×3 rotation block applied to local <code>(0,0,-1)</code>, skipping the inverse-transpose (a simplification, consistent with how mesh normals are handled in <code>gbuffer.vert</code> — correct for uniform scale, not for non-uniform).</li>
   <li>
-    <strong>Base-color texture only</strong> — a primitive's
-    <code>pbr_metallic_roughness.base_color_texture</code>, loaded via
-    <a href="../graphics/texture.html"><code>Texture::loadAsyncThread()</code></a> onto
-    <code>ModelPart::texture</code>. Normal/metallic-roughness/occlusion textures aren't
-    loaded; no material system exists to use them yet. No animation/skinning, no
-    cameras/lights defined outside <code>KHR_lights_punctual</code>.
+    <strong>Full metallic-roughness materials</strong> — <code>loadMaterial()</code>
+    reads <code>base_color_texture</code>/<code>metallic_roughness_texture</code> plus
+    <code>base_color_factor</code>/<code>metallic_factor</code>/<code>roughness_factor</code>
+    off <code>cgltf_pbr_metallic_roughness</code> and builds a
+    <a href="../graphics/material.html"><code>Material</code></a>, called unconditionally
+    per primitive (a primitive with no <code>cgltf_material</code> gets glTF's own
+    defaults: both textures absent, factors <code>(1,1,1,1)</code>/<code>1.0</code>/<code>1.0</code>).
+    <code>occlusion_texture</code>/<code>normal_texture</code>/<code>emissive_*</code> still
+    aren't loaded — unrelated to what materials exist for right now (specular). No
+    animation/skinning, no cameras/lights defined outside <code>KHR_lights_punctual</code>.
   </li>
   <li>
-    <strong>Texture bytes, combined or separate.</strong> <code>loadTexture()</code>
+    <strong>Texture bytes, combined or separate.</strong> <code>resolveImageBytes()</code>
     resolves a texture's raw compressed bytes three ways, always into one owned
     <code>std::vector&lt;u8&gt;</code> regardless of source (required so the bytes
     survive being moved into the background decode thread, past this function's own
@@ -102,7 +108,11 @@
     <code>cgltf_decode_uri()</code>, read with <code>std::ifstream</code>.
     <code>sandbox/model_test/test_assets/smile_cube.gltf</code> +
     <code>smile_cube.bin</code> + <code>smile.jpg</code> is the one asset in the repo
-    exercising the separate-file path end to end.
+    exercising the separate-file path end to end. <code>decodeImageBytes()</code> is the
+    plain <code>stb_image</code> decode step, split out from byte resolution so
+    <code>loadTexture()</code> (base color, format <code>SRGBA8_UNORM</code>) and
+    <code>metallic_roughness_texture</code>'s load (format <code>RGBA8_UNORM</code> —
+    it's linear data, not color) both reuse it unchanged.
   </li>
   <li>
     Decode (<code>stb_image</code>) and GPU upload happen inside the callable handed to

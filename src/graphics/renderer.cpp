@@ -1,6 +1,7 @@
 #include <graphics/renderer.hpp>
 
 #include <cstddef>
+#include <optional>
 
 namespace {
 
@@ -94,6 +95,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     nvrhi::FramebufferInfo gbuffer_fb_info = nvrhi::FramebufferInfo()
                                                   .addColorFormat(nvrhi::Format::SRGBA8_UNORM)
                                                   .addColorFormat(nvrhi::Format::RGBA32_FLOAT)
+                                                  .addColorFormat(nvrhi::Format::RGBA8_UNORM)
                                                   .setDepthFormat(nvrhi::Format::D32);
 
     nvrhi::RenderState gbuffer_state{};
@@ -108,7 +110,9 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     m_gbuffer_texture_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
                                                                               .setVisibility(nvrhi::ShaderType::Pixel)
                                                                               .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
-                                                                              .addItem(nvrhi::BindingLayoutItem::Sampler(1))
+                                                                              .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
+                                                                              .addItem(nvrhi::BindingLayoutItem::Sampler(2))
+                                                                              .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3))
                                                                               .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
     m_gbuffer_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
 
@@ -178,6 +182,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
                                                                         .addItem(nvrhi::BindingLayoutItem::Sampler(2))
                                                                         .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3))
                                                                         .addItem(nvrhi::BindingLayoutItem::Texture_SRV(4))
+                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(5))
                                                                         .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
 
     m_lighting_push_constant_layout = nvrhi_device->createBindingLayout(
@@ -213,7 +218,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     m_tonemap_pass = m_post_process.addPass(kTonemapFragSpv, std::size(kTonemapFragSpv), sizeof(TonemapPushConstants));
     rebuildPostProcessTargets();
 
-    constexpr f32 kDefaultExposure = 0.001f; // real Blender-exported intensities are huge; expect to tune this per scene
+    constexpr f32 kDefaultExposure = 0.003f; // real Blender-exported intensities are huge; expect to tune this per scene
     setExposure(kDefaultExposure);
 }
 
@@ -232,7 +237,7 @@ void Renderer::rebuildGBuffer() {
     m_depth = createGBufferTexture(*m_device, extent, nvrhi::Format::D32, nvrhi::ResourceStates::DepthWrite, "gbuffer depth");
 
     m_gbuffer_framebuffer = m_device->nvrhi()->createFramebuffer(
-        nvrhi::FramebufferDesc().addColorAttachment(m_albedo).addColorAttachment(m_normal).setDepthAttachment(m_depth)
+        nvrhi::FramebufferDesc().addColorAttachment(m_albedo).addColorAttachment(m_normal).addColorAttachment(m_material).setDepthAttachment(m_depth)
     );
 }
 
@@ -259,11 +264,12 @@ void Renderer::beginFrame() {
     // Must clear every frame -- an uncleared depth buffer fails the depth test against stale VRAM contents.
     m_cmd->clearTextureFloat(m_albedo, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
     m_cmd->clearTextureFloat(m_normal, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 0.0f));
+    m_cmd->clearTextureFloat(m_material, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 0.0f));
     m_cmd->clearDepthStencilTexture(m_depth, nvrhi::AllSubresources, true, 1.0f, false, 0);
 }
 
 template <Mesh T>
-void Renderer::renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::Matrix4f& model, const Camera& camera) {
+void Renderer::renderMesh(T& mesh, const Material& material, const Eigen::Matrix4f& model, const Camera& camera) {
     if constexpr (requires { mesh.uploadIfDirty(*m_device); }) {
         mesh.uploadIfDirty(*m_device);
     }
@@ -293,10 +299,14 @@ void Renderer::renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::M
     }
     state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indexBuffer()).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
 
+    const std::optional<Texture>& base_color = material.baseColorTexture();
+    const std::optional<Texture>& metallic_roughness = material.metallicRoughnessTexture();
     nvrhi::BindingSetHandle texture_binding_set = m_device->nvrhi()->createBindingSet(
         nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, albedo_texture ? albedo_texture->texture() : m_white_texture.Get()))
-            .addItem(nvrhi::BindingSetItem::Sampler(1, m_gbuffer_sampler)),
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, base_color ? base_color->texture() : m_white_texture.Get()))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, metallic_roughness ? metallic_roughness->texture() : m_white_texture.Get()))
+            .addItem(nvrhi::BindingSetItem::Sampler(2, m_gbuffer_sampler))
+            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, material.factorsBuffer())),
         m_gbuffer_texture_binding_layout
     );
     state.bindings = {texture_binding_set, m_gbuffer_push_constant_binding_set};
@@ -306,8 +316,8 @@ void Renderer::renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::M
     m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(mesh.indexCount()).setInstanceCount(mesh.instanceCount()));
 }
 
-template void Renderer::renderMesh<StandardMesh>(StandardMesh&, const Texture*, const Eigen::Matrix4f&, const Camera&);
-template void Renderer::renderMesh<InstancedMesh>(InstancedMesh&, const Texture*, const Eigen::Matrix4f&, const Camera&);
+template void Renderer::renderMesh<StandardMesh>(StandardMesh&, const Material&, const Eigen::Matrix4f&, const Camera&);
+template void Renderer::renderMesh<InstancedMesh>(InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Camera&);
 
 void Renderer::setLights(const LightManager& lights) {
     m_light_buffer = lights.buffer();
@@ -331,7 +341,8 @@ void Renderer::endFrame() {
             .addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_normal))
             .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler))
             .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, m_light_buffer ? m_light_buffer : m_empty_light_buffer.Get()))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(4, m_depth)),
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(4, m_depth))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(5, m_material)),
         m_lighting_binding_layout
     );
 

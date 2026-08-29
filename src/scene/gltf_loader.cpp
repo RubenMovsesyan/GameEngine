@@ -1,5 +1,7 @@
 #include <scene/gltf_loader.hpp>
 
+#include <graphics/material.hpp>
+
 #include <rlog.h>
 
 #define CGLTF_IMPLEMENTATION
@@ -24,10 +26,10 @@ usize base64DecodedSize(std::string_view encoded) {
     return (len / 4) * 3 - padding;
 }
 
-std::optional<graphics::Texture> loadTexture(const gpu::Device& device, const cgltf_texture* tex, const std::filesystem::path& gltf_path,
-                                              nvrhi::Format format) {
+// Combined (embedded) or separate (external file / base64) -- always an owned copy.
+std::vector<u8> resolveImageBytes(const cgltf_texture* tex, const std::filesystem::path& gltf_path) {
     if (tex == nullptr || tex->image == nullptr) {
-        return std::nullopt;
+        return {};
     }
     const cgltf_image& image = *tex->image;
 
@@ -64,24 +66,53 @@ std::optional<graphics::Texture> loadTexture(const gpu::Device& device, const cg
         RLOG(LL_FATAL, "gltf: texture image has neither buffer_view nor uri");
     }
 
-    auto decode = [bytes = std::move(owned_bytes)]() -> graphics::DecodedPixels {
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
-        if (pixels == nullptr) {
-            RLOG(LL_FATAL, "gltf: failed to decode texture image (%s)", stbi_failure_reason());
-        }
-        graphics::DecodedPixels result{
-            std::vector<u8>(pixels, pixels + static_cast<usize>(width) * static_cast<usize>(height) * 4), static_cast<u32>(width),
-            static_cast<u32>(height)
-        };
-        stbi_image_free(pixels);
-        RLOG(LL_DEBUG, "gltf: loaded texture %ux%u", result.width, result.height);
-        return result;
-    };
+    return owned_bytes;
+}
 
+// Runs on whatever thread calls it -- the background decode thread, for loadTexture().
+graphics::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
+    if (pixels == nullptr) {
+        RLOG(LL_FATAL, "gltf: failed to decode texture image (%s)", stbi_failure_reason());
+    }
+    graphics::DecodedPixels result{
+        std::vector<u8>(pixels, pixels + static_cast<usize>(width) * static_cast<usize>(height) * 4), static_cast<u32>(width), static_cast<u32>(height)
+    };
+    stbi_image_free(pixels);
+    RLOG(LL_DEBUG, "gltf: loaded texture %ux%u", result.width, result.height);
+    return result;
+}
+
+std::optional<graphics::Texture> loadTexture(const gpu::Device& device, const cgltf_texture* tex, const std::filesystem::path& gltf_path,
+                                              nvrhi::Format format) {
+    if (tex == nullptr || tex->image == nullptr) {
+        return std::nullopt;
+    }
+    auto decode = [bytes = resolveImageBytes(tex, gltf_path)]() mutable { return decodeImageBytes(std::move(bytes)); };
     return graphics::Texture::loadAsyncThread(device, std::move(decode), format);
+}
+
+graphics::Material loadMaterial(const gpu::Device& device, const cgltf_material* material, const std::filesystem::path& gltf_path) {
+    Eigen::Vector4f base_color_factor{1.0f, 1.0f, 1.0f, 1.0f};
+    f32 metallic_factor = 1.0f;
+    f32 roughness_factor = 1.0f;
+    std::optional<graphics::Texture> base_color_texture;
+    std::optional<graphics::Texture> metallic_roughness_texture;
+
+    if (material != nullptr && material->has_pbr_metallic_roughness) {
+        const cgltf_pbr_metallic_roughness& pbr = material->pbr_metallic_roughness;
+        base_color_factor = Eigen::Vector4f(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2], pbr.base_color_factor[3]);
+        metallic_factor = pbr.metallic_factor;
+        roughness_factor = pbr.roughness_factor;
+        base_color_texture = loadTexture(device, pbr.base_color_texture.texture, gltf_path, nvrhi::Format::SRGBA8_UNORM);
+        metallic_roughness_texture = loadTexture(device, pbr.metallic_roughness_texture.texture, gltf_path, nvrhi::Format::RGBA8_UNORM);
+    }
+
+    return graphics::Material::create(device, std::move(base_color_texture), std::move(metallic_roughness_texture), base_color_factor, metallic_factor,
+                                       roughness_factor);
 }
 
 void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive, const Eigen::Matrix4f& transform,
@@ -130,13 +161,8 @@ void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive
         indices[i] = static_cast<u32>(cgltf_accessor_read_index(primitive.indices, i));
     }
 
-    std::optional<graphics::Texture> base_color_texture;
-    if (primitive.material != nullptr && primitive.material->has_pbr_metallic_roughness) {
-        base_color_texture =
-            loadTexture(device, primitive.material->pbr_metallic_roughness.base_color_texture.texture, gltf_path, nvrhi::Format::SRGBA8_UNORM);
-    }
-
-    model.addPart(graphics::StandardMesh::create(device, vertices, indices), transform, std::move(base_color_texture));
+    graphics::Material material = loadMaterial(device, primitive.material, gltf_path);
+    model.addPart(graphics::StandardMesh::create(device, vertices, indices), transform, std::move(material));
 }
 
 graphics::LightType toLightType(cgltf_light_type type) {

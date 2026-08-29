@@ -1,13 +1,12 @@
 #pragma once
 
 #include <graphics/camera.hpp>
+#include <graphics/material.hpp>
 #include <graphics/mesh.hpp>
 #include <graphics/renderer.hpp>
-#include <graphics/texture.hpp>
 
 #include <Eigen/Dense>
 
-#include <optional>
 #include <variant>
 #include <vector>
 
@@ -16,7 +15,7 @@ namespace scene {
 struct ModelPart {
     std::variant<graphics::StandardMesh, graphics::InstancedMesh> mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
-    std::optional<graphics::Texture> texture; // base color
+    graphics::Material material;
 
     // Shares the existing vertex/index buffers -- no re-upload. Warns and no-ops if already that kind.
     void convertToStandard();
@@ -28,7 +27,7 @@ struct ModelPart {
 class Model {
     public:
         template <graphics::Mesh T>
-        void addPart(T mesh, Eigen::Matrix4f transform = Eigen::Matrix4f::Identity(), std::optional<graphics::Texture> texture = std::nullopt);
+        void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material);
         void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
         u32 partCount() const { return static_cast<u32>(m_parts.size()); }

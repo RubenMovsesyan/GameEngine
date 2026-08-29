@@ -2,10 +2,10 @@
 
 #include <graphics/camera.hpp>
 #include <graphics/light_manager.hpp>
+#include <graphics/material.hpp>
 #include <graphics/mesh.hpp>
 #include <graphics/post_process_chain.hpp>
 #include <graphics/surface.hpp>
-#include <graphics/texture.hpp>
 #include <gpu/swapchain.hpp>
 
 #include <mutex>
@@ -21,7 +21,7 @@ class Renderer {
         void beginFrame();
 
         template <Mesh T>
-        void renderMesh(T& mesh, const Texture* albedo_texture, const Eigen::Matrix4f& model, const Camera&);
+        void renderMesh(T& mesh, const Material& material, const Eigen::Matrix4f& model, const Camera&);
 
         // Call between beginFrame() and endFrame().
         void setLights(const LightManager&);
@@ -43,7 +43,7 @@ class Renderer {
         gpu::Swapchain* m_swapchain;
         std::vector<Surface> m_swapchain_surfaces;
 
-        // Geometry pass writes albedo+normal+depth; material unused until it writes more than color+normal.
+        // Geometry pass writes albedo, normal, and packed metallic-roughness (+ depth).
         nvrhi::TextureHandle m_albedo;   // SRGBA8_UNORM
         nvrhi::TextureHandle m_normal;   // RGBA32_FLOAT
         nvrhi::TextureHandle m_material; // RGBA8_UNORM
@@ -57,7 +57,7 @@ class Renderer {
         nvrhi::BindingSetHandle m_gbuffer_push_constant_binding_set;
         nvrhi::BindingLayoutHandle m_gbuffer_texture_binding_layout;
         nvrhi::SamplerHandle m_gbuffer_sampler;
-        // Bound whenever a ModelPart has no texture -- a null texture handle isn't valid there.
+        // Bound whenever a Material has no texture for a slot -- a null texture handle isn't valid there.
         nvrhi::TextureHandle m_white_texture;
 
         nvrhi::GraphicsPipelineHandle m_lighting_pipeline;

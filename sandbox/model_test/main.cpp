@@ -12,6 +12,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -27,8 +28,19 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
     // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane, 2 units apart.
     constexpr u32 kGridSize = 10;
     constexpr f32 kGridSpacing = 3.0f;
+
+    // TEST: override every loaded material with a fully metallic, fully rough one.
+    // 1x1 texture with glTF MR packing (R=occlusion, G=roughness, B=metallic), factors at 1.0.
+    const std::array<u8, 4> kMaxMrPixel = {255, 25, 50, 255};
+    graphics::Texture max_mr_texture = graphics::Texture::create(app.device(), kMaxMrPixel, 1, 1);
+
     for (scene::Model& model : scene.mutableModels()) {
         for (scene::ModelPart& part : model.mutableParts()) {
+            part.material = graphics::Material::create(
+                app.device(), part.material.baseColorTexture(), max_mr_texture,
+                {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
+            );
+
             part.convertToInstanced();
             graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
             for (u32 x = 0; x < kGridSize; x++) {

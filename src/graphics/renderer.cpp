@@ -23,11 +23,22 @@ constexpr u32 kLightingFragSpv[] =
 constexpr u32 kTonemapFragSpv[] =
 #include "tonemap.frag.h"
     ;
+constexpr u32 kSkyFragSpv[] =
+#include "sky.frag.h"
+    ;
+constexpr u32 kFxaaFragSpv[] =
+#include "fxaa.frag.h"
+    ;
 
 constexpr u32 kFullscreenTriangleVertexCount = 3;
 
 struct TonemapPushConstants {
     f32 exposure;
+};
+
+struct FxaaPushConstants {
+    Eigen::Vector2f rcp_frame; // 1.0 / screen size
+    f32 enabled;               // < 0.5 -> passthrough
 };
 
 struct GBufferPushConstants {
@@ -38,7 +49,16 @@ struct GBufferPushConstants {
 struct LightingPushConstants {
     Eigen::Matrix4f inverse_view_projection;
     Eigen::Vector4f view_position;
+    Eigen::Vector4f ambient; // rgb = flat ambient irradiance (pre-tonemap)
     u32 light_count;
+};
+
+struct SkyPushConstants {
+    Eigen::Matrix4f inverse_view_projection;
+    Eigen::Vector4f view_position;
+    Eigen::Vector4f zenith_intensity; // rgb = zenith, a = intensity
+    Eigen::Vector4f ground;           // rgb = ground
+    u32 kind;                         // 0 = gradient, 1 = cubemap (unused today)
 };
 
 nvrhi::ShaderHandle loadShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const u32* spirv, usize word_count) {
@@ -206,6 +226,35 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
         nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(LightingPushConstants))), m_lighting_push_constant_layout
     );
 
+    // Sky pass: fullscreen gradient into m_hdr_color, reading only g-buffer depth (discards on geometry).
+    nvrhi::ShaderHandle sky_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kSkyFragSpv, std::size(kSkyFragSpv));
+
+    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
+    m_sky_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
+                                                                 .setVisibility(nvrhi::ShaderType::Pixel)
+                                                                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
+                                                                 .addItem(nvrhi::BindingLayoutItem::Sampler(1))
+                                                                 .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
+
+    m_sky_push_constant_layout = nvrhi_device->createBindingLayout(
+        nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Pixel).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(SkyPushConstants)))
+    );
+
+    m_sky_pipeline = nvrhi_device->createGraphicsPipeline(
+        nvrhi::GraphicsPipelineDesc()
+            .setVertexShader(lighting_vs) // shared fullscreen-triangle vertex shader
+            .setPixelShader(sky_fs)
+            .setRenderState(opaqueNoDepth())
+            .addBindingLayout(m_sky_binding_layout)
+            .addBindingLayout(m_sky_push_constant_layout),
+        lighting_fb_info
+    );
+
+    m_sky_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
+    m_sky_push_constant_binding_set = nvrhi_device->createBindingSet(
+        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(SkyPushConstants))), m_sky_push_constant_layout
+    );
+
     // Placeholder for slot 3 -- never read (light_count is 0 whenever this is bound).
     nvrhi::BufferDesc empty_light_desc{};
     empty_light_desc.byteSize = sizeof(Eigen::Vector4f);
@@ -216,10 +265,13 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     m_empty_light_buffer = device.createBuffer(empty_light_desc);
 
     m_tonemap_pass = m_post_process.addPass(kTonemapFragSpv, std::size(kTonemapFragSpv), sizeof(TonemapPushConstants));
-    rebuildPostProcessTargets();
+    m_fxaa_pass = m_post_process.addPass(kFxaaFragSpv, std::size(kFxaaFragSpv), sizeof(FxaaPushConstants));
+    rebuildPostProcessTargets(); // also seeds the FXAA push constants for the current extent
 
     constexpr f32 kDefaultExposure = 0.003f; // real Blender-exported intensities are huge; expect to tune this per scene
     setExposure(kDefaultExposure);
+
+    setSkybox(Skybox{}); // seed m_sky_* from the canonical default in skybox.hpp
 }
 
 void Renderer::rebuildSwapchainSurfaces() {
@@ -245,6 +297,16 @@ void Renderer::rebuildPostProcessTargets() {
     VkExtent2D extent = m_swapchain->extent();
     m_hdr_color = Surface::createOffscreen(*m_device, extent, nvrhi::Format::RGBA16_FLOAT);
     m_post_process.rebuild(extent, nvrhi::Format::BGRA8_UNORM);
+    updateFxaaPushConstants();
+}
+
+void Renderer::updateFxaaPushConstants() {
+    VkExtent2D extent = m_swapchain->extent();
+    FxaaPushConstants push{
+        Eigen::Vector2f(1.0f / static_cast<f32>(extent.width), 1.0f / static_cast<f32>(extent.height)),
+        m_fxaa_enabled ? 1.0f : 0.0f
+    };
+    m_post_process.setPushConstants(m_fxaa_pass, &push, sizeof(push));
 }
 
 void Renderer::beginFrame() {
@@ -324,8 +386,28 @@ void Renderer::setLights(const LightManager& lights) {
     m_light_count = lights.count();
 }
 
+void Renderer::setSkybox(const Skybox& skybox) {
+    m_sky_intensity = skybox.intensity;
+    if (const auto* gradient = std::get_if<GradientSky>(&skybox.source)) {
+        m_sky_kind = 0;
+        m_sky_zenith = gradient->zenith;
+        m_sky_ground = gradient->ground;
+    } else {
+        m_sky_kind = 1; // CubemapSky -- sampler binding not wired yet; gradient stash stays as-is
+    }
+}
+
 void Renderer::setExposure(f32 exposure) {
     m_post_process.setPushConstants(m_tonemap_pass, &exposure, sizeof(exposure));
+}
+
+void Renderer::setAmbient(const Eigen::Vector3f& ambient) {
+    m_ambient = ambient;
+}
+
+void Renderer::setFxaaEnabled(bool enabled) {
+    m_fxaa_enabled = enabled;
+    updateFxaaPushConstants();
 }
 
 void Renderer::endFrame() {
@@ -356,9 +438,37 @@ void Renderer::endFrame() {
 
     m_cmd->setGraphicsState(state);
     LightingPushConstants lighting_push{
-        m_inverse_view_projection, Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f), m_light_count
+        m_inverse_view_projection,
+        Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f),
+        Eigen::Vector4f(m_ambient.x(), m_ambient.y(), m_ambient.z(), 0.0f),
+        m_light_count
     };
     m_cmd->setPushConstants(&lighting_push, sizeof(lighting_push));
+    m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
+
+    // Sky fills the far-plane pixels of m_hdr_color; the shader discards where geometry was drawn.
+    nvrhi::BindingSetHandle sky_binding_set = m_device->nvrhi()->createBindingSet(
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_depth))
+            .addItem(nvrhi::BindingSetItem::Sampler(1, m_sky_sampler)),
+        m_sky_binding_layout
+    );
+
+    nvrhi::GraphicsState sky_state{};
+    sky_state.pipeline = m_sky_pipeline;
+    sky_state.framebuffer = m_hdr_color.framebuffer();
+    sky_state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
+    sky_state.bindings = {sky_binding_set, m_sky_push_constant_binding_set};
+
+    m_cmd->setGraphicsState(sky_state);
+    SkyPushConstants sky_push{
+        m_inverse_view_projection,
+        Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f),
+        Eigen::Vector4f(m_sky_zenith.x(), m_sky_zenith.y(), m_sky_zenith.z(), m_sky_intensity),
+        Eigen::Vector4f(m_sky_ground.x(), m_sky_ground.y(), m_sky_ground.z(), 0.0f),
+        m_sky_kind
+    };
+    m_cmd->setPushConstants(&sky_push, sizeof(sky_push));
     m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
 
     m_post_process.run(m_cmd, m_hdr_color.texture(), target);

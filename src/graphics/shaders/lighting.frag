@@ -23,10 +23,10 @@ layout(std430, binding = 3) readonly buffer LightBuffer {
 layout(push_constant) uniform PushConstants {
     mat4 inverse_view_projection; // see reconstructWorldPosition()
     vec4 view_position;
+    vec4 ambient;                 // rgb = flat ambient irradiance (pre-tonemap), a unused
     uint light_count;
 } pc;
 
-const float kAmbient = 0.1;
 const float kPi = 3.14159265359;
 const vec3 kDielectricF0 = vec3(0.04); // glTF's fixed non-metal reflectance
 
@@ -112,5 +112,5 @@ void main() {
         accumulated += (kd * diffuse_color / kPi + specular) * radiance * ndotl;
     }
 
-    outColor = vec4(diffuse_color * kAmbient + accumulated, albedo.a);
+    outColor = vec4(diffuse_color * pc.ambient.rgb + accumulated, albedo.a);
 }

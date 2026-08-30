@@ -31,7 +31,8 @@ int main(int argc, char** argv) {
 	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
 	// headers below get tracked as depending on them and rebuild when a shader changes.
 	const std::vector<std::string> shader_names = {
-	    "gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag"};
+	    "gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag",
+	    "sky.frag", "fxaa.frag"};
 
 	// A Command Output is always considered stale (see Output::isStale), so guard the
 	// glslc invocation ourselves: only add the Task when the .h is missing or older than

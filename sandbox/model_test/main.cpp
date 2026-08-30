@@ -34,6 +34,19 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
     const std::array<u8, 4> kMaxMrPixel = {255, 25, 50, 255};
     graphics::Texture max_mr_texture = graphics::Texture::create(app.device(), kMaxMrPixel, 1, 1);
 
+    // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
+    // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
+    scene::Scene standalone_scene = scene::loadGltf(app.device(), model_path);
+    for (scene::Model& model : standalone_scene.mutableModels()) {
+        for (scene::ModelPart& part : model.mutableParts()) {
+            part.material = graphics::Material::create(
+                app.device(), part.material.baseColorTexture(), max_mr_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
+            );
+        }
+    }
+    Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
+    standalone_transform(1, 3) = 10.0f;
+
     for (scene::Model& model : scene.mutableModels()) {
         for (scene::ModelPart& part : model.mutableParts()) {
             part.material = graphics::Material::create(
@@ -133,6 +146,7 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
         renderer.beginFrame();
         renderer.setLights(light_manager);
         scene.render(renderer, world_transform, camera);
+        standalone_scene.render(renderer, standalone_transform, camera);
         renderer.endFrame();
     }
 }

@@ -30,6 +30,15 @@ layout(push_constant) uniform PushConstants {
 const float kPi = 3.14159265359;
 const vec3 kDielectricF0 = vec3(0.04); // glTF's fixed non-metal reflectance
 
+// Inverse of gbuffer.frag's octEncode: 2 channels -> unit normal.
+vec3 octDecode(vec2 f) {
+    vec3 n = vec3(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+    float t = max(-n.z, 0.0);
+    n.x += n.x >= 0.0 ? -t : t;
+    n.y += n.y >= 0.0 ? -t : t;
+    return normalize(n);
+}
+
 vec3 reconstructWorldPosition(vec2 uv, float depth) {
     vec4 ndc = vec4(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0); // Y negated -- see docs (NVRHI viewport flip)
     vec4 world = pc.inverse_view_projection * ndc;
@@ -67,7 +76,7 @@ vec3 fresnelSchlick(float vdoth, vec3 f0) {
 
 void main() {
     vec4 albedo = texture(sampler2D(tAlbedo, sLinear), vUv);
-    vec3 normal = normalize(texture(sampler2D(tNormal, sLinear), vUv).xyz);
+    vec3 normal = octDecode(texture(sampler2D(tNormal, sLinear), vUv).rg);
     vec3 world_position = reconstructWorldPosition(vUv, texture(sampler2D(tDepth, sLinear), vUv).r);
 
     vec4 material = texture(sampler2D(tMaterial, sLinear), vUv);

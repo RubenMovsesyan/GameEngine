@@ -113,7 +113,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
 
     nvrhi::FramebufferInfo gbuffer_fb_info = nvrhi::FramebufferInfo()
                                                   .addColorFormat(nvrhi::Format::SRGBA8_UNORM)
-                                                  .addColorFormat(nvrhi::Format::RGBA32_FLOAT)
+                                                  .addColorFormat(nvrhi::Format::RG16_FLOAT) // octahedral-encoded world normal
                                                   .addColorFormat(nvrhi::Format::RGBA8_UNORM)
                                                   .setDepthFormat(nvrhi::Format::D32);
 
@@ -315,7 +315,7 @@ void Renderer::rebuildSwapchainSurfaces() {
 void Renderer::rebuildGBuffer() {
     VkExtent2D extent = m_swapchain->extent();
     m_albedo = createGBufferTexture(*m_device, extent, nvrhi::Format::SRGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer albedo");
-    m_normal = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA32_FLOAT, nvrhi::ResourceStates::ShaderResource, "gbuffer normal");
+    m_normal = createGBufferTexture(*m_device, extent, nvrhi::Format::RG16_FLOAT, nvrhi::ResourceStates::ShaderResource, "gbuffer normal (octahedral)");
     m_material = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer material");
     m_depth = createGBufferTexture(*m_device, extent, nvrhi::Format::D32, nvrhi::ResourceStates::DepthWrite, "gbuffer depth");
 

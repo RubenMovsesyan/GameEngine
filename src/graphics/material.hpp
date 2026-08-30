@@ -19,12 +19,21 @@ class Material {
         const std::optional<Texture>& metallicRoughnessTexture() const { return m_metallic_roughness_texture; }
         nvrhi::IBuffer* factorsBuffer() const { return m_factors_buffer; }
 
+        // Cached g-buffer texture binding set. Rebuilt only when a texture's underlying handle
+        // changes (async placeholder -> real swap); sampler/layout/fallback are Renderer-stable.
+        nvrhi::IBindingSet* gbufferBindingSet(nvrhi::IDevice*, nvrhi::IBindingLayout*, nvrhi::ITexture* white_fallback,
+                                              nvrhi::ISampler*) const;
+
     private:
         Material() = default;
 
         std::optional<Texture> m_base_color_texture;
         std::optional<Texture> m_metallic_roughness_texture;
         nvrhi::BufferHandle m_factors_buffer;
+
+        mutable nvrhi::BindingSetHandle m_gbuffer_binding_set;
+        mutable nvrhi::ITexture* m_built_base = nullptr; // handles the cached set was built against
+        mutable nvrhi::ITexture* m_built_mr = nullptr;
 };
 
 } // namespace graphics

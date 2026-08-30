@@ -1,7 +1,6 @@
 #include <graphics/renderer.hpp>
 
 #include <cstddef>
-#include <optional>
 
 namespace {
 
@@ -297,6 +296,8 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     m_tonemap_pass = m_post_process.addPass(kTonemapFragSpv, std::size(kTonemapFragSpv), sizeof(TonemapPushConstants));
     m_fxaa_pass = m_post_process.addPass(kFxaaFragSpv, std::size(kFxaaFragSpv), sizeof(FxaaPushConstants));
     rebuildPostProcessTargets(); // also seeds the FXAA push constants for the current extent
+    rebuildLightingBindingSet();
+    rebuildSkyBindingSet();
 
     constexpr f32 kDefaultExposure = 0.003f; // real Blender-exported intensities are huge; expect to tune this per scene
     setExposure(kDefaultExposure);
@@ -320,6 +321,28 @@ void Renderer::rebuildGBuffer() {
 
     m_gbuffer_framebuffer = m_device->nvrhi()->createFramebuffer(
         nvrhi::FramebufferDesc().addColorAttachment(m_albedo).addColorAttachment(m_normal).addColorAttachment(m_material).setDepthAttachment(m_depth)
+    );
+}
+
+void Renderer::rebuildLightingBindingSet() {
+    m_lighting_binding_set = m_device->nvrhi()->createBindingSet(
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_albedo))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_normal))
+            .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler))
+            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, m_light_buffer ? m_light_buffer : m_empty_light_buffer.Get()))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(4, m_depth))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(5, m_material)),
+        m_lighting_binding_layout
+    );
+}
+
+void Renderer::rebuildSkyBindingSet() {
+    m_sky_binding_set = m_device->nvrhi()->createBindingSet(
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_depth))
+            .addItem(nvrhi::BindingSetItem::Sampler(1, m_sky_sampler)),
+        m_sky_binding_layout
     );
 }
 
@@ -348,6 +371,8 @@ void Renderer::beginFrame() {
         rebuildSwapchainSurfaces();
         rebuildGBuffer();
         rebuildPostProcessTargets();
+        rebuildLightingBindingSet();
+        rebuildSkyBindingSet();
         return;
     }
 
@@ -399,16 +424,8 @@ void Renderer::renderMesh(T& mesh, const Material& material, const Eigen::Matrix
     }
     state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(mesh.indexBuffer()).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
 
-    const std::optional<Texture>& base_color = material.baseColorTexture();
-    const std::optional<Texture>& metallic_roughness = material.metallicRoughnessTexture();
-    nvrhi::BindingSetHandle texture_binding_set = m_device->nvrhi()->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, base_color ? base_color->texture() : m_white_texture.Get()))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, metallic_roughness ? metallic_roughness->texture() : m_white_texture.Get()))
-            .addItem(nvrhi::BindingSetItem::Sampler(2, m_gbuffer_sampler))
-            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, material.factorsBuffer())),
-        m_gbuffer_texture_binding_layout
-    );
+    nvrhi::IBindingSet* texture_binding_set =
+        material.gbufferBindingSet(m_device->nvrhi(), m_gbuffer_texture_binding_layout, m_white_texture, m_gbuffer_sampler);
     state.bindings = {texture_binding_set, m_gbuffer_push_constant_binding_set};
 
     m_cmd->setGraphicsState(state);
@@ -420,8 +437,11 @@ template void Renderer::renderMesh<StandardMesh>(StandardMesh&, const Material&,
 template void Renderer::renderMesh<InstancedMesh>(InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Camera&);
 
 void Renderer::setLights(const LightManager& lights) {
-    m_light_buffer = lights.buffer();
     m_light_count = lights.count();
+    if (lights.buffer() != m_light_buffer) {
+        m_light_buffer = lights.buffer();
+        rebuildLightingBindingSet(); // light buffer is the one moving resource in that set
+    }
 }
 
 void Renderer::setSkybox(const Skybox& skybox) {
@@ -455,24 +475,13 @@ void Renderer::endFrame() {
 
     const Surface& target = m_swapchain_surfaces[m_acquired.image_index];
 
-    nvrhi::BindingSetHandle lighting_binding_set = m_device->nvrhi()->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_albedo))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_normal))
-            .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler))
-            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, m_light_buffer ? m_light_buffer : m_empty_light_buffer.Get()))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(4, m_depth))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(5, m_material)),
-        m_lighting_binding_layout
-    );
-
     VkExtent2D extent = m_swapchain->extent();
 
     nvrhi::GraphicsState state{};
     state.pipeline = m_lighting_pipeline;
     state.framebuffer = m_hdr_color.framebuffer();
     state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-    state.bindings = {lighting_binding_set, m_lighting_push_constant_binding_set};
+    state.bindings = {m_lighting_binding_set, m_lighting_push_constant_binding_set};
 
     m_cmd->setGraphicsState(state);
     LightingPushConstants lighting_push{
@@ -485,18 +494,11 @@ void Renderer::endFrame() {
     m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
 
     // Sky fills the far-plane pixels of m_hdr_color; the shader discards where geometry was drawn.
-    nvrhi::BindingSetHandle sky_binding_set = m_device->nvrhi()->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_depth))
-            .addItem(nvrhi::BindingSetItem::Sampler(1, m_sky_sampler)),
-        m_sky_binding_layout
-    );
-
     nvrhi::GraphicsState sky_state{};
     sky_state.pipeline = m_sky_pipeline;
     sky_state.framebuffer = m_hdr_color.framebuffer();
     sky_state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-    sky_state.bindings = {sky_binding_set, m_sky_push_constant_binding_set};
+    sky_state.bindings = {m_sky_binding_set, m_sky_push_constant_binding_set};
 
     m_cmd->setGraphicsState(sky_state);
     SkyPushConstants sky_push{
@@ -526,6 +528,8 @@ void Renderer::endFrame() {
         rebuildSwapchainSurfaces();
         rebuildGBuffer();
         rebuildPostProcessTargets();
+        rebuildLightingBindingSet();
+        rebuildSkyBindingSet();
     }
 
     m_frame_lock.unlock();

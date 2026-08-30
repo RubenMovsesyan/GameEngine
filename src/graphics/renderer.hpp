@@ -46,6 +46,9 @@ class Renderer {
         void rebuildGBuffer();
         void rebuildPostProcessTargets();
         void updateFxaaPushConstants();
+        // Pass binding sets only change on resize (G-buffer/HDR handles) or, for lighting, on setLights().
+        void rebuildLightingBindingSet();
+        void rebuildSkyBindingSet();
 
         const gpu::Device* m_device;
         nvrhi::CommandListHandle m_cmd;
@@ -79,6 +82,7 @@ class Renderer {
         nvrhi::SamplerHandle m_lighting_sampler;
         nvrhi::BindingLayoutHandle m_lighting_push_constant_layout;
         nvrhi::BindingSetHandle m_lighting_push_constant_binding_set;
+        nvrhi::BindingSetHandle m_lighting_binding_set; // rebuilt on resize / setLights()
 
         // Dedicated fullscreen sky pass -- runs after lighting, before post-process.
         nvrhi::GraphicsPipelineHandle m_sky_pipeline;
@@ -86,6 +90,7 @@ class Renderer {
         nvrhi::SamplerHandle m_sky_sampler;
         nvrhi::BindingLayoutHandle m_sky_push_constant_layout;
         nvrhi::BindingSetHandle m_sky_push_constant_binding_set;
+        nvrhi::BindingSetHandle m_sky_binding_set; // rebuilt on resize (depends only on m_depth)
         // Seeded from Skybox{} in the ctor -- the sole default lives in skybox.hpp.
         Eigen::Vector3f m_sky_zenith;
         Eigen::Vector3f m_sky_ground;

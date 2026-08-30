@@ -32,4 +32,27 @@ Material Material::create(const gpu::Device& device, std::optional<Texture> base
     return material;
 }
 
+nvrhi::IBindingSet* Material::gbufferBindingSet(nvrhi::IDevice* device, nvrhi::IBindingLayout* layout, nvrhi::ITexture* white_fallback,
+                                               nvrhi::ISampler* sampler) const {
+    nvrhi::ITexture* base = m_base_color_texture ? m_base_color_texture->texture() : white_fallback;
+    nvrhi::ITexture* mr = m_metallic_roughness_texture ? m_metallic_roughness_texture->texture() : white_fallback;
+
+    // Pointer compare catches both first build and the async placeholder -> real handle swap.
+    if (m_gbuffer_binding_set && base == m_built_base && mr == m_built_mr) {
+        return m_gbuffer_binding_set;
+    }
+
+    m_gbuffer_binding_set = device->createBindingSet(
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, base))
+            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, mr))
+            .addItem(nvrhi::BindingSetItem::Sampler(2, sampler))
+            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, m_factors_buffer)),
+        layout
+    );
+    m_built_base = base;
+    m_built_mr = mr;
+    return m_gbuffer_binding_set;
+}
+
 } // namespace graphics

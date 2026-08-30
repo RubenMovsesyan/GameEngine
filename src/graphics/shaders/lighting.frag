@@ -92,8 +92,12 @@ void main() {
         } else if (type == 1) { // Point
             vec3 delta = light.position_range.xyz - world_position;
             float dist = length(delta);
+            float range = light.position_range.w;
+            if (range > 0.0 && dist >= range) {
+                continue; // outside the light volume -- pointAttenuation is 0 here anyway, skip the BRDF
+            }
             to_light = delta / max(dist, 1e-4);
-            attenuation = pointAttenuation(dist, light.position_range.w);
+            attenuation = pointAttenuation(dist, range);
         } else {
             continue; // Spot still unsupported
         }

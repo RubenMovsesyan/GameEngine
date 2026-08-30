@@ -43,7 +43,7 @@ struct FxaaPushConstants {
 
 struct GBufferPushConstants {
     Eigen::Matrix4f model;
-    Eigen::Matrix4f view_projection;
+    Eigen::Matrix4f normal_matrix; // inverse-transpose of mat3(model); only the 3x3 is read
 };
 
 struct LightingPushConstants {
@@ -122,9 +122,27 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     // Matches camera.cpp's projection parity (no Y-flip there).
     gbuffer_state.rasterState.setFrontCounterClockwise(true);
 
+    // Vertex-stage set: the per-draw push constant at b0 plus a constant buffer at b1 holding
+    // view_projection (constant across a frame). NVRHI's default Vulkan CB register offset is 256;
+    // zero it so the GLSL `binding = 1` matches. b0/b1 must differ -- the push constant occupies b0.
     nvrhi::BindingLayoutHandle gbuffer_push_constant_layout = nvrhi_device->createBindingLayout(
-        nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Vertex).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
+        nvrhi::BindingLayoutDesc()
+            .setVisibility(nvrhi::ShaderType::Vertex)
+            .addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
+            .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1))
+            .setBindingOffsets(nvrhi::VulkanBindingOffsets().setConstantBufferOffset(0))
     );
+
+    // Plain (non-volatile) CB, rewritten once per frame. ponytail: safe today because beginFrame's
+    // vkDeviceWaitIdle means no prior frame is still reading it; revisit with roadmap-req-frames-in-flight
+    // (per-frame copy of this buffer, or make it volatile with maxVersions >= draws-per-frame).
+    nvrhi::BufferDesc camera_buffer_desc{};
+    camera_buffer_desc.byteSize = sizeof(Eigen::Matrix4f);
+    camera_buffer_desc.isConstantBuffer = true;
+    camera_buffer_desc.initialState = nvrhi::ResourceStates::ConstantBuffer;
+    camera_buffer_desc.keepInitialState = true;
+    camera_buffer_desc.debugName = "gbuffer camera view-projection";
+    m_camera_buffer = nvrhi_device->createBuffer(camera_buffer_desc);
 
     // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
     m_gbuffer_texture_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
@@ -158,10 +176,14 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
         gbuffer_fb_info
     );
     m_gbuffer_push_constant_binding_set = nvrhi_device->createBindingSet(
-        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants))), gbuffer_push_constant_layout
+        nvrhi::BindingSetDesc()
+            .addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants)))
+            .addItem(nvrhi::BindingSetItem::ConstantBuffer(1, m_camera_buffer)),
+        gbuffer_push_constant_layout
     );
 
-    // Instanced geometry pass: same shader I/O plus a per-instance mat4 at buffer slot 1.
+    // Instanced geometry pass: same shader I/O plus a per-instance InstanceData at buffer slot 1
+    // (world transform at locations 3-6, its normal matrix at locations 7-10).
     nvrhi::VertexAttributeDesc instanced_mesh_attrs[] = {
         mesh_attrs[0],
         mesh_attrs[1],
@@ -172,7 +194,15 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
             .setArraySize(4)
             .setBufferIndex(1)
             .setOffset(0)
-            .setElementStride(sizeof(Eigen::Matrix4f))
+            .setElementStride(sizeof(InstanceData))
+            .setIsInstanced(true),
+        nvrhi::VertexAttributeDesc()
+            .setName("INSTANCE_NORMAL_MATRIX")
+            .setFormat(nvrhi::Format::RGBA32_FLOAT)
+            .setArraySize(4)
+            .setBufferIndex(1)
+            .setOffset(sizeof(Eigen::Matrix4f))
+            .setElementStride(sizeof(InstanceData))
             .setIsInstanced(true),
     };
 
@@ -310,6 +340,7 @@ void Renderer::updateFxaaPushConstants() {
 }
 
 void Renderer::beginFrame() {
+    m_camera_uploaded = false;
     m_acquired = m_swapchain->acquire();
     if (!m_acquired.ok) {
         vkDeviceWaitIdle(m_device->handle());
@@ -342,7 +373,14 @@ void Renderer::renderMesh(T& mesh, const Material& material, const Eigen::Matrix
 
     m_view_position = camera.position();
     m_inverse_view_projection = camera.inverseViewProjectionMatrix();
-    GBufferPushConstants push{model, camera.viewProjectionMatrix()};
+    GBufferPushConstants push{model, normalMatrix(model)};
+
+    // view_projection is constant across the frame -- upload it once, on the first mesh.
+    if (!m_camera_uploaded) {
+        const Eigen::Matrix4f view_projection = camera.viewProjectionMatrix();
+        m_cmd->writeBuffer(m_camera_buffer, view_projection.data(), sizeof(view_projection));
+        m_camera_uploaded = true;
+    }
 
     VkExtent2D extent = m_swapchain->extent();
 

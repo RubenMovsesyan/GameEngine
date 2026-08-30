@@ -7,14 +7,17 @@ layout(location = 2) in vec2 inUV;
 layout(location = 0) out vec3 vNormal;
 layout(location = 1) out vec2 vUV;
 
-// mat3(pc.model) only handles rotation correctly -- non-uniform scale needs inverse-transpose.
 layout(push_constant) uniform PushConstants {
     mat4 model;
-    mat4 view_projection;
+    mat4 normal_matrix; // inverse-transpose of mat3(model) -- correct under non-uniform scale
 } pc;
 
+layout(set = 1, binding = 1) uniform Camera {
+    mat4 view_projection;
+} cam;
+
 void main() {
-    gl_Position = pc.view_projection * pc.model * vec4(inPosition, 1.0);
-    vNormal = mat3(pc.model) * inNormal;
+    gl_Position = cam.view_projection * pc.model * vec4(inPosition, 1.0);
+    vNormal = mat3(pc.normal_matrix) * inNormal;
     vUV = inUV;
 }

@@ -67,6 +67,9 @@ class Renderer {
         nvrhi::GraphicsPipelineHandle m_gbuffer_instanced_pipeline;
         nvrhi::BindingSetHandle m_gbuffer_push_constant_binding_set;
         nvrhi::BindingLayoutHandle m_gbuffer_texture_binding_layout;
+        // Vertex-stage view_projection -- same for every draw, so it lives here, not in the push constant.
+        nvrhi::BufferHandle m_camera_buffer;
+        bool m_camera_uploaded = false; // reset each beginFrame; written on the frame's first renderMesh
         nvrhi::SamplerHandle m_gbuffer_sampler;
         // Bound whenever a Material has no texture for a slot -- a null texture handle isn't valid there.
         nvrhi::TextureHandle m_white_texture;

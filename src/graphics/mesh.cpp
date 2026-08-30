@@ -63,7 +63,8 @@ InstancedMesh InstancedMesh::fromStandard(const StandardMesh& other) {
 }
 
 u32 InstancedMesh::addInstance(const Eigen::Matrix4f& transform) {
-    m_instances.push_back(transform);
+    // normal_matrix is (re)derived in uploadIfDirty -- leave it identity for now.
+    m_instances.push_back({transform, Eigen::Matrix4f::Identity()});
     m_dirty = true;
     return static_cast<u32>(m_instances.size() - 1);
 }
@@ -75,7 +76,7 @@ void InstancedMesh::removeInstance(u32 index) {
 
 Eigen::Matrix4f* InstancedMesh::mutableInstance(u32 index) {
     m_dirty = true;
-    return &m_instances[index];
+    return &m_instances[index].transform;
 }
 
 void InstancedMesh::uploadIfDirty(const gpu::Device& device) {
@@ -83,8 +84,13 @@ void InstancedMesh::uploadIfDirty(const gpu::Device& device) {
         return;
     }
 
+    // Refresh every normal matrix -- a mutableInstance() caller may have rewritten any transform.
+    for (InstanceData& instance : m_instances) {
+        instance.normal_matrix = normalMatrix(instance.transform);
+    }
+
     nvrhi::BufferDesc instance_desc{};
-    instance_desc.byteSize = m_instances.size() * sizeof(Eigen::Matrix4f);
+    instance_desc.byteSize = m_instances.size() * sizeof(InstanceData);
     instance_desc.isVertexBuffer = true;
     instance_desc.initialState = nvrhi::ResourceStates::VertexBuffer;
     instance_desc.keepInitialState = true;

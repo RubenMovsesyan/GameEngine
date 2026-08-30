@@ -1,5 +1,6 @@
 #include <graphics/renderer.hpp>
 
+#include <cassert>
 #include <cstddef>
 
 namespace {
@@ -95,6 +96,12 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     : m_device(&device), m_swapchain(&swapchain), m_hdr_color(Surface::createOffscreen(device, swapchain.extent(), nvrhi::Format::RGBA16_FLOAT)),
       m_post_process(device) {
     m_cmd = device.nvrhi()->createCommandList();
+    for (nvrhi::EventQueryHandle& query : m_frame_done) {
+        query = device.nvrhi()->createEventQuery();
+    }
+    // Acquire-semaphore ring (sized to swapchain image count) must exceed frames in flight, or a
+    // semaphore could be re-waited while its submit is still pending.
+    assert(m_swapchain->imageCount() > kFramesInFlight);
     rebuildSwapchainSurfaces();
     rebuildGBuffer();
 
@@ -128,18 +135,17 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
         nvrhi::BindingLayoutDesc()
             .setVisibility(nvrhi::ShaderType::Vertex)
             .addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
-            .addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1))
+            .addItem(nvrhi::BindingLayoutItem::VolatileConstantBuffer(1)) // m_camera_buffer is volatile
             .setBindingOffsets(nvrhi::VulkanBindingOffsets().setConstantBufferOffset(0))
     );
 
-    // Plain (non-volatile) CB, rewritten once per frame. ponytail: safe today because beginFrame's
-    // vkDeviceWaitIdle means no prior frame is still reading it; revisit with roadmap-req-frames-in-flight
-    // (per-frame copy of this buffer, or make it volatile with maxVersions >= draws-per-frame).
+    // Volatile CB: written once per frame, GPU-read across frames-in-flight. NVRHI auto-versions
+    // each writeBuffer, so maxVersions only needs to cover the frames that can be outstanding.
     nvrhi::BufferDesc camera_buffer_desc{};
     camera_buffer_desc.byteSize = sizeof(Eigen::Matrix4f);
     camera_buffer_desc.isConstantBuffer = true;
-    camera_buffer_desc.initialState = nvrhi::ResourceStates::ConstantBuffer;
-    camera_buffer_desc.keepInitialState = true;
+    camera_buffer_desc.isVolatile = true;
+    camera_buffer_desc.maxVersions = kFramesInFlight + 2;
     camera_buffer_desc.debugName = "gbuffer camera view-projection";
     m_camera_buffer = nvrhi_device->createBuffer(camera_buffer_desc);
 
@@ -364,6 +370,13 @@ void Renderer::updateFxaaPushConstants() {
 
 void Renderer::beginFrame() {
     m_camera_uploaded = false;
+
+    // Pace the CPU: block only if it is already kFramesInFlight ahead of the GPU.
+    const u32 slot = static_cast<u32>(m_frame_counter % kFramesInFlight);
+    if (m_frame_counter >= kFramesInFlight) {
+        m_device->nvrhi()->waitEventQuery(m_frame_done[slot]);
+    }
+
     m_acquired = m_swapchain->acquire();
     if (!m_acquired.ok) {
         vkDeviceWaitIdle(m_device->handle());
@@ -520,7 +533,11 @@ void Renderer::endFrame() {
     vk_device->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, m_swapchain->renderFinished(m_acquired.image_index), 0);
     m_device->nvrhi()->executeCommandList(m_cmd);
 
-    vkDeviceWaitIdle(m_device->handle()); // no frames-in-flight pacing yet
+    // Signal this slot's fence instead of draining the GPU; beginFrame kFramesInFlight later waits on it.
+    const u32 slot = static_cast<u32>(m_frame_counter % kFramesInFlight);
+    m_device->nvrhi()->resetEventQuery(m_frame_done[slot]);
+    m_device->nvrhi()->setEventQuery(m_frame_done[slot], nvrhi::CommandQueue::Graphics);
+    m_frame_counter++;
 
     if (!m_swapchain->present(m_acquired.image_index)) {
         vkDeviceWaitIdle(m_device->handle());

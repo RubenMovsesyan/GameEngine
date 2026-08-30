@@ -9,6 +9,7 @@
 #include <graphics/surface.hpp>
 #include <gpu/swapchain.hpp>
 
+#include <array>
 #include <mutex>
 #include <vector>
 
@@ -50,9 +51,15 @@ class Renderer {
         void rebuildLightingBindingSet();
         void rebuildSkyBindingSet();
 
+        static constexpr u32 kFramesInFlight = 2;
+
         const gpu::Device* m_device;
         nvrhi::CommandListHandle m_cmd;
         std::unique_lock<std::recursive_mutex> m_frame_lock; // held beginFrame() to endFrame() -- see docs
+
+        // GPU pacing: endFrame signals m_frame_done[slot]; beginFrame kFramesInFlight later waits on it.
+        std::array<nvrhi::EventQueryHandle, kFramesInFlight> m_frame_done;
+        u64 m_frame_counter = 0;
 
         gpu::Swapchain* m_swapchain;
         std::vector<Surface> m_swapchain_surfaces;

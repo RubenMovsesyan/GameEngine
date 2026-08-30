@@ -1,6 +1,7 @@
 #pragma once
 
 #include <common.h>
+#include <graphics/frustum.hpp>
 
 #include <Eigen/Dense>
 
@@ -19,6 +20,8 @@ class Camera {
         // The combined view-projection matrix -- projection * transformationMatrix().
         const Eigen::Matrix4f& viewProjectionMatrix() const;
         const Eigen::Matrix4f& inverseViewProjectionMatrix() const;
+        // World-space view frustum, cached alongside the matrices.
+        const Frustum& frustum() const;
         const Eigen::Vector3f& position() const { return m_position; }
         const Eigen::Vector3f& direction() const { return m_direction; }
 
@@ -52,6 +55,7 @@ class Camera {
         mutable Eigen::Matrix4f m_view_inverse;
         mutable Eigen::Matrix4f m_view_projection;
         mutable Eigen::Matrix4f m_inverse_view_projection;
+        mutable Frustum m_frustum;
 };
 
 } // namespace graphics

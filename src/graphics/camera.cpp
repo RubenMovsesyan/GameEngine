@@ -63,6 +63,7 @@ void Camera::rebuildIfDirty() const {
 
     m_view_projection = m_projection * m_view;
     m_inverse_view_projection = m_view_inverse * m_inverse_projection;
+    m_frustum = Frustum::fromViewProjection(m_view_projection);
 
     m_dirty = false;
 }
@@ -80,6 +81,11 @@ const Eigen::Matrix4f& Camera::viewProjectionMatrix() const {
 const Eigen::Matrix4f& Camera::inverseViewProjectionMatrix() const {
     rebuildIfDirty();
     return m_inverse_view_projection;
+}
+
+const Frustum& Camera::frustum() const {
+    rebuildIfDirty();
+    return m_frustum;
 }
 
 } // namespace graphics

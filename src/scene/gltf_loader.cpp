@@ -156,13 +156,24 @@ void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive
         cgltf_accessor_read_float(uv_accessor, i, vertices[i].uv.data(), 2);
     }
 
+    // glTF POSITION accessors usually carry min/max; fall back to a scan when they don't.
+    Eigen::AlignedBox3f local_bounds;
+    if (position_accessor->has_min && position_accessor->has_max) {
+        local_bounds.extend(Eigen::Vector3f(position_accessor->min[0], position_accessor->min[1], position_accessor->min[2]));
+        local_bounds.extend(Eigen::Vector3f(position_accessor->max[0], position_accessor->max[1], position_accessor->max[2]));
+    } else {
+        for (const graphics::Vertex& vertex : vertices) {
+            local_bounds.extend(vertex.position);
+        }
+    }
+
     std::vector<u32> indices(primitive.indices->count);
     for (cgltf_size i = 0; i < primitive.indices->count; i++) {
         indices[i] = static_cast<u32>(cgltf_accessor_read_index(primitive.indices, i));
     }
 
     graphics::Material material = loadMaterial(device, primitive.material, gltf_path);
-    model.addPart(graphics::StandardMesh::create(device, vertices, indices), transform, std::move(material));
+    model.addPart(graphics::StandardMesh::create(device, vertices, indices), transform, std::move(material), local_bounds);
 }
 
 graphics::LightType toLightType(cgltf_light_type type) {

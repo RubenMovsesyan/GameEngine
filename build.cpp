@@ -89,6 +89,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/surface.cpp",
 	    "src/graphics/renderer.cpp",
 	    "src/graphics/camera.cpp",
+	    "src/graphics/frustum.cpp",
 	    "src/graphics/mesh.cpp",
 	    "src/graphics/texture.cpp",
 	    "src/graphics/material.cpp",

@@ -16,6 +16,7 @@ struct ModelPart {
     std::variant<graphics::StandardMesh, graphics::InstancedMesh> mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
     graphics::Material material;
+    Eigen::AlignedBox3f local_bounds; // mesh-space AABB (pre-transform); for frustum culling
 
     // Shares the existing vertex/index buffers -- no re-upload. Warns and no-ops if already that kind.
     void convertToStandard();
@@ -27,7 +28,7 @@ struct ModelPart {
 class Model {
     public:
         template <graphics::Mesh T>
-        void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material);
+        void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material, Eigen::AlignedBox3f local_bounds);
         void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
         u32 partCount() const { return static_cast<u32>(m_parts.size()); }

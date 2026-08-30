@@ -26,6 +26,7 @@
   <a href="../graphics/mesh.html">Mesh</a>
   <a href="../graphics/post_process_chain.html">PostProcessChain</a>
   <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/skybox.html">Skybox</a>
   <a href="../graphics/surface.html">Surface</a>
   <a href="../graphics/texture.html">Texture</a>
 
@@ -53,7 +54,8 @@
 <h2>Role</h2>
 <p>
   Owns its <code>Model</code>s and <code>Light</code>s by value (same way <code>Model</code>
-  owns its <code>Mesh</code>es). <code>render()</code> loops its models, sharing one
+  owns its <code>Mesh</code>es), plus one <a href="../graphics/skybox.html"><code>graphics::Skybox</code></a>
+  describing the background. <code>render()</code> loops its models, sharing one
   caller-supplied world transform across all of them — no per-model placement exists yet,
   since nothing has asked for it.
 </p>
@@ -74,6 +76,9 @@
     void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
     const std::vector&lt;graphics::Light&gt;&amp; lights() const;
     std::vector&lt;Model&gt;&amp; mutableModels();
+
+    void setSkybox(graphics::Skybox skybox);
+    const graphics::Skybox& skybox() const;
 
     std::string display() const;   // implements utils::Display
 };</code></pre>
@@ -98,6 +103,14 @@
     converting parts to <code>InstancedMesh</code> and populating instances post-load, which
     <code>sandbox/model_test/main.cpp</code> does. No <code>const</code> overload, matching how
     <code>Model::mutableParts()</code> is also mutable-only.
+  </li>
+  <li>
+    <strong>The <code>Skybox</code> is a plain member with a default</strong>, not something
+    <code>loadGltf</code> populates — glTF has no skybox concept. A freshly loaded
+    <code>Scene</code> gets the default <code>graphics::GradientSky</code> (skyblue/gray);
+    the render loop forwards <code>scene.skybox()</code> to
+    <code>Renderer::setSkybox()</code> each frame, the same shape as <code>lights()</code>.
+    See <a href="../graphics/skybox.html">Skybox</a>.
   </li>
   <li><code>display()</code> lists model part-counts and light types — see <a href="../utils/display.html">Display</a>.</li>
 </ul>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Skybox — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a class="here" href="skybox.html">Skybox</a>
+  <a href="surface.html">Surface</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Skybox</code></h1>
+<p class="lede">A plain value type describing what fills the pixels no geometry covered — today a procedural vertical gradient, with a variant slot already reserved for a cubemap.</p>
+
+<h2>Role</h2>
+<p>
+  Carried by <a href="../scene/scene.html"><code>Scene</code></a> (one per scene), handed to
+  <a href="renderer.html"><code>Renderer::setSkybox()</code></a> each frame the same way lights are.
+  <code>Skybox</code> itself holds no GPU resources for the gradient case — it's three
+  colours and a scalar. The <code>Renderer</code> unpacks it into push constants for a
+  dedicated full-screen sky pass that runs after lighting and before post-process.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on <code>Eigen</code> and (for the future <code>CubemapSky</code> slot)
+  <a href="texture.html"><code>Texture</code></a>. Held by <code>scene::Scene</code>;
+  consumed by <code>graphics::Renderer</code>. The render loop
+  (<code>sandbox/model_test/main.cpp</code>) constructs one and calls
+  <code>renderer.setSkybox(scene.skybox())</code>.
+</p>
+
+<h2>Public API</h2>
+<pre><code>// Procedural vertical gradient: ground colour at the horizon fading to zenith overhead.
+struct GradientSky {
+    Eigen::Vector3f zenith{0.53f, 0.71f, 1.0f}; // skyblue
+    Eigen::Vector3f ground{0.15f, 0.15f, 0.15f}; // dark gray
+};
+
+// Reserves the variant slot; no cubemap loader exists yet.
+struct CubemapSky {
+    Texture cubemap;
+};
+
+struct Skybox {
+    std::variant&lt;GradientSky, CubemapSky&gt; source = GradientSky{};
+    f32 intensity = 1.0f;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>Why a dedicated pass and not a branch in <code>lighting.frag</code>.</strong>
+    A cubemap needs its own <code>samplerCube</code> binding. Keeping the sky in a
+    separate pass with its own binding layout means adding the cubemap later touches
+    only <code>m_sky_binding_layout</code> and <code>sky.frag</code> — never the shared
+    6-slot lighting layout, and no <code>lighting.frag</code> recompile. The gradient
+    pass and the eventual cubemap pass are the same pass with a different fragment
+    shader; <code>sky.frag</code> already <code>switch</code>es on a <code>kind</code>
+    push constant (<code>0</code> = gradient, <code>1</code> = cubemap) with the cubemap
+    case stubbed out.
+  </li>
+  <li>
+    <strong><code>variant</code>, not an enum with dead fields.</strong> A gradient and a
+    cubemap are mutually exclusive, so the two configs live in separate structs in a
+    <code>std::variant</code> (matching <a href="../scene/model.html"><code>ModelPart::mesh</code></a>).
+    <code>intensity</code> sits outside the variant because it applies to both — it
+    scales the sky colour before the tonemap.
+  </li>
+  <li>
+    <strong><code>intensity</code> is a calibration knob, and the default is nowhere near
+    calibrated.</strong> The lighting output is HDR and gets an ACES + exposure tonemap
+    at roughly <code>0.003</code> (see <a href="renderer.html">Renderer</a>). A literal
+    <code>(0.53, 0.71, 1.0)</code> sky colour is crushed to near-black by that exposure,
+    so <code>intensity</code> has to lift it back — <code>sandbox/model_test/main.cpp</code>
+    currently sets <code>300.0f</code> as a first guess. <code>sky.frag</code> carries a
+    <code>FIXME</code> that the gradient still needs proper calibration against the
+    exposure. Expect to tune <code>intensity</code> per scene, like a light's intensity.
+  </li>
+  <li>
+    <strong>The gradient band is tight and just above the horizon.</strong>
+    <code>sky.frag</code> does <code>mix(ground, zenith, smoothstep(-0.02, 0.12, dir.y))</code>
+    on the world-space view-ray Y — so everything below the horizon is flat ground
+    colour, the fade happens in a narrow wedge just above it, and most of the visible
+    sky dome is flat zenith colour. Widen the <code>smoothstep</code> edges if you want
+    a softer, taller gradient.
+  </li>
+  <li>
+    <strong>Constructing a <code>CubemapSky</code> today sets <code>kind = 1</code> but
+    renders nothing new.</strong> <code>Renderer::setSkybox()</code> recognises the
+    alternative and flips the kind, but the <code>samplerCube</code> binding isn't wired
+    and the gradient stash is left untouched, so the pass still draws the last gradient.
+    Finishing cubemaps means: cubemap support in <a href="texture.html">Texture</a>
+    (<code>VK_IMAGE_VIEW_TYPE_CUBE</code>, 6 layers, a 6-face / equirect-HDR loader), a
+    <code>samplerCube</code> at binding 2 of <code>m_sky_binding_layout</code>, and
+    un-commenting the <code>case 1:</code> in <code>sky.frag</code>.
+  </li>
+  <li>
+    <strong>The <code>Renderer</code>'s ambient default was tuned to match this.</strong>
+    <code>lighting.frag</code>'s flat ambient term (a stand-in for sky bounce until IBL
+    exists) defaults to <code>(300, 300, 300)</code> — the same order of magnitude as the
+    gradient's <code>intensity</code>, for the same exposure reason. Tune the two
+    together.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/skybox.hpp</code>, <code>src/graphics/shaders/sky.frag</code></footer>
+
+</main>
+</div>
+</body>
+</html>

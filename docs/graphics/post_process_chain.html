@@ -26,6 +26,7 @@
   <a href="mesh.html">Mesh</a>
   <a class="here" href="post_process_chain.html">PostProcessChain</a>
   <a href="renderer.html">Renderer</a>
+  <a href="skybox.html">Skybox</a>
   <a href="surface.html">Surface</a>
   <a href="texture.html">Texture</a>
 
@@ -55,9 +56,11 @@
   Each registered pass is one fragment shader: reads one input texture, writes one
   output. The chain manages ping-ponging between two HDR scratch targets for you — you
   never touch that plumbing directly, just <code>addPass()</code> and (optionally)
-  <code>setPushConstants()</code> per frame. The default (and currently only) built-in
-  pass is <code>tonemap.frag</code>: exposure multiply + an ACES approximation curve,
-  fused into one pass since they're always used together.
+  <code>setPushConstants()</code> per frame. <code>Renderer</code> registers two passes at
+  construction: <code>tonemap.frag</code> (exposure multiply + an ACES approximation
+  curve, fused since they're always used together), then <code>fxaa.frag</code> (a
+  minimal FXAA edge-blur on the tonemapped LDR image, toggled via
+  <a href="renderer.html"><code>Renderer::setFxaaEnabled()</code></a>).
 </p>
 
 <h2>Depends on / depended on by</h2>
@@ -131,9 +134,17 @@
   <li>Only two HDR scratch <code>Surface</code>s exist regardless of chain length — passes alternate between them, and the <em>last</em> pass writes the real swapchain target instead of a scratch buffer.</li>
   <li>Every pass shares one binding layout (input texture @0, sampler @1); push constants get their own separate layout per pass, only created if that pass's <code>push_constant_size &gt; 0</code>.</li>
   <li>Strictly one-texture-in/one-texture-out per pass. Multi-input or multi-target effects (bloom, SSAO) don't fit this shape — they'd need downsample/upsample chains with several intermediate targets, which this class doesn't provide.</li>
+  <li>
+    <strong>Only the first pass sees the HDR target the right way up.</strong> NVRHI's
+    Vulkan viewport is Y-flipped for every draw. <code>tonemap.frag</code> (pass 0) samples
+    with that flip and thereby un-flips the image; every pass after it re-introduces the
+    flip and must cancel it by sampling with an inverted Y (<code>fxaa.frag</code> uses
+    <code>vec2(vUv.x, 1.0 - vUv.y)</code>). Any custom pass added after the first one needs
+    the same one-line inversion.
+  </li>
 </ul>
 
-<footer>Source: <code>src/graphics/post_process_chain.hpp</code>, <code>src/graphics/post_process_chain.cpp</code>, <code>src/graphics/shaders/tonemap.frag</code></footer>
+<footer>Source: <code>src/graphics/post_process_chain.hpp</code>, <code>src/graphics/post_process_chain.cpp</code>, <code>src/graphics/shaders/tonemap.frag</code>, <code>src/graphics/shaders/fxaa.frag</code></footer>
 
 </main>
 </div>

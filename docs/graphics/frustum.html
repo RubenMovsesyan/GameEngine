@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Frustum — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a class="here" href="frustum.html">Frustum</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post_process_chain.html">PostProcessChain</a>
+  <a href="renderer.html">Renderer</a>
+  <a href="skybox.html">Skybox</a>
+  <a href="surface.html">Surface</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/scene.html">Scene</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Frustum</code></h1>
+<p class="lede">Six bounding planes of a view volume, normals pointing inward — extracted from any world&nbsp;&rarr;&nbsp;clip matrix, used to reject geometry a pass can't see.</p>
+
+<h2>Role</h2>
+<p>
+  A plain value type: six <code>Eigen::Hyperplane&lt;f32, 3&gt;</code> and the eight
+  world-space corners of the volume. <code>fromViewProjection()</code> builds it from a
+  combined view-projection matrix; <code>intersects()</code> answers "could this
+  world-space AABB be visible?". It takes an <em>arbitrary</em> matrix rather than a
+  <code>Camera</code>, so the same type serves the main camera today and shadow cascades
+  / light volumes later — each of those is just a different world&nbsp;&rarr;&nbsp;clip
+  matrix.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on Eigen (<code>Dense</code> + <code>Geometry</code>).
+  <a href="camera.html"><code>Camera</code></a> holds one, rebuilt in
+  <code>rebuildIfDirty()</code> alongside the view/projection matrices.
+  <a href="../scene/model.html"><code>scene::Model::render()</code></a> reads
+  <code>camera.frustum()</code> once per model and calls <code>intersects()</code> per
+  part to skip out-of-view <code>StandardMesh</code> draws.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Frustum {
+    enum class Plane { Left, Right, Bottom, Top, Near, Far };
+    static constexpr usize kPlaneCount = 6;
+
+    Frustum() = default;
+
+    static Frustum fromViewProjection(const Eigen::Matrix4f& view_projection);
+
+    bool intersects(const Eigen::AlignedBox3f& world_box) const;
+
+    const Eigen::Hyperplane&lt;f32, 3&gt;& plane(Plane p) const;
+    const std::array&lt;Eigen::Vector3f, 8&gt;& corners() const; // near {BL,BR,TL,TR} then far {BL,BR,TL,TR}
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>Gribb–Hartmann extraction, rows not columns.</strong> Clip coordinates here
+    are <code>M · p</code> (column-vector convention), so each clip-space inequality
+    <code>-w &le; x &le; w</code> etc. is a linear combination of <code>M</code>'s
+    <em>rows</em>, not its columns. The w-row (<code>M.row(3)</code>) appears in every
+    plane, so it's pulled out once: Left = <code>row_w + row_x</code>,
+    Right = <code>row_w - row_x</code>, and so on. Get the convention backwards (use
+    columns) and the planes come out transposed nonsense that still looks plausible for a
+    symmetric frustum.
+  </li>
+  <li>
+    <strong>Near is <code>row_z</code> alone.</strong> Vulkan's clip volume is
+    <code>0 &le; z &le; w</code>, not OpenGL's <code>-w &le; z &le; w</code>. So the near
+    plane is <code>row_z</code> by itself (from <code>z &ge; 0</code>), <em>not</em>
+    <code>row_w + row_z</code>. Far is still <code>row_w - row_z</code>. This matches
+    <a href="camera.html"><code>Camera</code></a>'s projection, which is derived for the
+    <code>[0,1]</code> depth range directly.
+  </li>
+  <li>
+    <strong>Planes are normalized.</strong> Each plane's four coefficients are divided by
+    the length of its <code>xyz</code> normal after extraction, so
+    <code>plane.signedDistance(point)</code> is a true Euclidean distance — needed for
+    any future "distance to plane &ge; -radius" sphere test (shadow-cascade fitting,
+    light-volume culling). The normal points <em>inward</em> (positive distance = inside).
+  </li>
+  <li>
+    <strong><code>intersects()</code> is the positive-vertex test, and it's
+    conservative.</strong> For each plane it takes the single box corner farthest along
+    that plane's inward normal (branchless: pick <code>max</code> or <code>min</code> per
+    axis by the sign of the normal component). If even that corner is outside the plane,
+    the whole box is outside → reject. It never returns <code>false</code> for a box
+    that's actually visible, but a box straddling two planes near a frustum edge or
+    corner can pass all six half-space tests and still be entirely outside the volume —
+    it'll be drawn anyway. That's the accepted tradeoff for a six-compare test; the exact
+    fix (also testing the frustum corners against the box) isn't worth it for culling.
+  </li>
+  <li>
+    <strong>Corners come from unprojecting the NDC cube.</strong>
+    <code>fromViewProjection()</code> also inverts the matrix once and maps the eight NDC
+    cube corners (<code>x,y &isin; [-1,1]</code>, <code>z &isin; [0,1]</code>) back to
+    world space, stored near-face first then far-face, each face ordered
+    bottom-left, bottom-right, top-left, top-right. Unused by the main-camera cull path;
+    it's there for cascade fitting.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/frustum.hpp</code>, <code>src/graphics/frustum.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

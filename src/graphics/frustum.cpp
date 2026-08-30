@@ -5,8 +5,7 @@ namespace graphics {
 Frustum Frustum::fromViewProjection(const Eigen::Matrix4f& view_projection) {
     Frustum frustum;
 
-    // Gribb-Hartmann. Clip coords are M * p here (column-vector convention), so each plane is a
-    // combination of M's *rows*. The w-row appears in every plane, so pull it out once.
+    // Gribb-Hartmann: column-vector convention here, so each plane is a combination of the matrix rows.
     const Eigen::RowVector4f row_w = view_projection.row(3);
     const Eigen::RowVector4f row_x = view_projection.row(0);
     const Eigen::RowVector4f row_y = view_projection.row(1);
@@ -40,9 +39,7 @@ Frustum Frustum::fromViewProjection(const Eigen::Matrix4f& view_projection) {
 }
 
 bool Frustum::intersects(const Eigen::AlignedBox3f& world_box) const {
-    // n-vertex test: for each plane, take the box corner farthest along the (inward) normal.
-    // If even that corner is outside, the whole box is outside -> reject. Conservative: a box
-    // straddling two planes near an edge can pass all six and still be fully outside.
+    // Positive-vertex test against each inward plane; conservative near frustum edges (see docs).
     for (const Eigen::Hyperplane<f32, 3>& plane : m_planes) {
         const Eigen::Vector3f& n = plane.normal();
         const Eigen::Vector3f positive_vertex = (n.array() >= 0.0f).select(world_box.max(), world_box.min());

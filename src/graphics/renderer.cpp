@@ -99,8 +99,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     for (nvrhi::EventQueryHandle& query : m_frame_done) {
         query = device.nvrhi()->createEventQuery();
     }
-    // Acquire-semaphore ring (sized to swapchain image count) must exceed frames in flight, or a
-    // semaphore could be re-waited while its submit is still pending.
+    // A swapchain acquire semaphore must not be re-waited while its submit is still pending.
     assert(m_swapchain->imageCount() > kFramesInFlight);
     rebuildSwapchainSurfaces();
     rebuildGBuffer();
@@ -128,9 +127,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
     // Matches camera.cpp's projection parity (no Y-flip there).
     gbuffer_state.rasterState.setFrontCounterClockwise(true);
 
-    // Vertex-stage set: the per-draw push constant at b0 plus a constant buffer at b1 holding
-    // view_projection (constant across a frame). NVRHI's default Vulkan CB register offset is 256;
-    // zero it so the GLSL `binding = 1` matches. b0/b1 must differ -- the push constant occupies b0.
+    // NVRHI's Vulkan backend offsets constant-buffer registers by 256 by default; zero it so GLSL `binding = 1` matches.
     nvrhi::BindingLayoutHandle gbuffer_push_constant_layout = nvrhi_device->createBindingLayout(
         nvrhi::BindingLayoutDesc()
             .setVisibility(nvrhi::ShaderType::Vertex)
@@ -139,8 +136,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
             .setBindingOffsets(nvrhi::VulkanBindingOffsets().setConstantBufferOffset(0))
     );
 
-    // Volatile CB: written once per frame, GPU-read across frames-in-flight. NVRHI auto-versions
-    // each writeBuffer, so maxVersions only needs to cover the frames that can be outstanding.
+    // Volatile: NVRHI auto-versions each writeBuffer, so maxVersions only needs to cover outstanding frames.
     nvrhi::BufferDesc camera_buffer_desc{};
     camera_buffer_desc.byteSize = sizeof(Eigen::Matrix4f);
     camera_buffer_desc.isConstantBuffer = true;
@@ -187,8 +183,7 @@ Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
         gbuffer_push_constant_layout
     );
 
-    // Instanced geometry pass: same shader I/O plus a per-instance InstanceData at buffer slot 1
-    // (world transform at locations 3-6, its normal matrix at locations 7-10).
+    // Per-instance InstanceData at buffer slot 1: transform at locations 3-6, normal matrix at 7-10.
     nvrhi::VertexAttributeDesc instanced_mesh_attrs[] = {
         mesh_attrs[0],
         mesh_attrs[1],

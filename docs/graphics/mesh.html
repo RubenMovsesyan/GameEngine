@@ -20,8 +20,10 @@
 
   <h4>graphics</h4>
   <a href="camera.html">Camera</a>
+  <a href="frustum.html">Frustum</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
   <a class="here" href="mesh.html">Mesh</a>
   <a href="post_process_chain.html">PostProcessChain</a>
   <a href="renderer.html">Renderer</a>
@@ -76,6 +78,15 @@
     Eigen::Vector2f uv;
 };
 
+// Inverse-transpose of the model matrix's linear block, padded back to mat4.
+inline Eigen::Matrix4f normalMatrix(const Eigen::Matrix4f& model);
+
+// One instance's per-draw data: world transform + its precomputed normal matrix.
+struct InstanceData {
+    Eigen::Matrix4f transform;
+    Eigen::Matrix4f normal_matrix;
+};
+
 template &lt;typename T&gt;
 concept Mesh = requires(const T&amp; value) {
     { value.vertexBuffer() } -&gt; std::same_as&lt;nvrhi::IBuffer*&gt;;
@@ -105,7 +116,7 @@ class InstancedMesh {
 
     u32 addInstance(const Eigen::Matrix4f&amp; transform);
     void removeInstance(u32 index);
-    Eigen::Matrix4f* mutableInstance(u32 index);
+    Eigen::Matrix4f* mutableInstance(u32 index);   // returns &amp;InstanceData::transform
 
     nvrhi::IBuffer* instanceBuffer() const;
     void uploadIfDirty(const gpu::Device&amp;);
@@ -141,12 +152,38 @@ class InstancedMesh {
   <li>
     <strong>Dirty-flag upload, not automatic sync.</strong> <code>addInstance()</code>/
     <code>removeInstance()</code>/<code>mutableInstance()</code> only touch the CPU-side
-    <code>std::vector&lt;Eigen::Matrix4f&gt;</code> and set a dirty flag;
+    <code>std::vector&lt;InstanceData&gt;</code> and set a dirty flag;
     <code>uploadIfDirty()</code> is what actually rebuilds <code>instanceBuffer()</code> from
     scratch (no partial updates) and clears the flag. <code>mutableInstance()</code> marks dirty
     <em>unconditionally</em> on every call, same reasoning as
     <a href="camera.html">Camera</a>'s <code>mutablePosition()</code>: the class can't know
     whether the caller actually wrote a different value through the returned pointer.
+  </li>
+  <li>
+    <strong>Normals need the inverse-transpose, not <code>mat3(model)</code>.</strong>
+    <code>mat3(model)</code> transforms a normal correctly only for rotation plus
+    <em>uniform</em> scale; non-uniform scale skews the normal off the surface and every
+    lit pixel is then wrong. <code>normalMatrix()</code> returns
+    <code>transpose(inverse(mat3(model)))</code>, padded to a full <code>mat4</code> so it
+    drops into a push constant or vertex attribute without std140/std430 column-padding
+    surprises — only the <code>3&times;3</code> block is ever read. The non-instanced
+    <a href="renderer.html">Renderer</a> path computes it per draw from the model matrix
+    and ships it in the G-buffer push constant; see
+    <a href="../scene/gltf_loader.html">loadGltf</a> for the matching fix on light
+    directions.
+  </li>
+  <li>
+    <strong><code>InstanceData</code> carries a precomputed per-instance normal matrix.</strong>
+    Each instance buffer entry is <code>{transform, normal_matrix}</code>, not a bare
+    <code>mat4</code>. <code>uploadIfDirty()</code> recomputes <em>every</em> instance's
+    <code>normal_matrix</code> from its <code>transform</code> before re-uploading — it
+    can't tell which transforms a <code>mutableInstance()</code> caller rewrote, and the
+    whole buffer is rebuilt from scratch anyway. The instanced vertex shader then
+    multiplies the per-draw normal matrix by the per-instance one (normal matrix of a
+    product is the product of the normal matrices), so the shader never does a matrix
+    inverse per vertex. This is why the instance buffer's stride is
+    <code>sizeof(InstanceData)</code> and the instanced pipeline binds two
+    four-location <code>mat4</code> attributes at slot 1, not one.
   </li>
   <li>
     <strong><code>uploadIfDirty()</code> can't run while a frame's command list is open.</strong>

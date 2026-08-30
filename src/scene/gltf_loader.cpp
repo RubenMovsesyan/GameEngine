@@ -191,8 +191,7 @@ graphics::LightType toLightType(cgltf_light_type type) {
 }
 
 void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Scene& scene) {
-    // glTF lights aim down local -Z; transform that direction with the inverse-transpose so a
-    // non-uniformly scaled light node still points true (matches gbuffer.vert's normal handling).
+    // glTF lights aim down local -Z; inverse-transpose keeps a non-uniformly scaled node pointing true.
     const Eigen::Matrix3f normal_basis = transform.block<3, 3>(0, 0).inverse().transpose();
     const Eigen::Vector3f direction = (normal_basis * Eigen::Vector3f(0.0f, 0.0f, -1.0f)).normalized();
 

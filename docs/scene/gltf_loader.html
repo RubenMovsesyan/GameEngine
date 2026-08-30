@@ -20,6 +20,7 @@
 
   <h4>graphics</h4>
   <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/frustum.html">Frustum</a>
   <a href="../graphics/light.html">Light</a>
   <a href="../graphics/light_manager.html">LightManager</a>
   <a href="../graphics/material.html">Material</a>
@@ -80,7 +81,8 @@
   <li>Triangle primitives only, indexed only — non-indexed or non-triangle primitives are a fatal error, not silently skipped.</li>
   <li>Requires <code>POSITION</code>, <code>NORMAL</code>, and <code>TEXCOORD_0</code> on every primitive.</li>
   <li>Node transforms: <code>cgltf_node_transform_local</code> fills a column-major <code>float[16]</code>, which matches <code>Eigen::Matrix4f</code>'s default storage directly — <code>Eigen::Map&lt;const Eigen::Matrix4f&gt;(local)</code> reads it with no conversion.</li>
-  <li>Light direction/position come from the owning node's accumulated world transform, not from the light itself — glTF stores punctual lights as node attachments, same as meshes. Direction uses the transform's 3×3 rotation block applied to local <code>(0,0,-1)</code>, skipping the inverse-transpose (a simplification, consistent with how mesh normals are handled in <code>gbuffer.vert</code> — correct for uniform scale, not for non-uniform).</li>
+  <li>Light direction/position come from the owning node's accumulated world transform, not from the light itself — glTF stores punctual lights as node attachments, same as meshes. Direction is local <code>(0,0,-1)</code> transformed by the inverse-transpose of the node's 3×3 linear block, so a non-uniformly scaled light node still points true — the same fix <code>gbuffer.vert</code> now uses for mesh normals (see <a href="../graphics/mesh.html"><code>normalMatrix()</code></a>).</li>
+  <li>Each primitive gets a mesh-space AABB: if the <code>POSITION</code> accessor declares <code>min</code>/<code>max</code> (glTF requires it to, in practice), those two points are used directly; otherwise the vertex positions are scanned. It rides along into <a href="model.html"><code>ModelPart::local_bounds</code></a> for frustum culling.</li>
   <li>
     <strong>Full metallic-roughness materials</strong> — <code>loadMaterial()</code>
     reads <code>base_color_texture</code>/<code>metallic_roughness_texture</code> plus

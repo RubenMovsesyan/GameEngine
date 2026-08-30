@@ -19,8 +19,7 @@ class Material {
         const std::optional<Texture>& metallicRoughnessTexture() const { return m_metallic_roughness_texture; }
         nvrhi::IBuffer* factorsBuffer() const { return m_factors_buffer; }
 
-        // Cached g-buffer texture binding set. Rebuilt only when a texture's underlying handle
-        // changes (async placeholder -> real swap); sampler/layout/fallback are Renderer-stable.
+        // Cached; rebuilt only when a resolved texture handle changes (async placeholder -> real swap).
         nvrhi::IBindingSet* gbufferBindingSet(nvrhi::IDevice*, nvrhi::IBindingLayout*, nvrhi::ITexture* white_fallback,
                                               nvrhi::ISampler*) const;
 

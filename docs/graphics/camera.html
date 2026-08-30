@@ -20,6 +20,7 @@
 
   <h4>graphics</h4>
   <a class="here" href="camera.html">Camera</a>
+  <a href="frustum.html">Frustum</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
   <a href="material.html">Material</a>
@@ -64,10 +65,12 @@
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends only on Eigen. <code>graphics::Renderer::renderMesh()</code> reads
+  Depends on Eigen and <a href="frustum.html"><code>Frustum</code></a>.
+  <code>graphics::Renderer::renderMesh()</code> reads
   <code>viewProjectionMatrix()</code>/<code>inverseViewProjectionMatrix()</code>/<code>position()</code>
-  every call; <code>scene::Model</code>/<code>scene::Scene::render()</code> just forward
-  a <code>const Camera&amp;</code> through.
+  every call; <a href="../scene/model.html"><code>scene::Model::render()</code></a> reads
+  <code>frustum()</code> to cull parts before submitting them, and
+  <code>scene::Scene::render()</code> forwards a <code>const Camera&amp;</code> through.
 </p>
 
 <h2>Public API</h2>
@@ -78,6 +81,7 @@
     const Eigen::Matrix4f& transformationMatrix() const;       // world -> camera space
     const Eigen::Matrix4f& viewProjectionMatrix() const;        // projection * transformationMatrix()
     const Eigen::Matrix4f& inverseViewProjectionMatrix() const; // for reconstructing world position from depth
+    const Frustum& frustum() const;                             // world-space view frustum, cached with the matrices
     const Eigen::Vector3f& position() const;
     const Eigen::Vector3f& direction() const;
 
@@ -126,6 +130,13 @@
   <li><code>inverse_view_projection = view_inverse * inverse_projection</code> — one 4x4
     multiply of two already-cheap matrices, not an inverse of their product.</li>
 </ul>
+<p>
+  <code>m_frustum</code> is rebuilt in the same lazy step (<code>rebuildIfDirty()</code>),
+  right after <code>m_view_projection</code>, via
+  <a href="frustum.html"><code>Frustum::fromViewProjection()</code></a> — so
+  <code>frustum()</code> is always consistent with the current matrices and costs nothing
+  on a frame that didn't move the camera.
+</p>
 
 <h2>Worth knowing</h2>
 <ul>

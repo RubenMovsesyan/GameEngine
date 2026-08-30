@@ -20,6 +20,7 @@
 
   <h4>graphics</h4>
   <a href="camera.html">Camera</a>
+  <a href="frustum.html">Frustum</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
   <a href="material.html">Material</a>
@@ -239,12 +240,15 @@
     <code>renderMesh&lt;T&gt;()</code> checks <code>requires { mesh.instanceBuffer(); }</code> —
     true only for <a href="mesh.html"><code>InstancedMesh</code></a> — to pick between
     <code>m_gbuffer_pipeline</code>/<code>gbuffer.vert</code> (one vertex buffer, slot 0) and
-    <code>m_gbuffer_instanced_pipeline</code>/<code>gbuffer_instanced.vert</code> (adds a
-    per-instance <code>mat4</code> at buffer slot 1, <code>isInstanced = true</code>, occupying 4
-    consecutive vertex-attribute locations — <code>setArraySize(4)</code> on one
+    <code>m_gbuffer_instanced_pipeline</code>/<code>gbuffer_instanced.vert</code> (adds two
+    per-instance <code>mat4</code>s at buffer slot 1, <code>isInstanced = true</code>, stride
+    <code>sizeof(InstanceData)</code>: <code>INSTANCE_TRANSFORM</code> and
+    <code>INSTANCE_NORMAL_MATRIX</code>, each <code>setArraySize(4)</code> on an
     <code>RGBA32_FLOAT</code> attribute, which NVRHI's Vulkan backend expands into locations 3–6
-    right after position/normal/uv). The shader multiplies
-    <code>pc.model * inInstanceTransform</code> to get each instance's world matrix. Detecting the
+    and 7–10 right after position/normal/uv). The shader multiplies
+    <code>pc.model * inInstanceTransform</code> for the world matrix and
+    <code>mat3(pc.normal_matrix) * mat3(inInstanceNormalMatrix)</code> for the normal basis
+    (the normal matrix of a product is the product of the normal matrices). Detecting the
     mesh kind via a <code>requires</code>-expression rather than checking a concrete type name
     means a third <code>Mesh</code>-satisfying type with its own <code>instanceBuffer()</code>
     would automatically take the instanced path too.
@@ -277,9 +281,15 @@
     texture is absent — same "a null handle isn't valid there" reasoning as
     <code>m_empty_light_buffer</code>, and correct per spec: sampling white reads
     <code>1.0</code>, so the shader's factor multiply alone produces the right value.
-    Built fresh every draw call, same as the lighting pass already rebuilds its own
-    binding set every frame — not a new performance concern for this renderer's
-    existing stance.
+    This set is no longer rebuilt per draw: <code>renderMesh()</code> asks the
+    <a href="material.html"><code>Material</code></a> for it via
+    <code>gbufferBindingSet()</code>, which caches it and only rebuilds when a texture
+    handle actually changes (the async placeholder&nbsp;&rarr;&nbsp;real swap). The
+    lighting and sky passes' own sets are cached the same way, as
+    <code>m_lighting_binding_set</code>/<code>m_sky_binding_set</code> members rebuilt
+    only on resize — and <code>m_lighting_binding_set</code> also on
+    <code>setLights()</code>, but only when the incoming light buffer is a different
+    handle than last frame's (that buffer is the one moving resource in the set).
   </li>
   <li>
     <strong><code>m_material</code> went from declared-but-dead to a real G-buffer
@@ -320,7 +330,56 @@
     push-constant binding set second.
   </li>
   <li>
-    No frames-in-flight pacing — <code>vkDeviceWaitIdle</code> after every submit. Simple and correct; revisit if/when frame pacing actually matters for performance.
+    <strong>The world normal is octahedral-encoded into an <code>RG16_FLOAT</code>
+    target.</strong> The G-buffer normal attachment used to be <code>RGBA32_FLOAT</code>
+    (16 bytes/pixel storing a unit vector plus a dead <code>.w</code>).
+    <code>gbuffer.frag</code> now calls <code>octEncode()</code> — fold the unit sphere
+    onto an octahedron, unwrap to a 2-channel <code>[-1,1]</code> square — and
+    <code>lighting.frag</code> does the inverse <code>octDecode()</code> on read. Half the
+    bandwidth for that attachment, and a deferred renderer is bandwidth-bound on the
+    G-buffer. The encode/decode helpers are inlined in both shaders (no shared
+    <code>.glsl</code> include mechanism here); if a third pass ever needs the normal it
+    copies <code>octDecode()</code> too.
+  </li>
+  <li>
+    <strong><code>view_projection</code> is a per-frame constant buffer, not part of the
+    G-buffer push constant.</strong> <code>GBufferPushConstants</code> is
+    <code>{model, normal_matrix}</code> — two <code>mat4</code>s, exactly the 128-byte
+    guaranteed push-constant minimum, no room for a third. So the camera's
+    <code>view_projection</code> moved to <code>m_camera_buffer</code>, a constant buffer
+    at <code>set = 1, binding = 1</code> in the vertex stage, written once per frame on
+    the first <code>renderMesh()</code> call (it's identical for every mesh that frame).
+    NVRHI's Vulkan backend offsets constant-buffer registers by 256 by default; the
+    binding layout zeroes that so the GLSL <code>binding = 1</code> matches, the same way
+    every layout here zeroes the 128 sampler offset. The buffer is
+    <code>isVolatile</code> with <code>maxVersions = kFramesInFlight + 2</code>: NVRHI
+    auto-versions each <code>writeBuffer</code> so an in-flight frame keeps reading the
+    version it was recorded with.
+  </li>
+  <li>
+    <strong>Point lights outside their range skip the BRDF entirely.</strong>
+    <code>lighting.frag</code>'s point branch does
+    <code>if (range &gt; 0.0 &amp;&amp; dist &gt;= range) continue;</code> before any
+    Cook-Torrance math — <code>pointAttenuation()</code> is already <code>0</code> past
+    the range, so the shading was wasted work. A finite range is per-light in
+    <code>position_range.w</code>; <code>range == 0</code> still means infinite.
+  </li>
+  <li>
+    <strong>Frames in flight, paced by an event-query ring instead of
+    <code>vkDeviceWaitIdle</code>.</strong> <code>endFrame()</code> used to drain the
+    whole GPU after every submit — zero CPU/GPU overlap. Now <code>kFramesInFlight = 2</code>
+    <code>nvrhi::EventQueryHandle</code>s (<code>m_frame_done</code>) form a ring:
+    <code>endFrame()</code> resets and sets slot <code>frame_counter % kFramesInFlight</code>
+    on the graphics queue after submit; <code>beginFrame()</code> waits on that slot's
+    query <em>only</em> once <code>frame_counter &ge; kFramesInFlight</code>, i.e. only
+    when the CPU is a full two frames ahead. NVRHI recycles its own command-list buffers
+    and emits the cross-submit barriers, so the single command list and single G-buffer
+    don't need N-buffering — only the volatile camera buffer does (above). The acquire
+    semaphore is still per-swapchain-image; the constructor asserts
+    <code>imageCount &gt; kFramesInFlight</code> so a semaphore can't be re-waited while
+    its submit is still pending. The resize and present-failure paths deliberately keep a
+    full <code>vkDeviceWaitIdle</code> — they're rare and need every prior frame done
+    before textures are recreated.
   </li>
 </ul>
 

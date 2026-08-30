@@ -20,6 +20,7 @@
 
   <h4>graphics</h4>
   <a href="camera.html">Camera</a>
+  <a href="frustum.html">Frustum</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
   <a class="here" href="material.html">Material</a>
@@ -83,6 +84,10 @@
     const std::optional&lt;Texture&gt;& baseColorTexture() const;
     const std::optional&lt;Texture&gt;& metallicRoughnessTexture() const;
     nvrhi::IBuffer* factorsBuffer() const;
+
+    // Cached G-buffer texture/sampler/factors binding set; rebuilt only on texture-handle change.
+    nvrhi::IBindingSet* gbufferBindingSet(nvrhi::IDevice*, nvrhi::IBindingLayout*,
+                                           nvrhi::ITexture* white_fallback, nvrhi::ISampler*) const;
 };</code></pre>
 
 <h2>Worth knowing</h2>
@@ -129,6 +134,20 @@
     glTF's own spec: the implicit sample when no texture exists is <code>1.0</code>.
     The actual value for a texture-less material lives entirely in the factor, in the
     buffer — the texture slot never needs to lie about it.
+  </li>
+  <li>
+    <strong>The G-buffer binding set is cached on the <code>Material</code>, not rebuilt
+    per draw.</strong> <code>renderMesh()</code> used to call
+    <code>device->createBindingSet()</code> every draw call. Now
+    <code>gbufferBindingSet()</code> builds it once and returns the cached
+    <code>nvrhi::BindingSetHandle</code> on every later call. The cache key is just the
+    two resolved <code>nvrhi::ITexture*</code> pointers (base color, metallic-roughness,
+    each falling back to <code>Renderer</code>'s shared white texture when absent): a raw
+    pointer compare, which catches both the first build and the one handle change that
+    actually happens — <a href="texture.html"><code>Texture</code></a> swapping its
+    placeholder for the real image once the background decode finishes. The sampler,
+    layout, and white fallback are all <code>Renderer</code>-owned and stable for the
+    process, so they're passed in rather than stored and aren't part of the key.
   </li>
   <li>
     Private constructor + static factory, matching every other GPU-resource class here

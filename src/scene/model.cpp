@@ -6,8 +6,7 @@ namespace scene {
 
 namespace {
 
-// Local AABB -> world AABB by transforming the 8 corners and re-fitting. Slightly loose for a
-// rotated box (never smaller than the true bounds), which is fine for culling.
+// Transform the 8 local corners and re-fit; loose for a rotated box but never smaller than true.
 Eigen::AlignedBox3f worldBounds(const Eigen::Matrix4f& world_matrix, const Eigen::AlignedBox3f& local) {
     Eigen::AlignedBox3f out;
     for (int i = 0; i < 8; i++) {

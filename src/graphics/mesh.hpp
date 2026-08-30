@@ -16,21 +16,17 @@ struct Vertex {
     Eigen::Vector2f uv;
 };
 
-// Correct normal transform for an arbitrary model matrix: transpose of the inverse
-// of the linear block. mat3(model) is only right for rotation + uniform scale;
-// non-uniform scale skews normals off the surface. Returned padded to mat4 so it
-// drops into a push constant / vertex attribute without column-padding surprises.
+// Inverse-transpose of mat3(model), padded to mat4; correct under non-uniform scale.
 inline Eigen::Matrix4f normalMatrix(const Eigen::Matrix4f& model) {
     Eigen::Matrix4f n = Eigen::Matrix4f::Identity();
     n.block<3, 3>(0, 0) = model.block<3, 3>(0, 0).inverse().transpose();
     return n;
 }
 
-// One instance's per-draw data: its world transform plus the matching normal matrix,
-// precomputed on upload so the shader never inverts per vertex.
+// Per-instance vertex data: world transform + its precomputed normal matrix.
 struct InstanceData {
     Eigen::Matrix4f transform;
-    Eigen::Matrix4f normal_matrix; // filled by InstancedMesh::uploadIfDirty from transform
+    Eigen::Matrix4f normal_matrix; // derived from transform in InstancedMesh::uploadIfDirty
 };
 
 // Anything drawable: a vertex buffer, an index buffer, and how many instances to draw.

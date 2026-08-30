@@ -20,6 +20,7 @@
 
   <h4>graphics</h4>
   <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/frustum.html">Frustum</a>
   <a href="../graphics/light.html">Light</a>
   <a href="../graphics/light_manager.html">LightManager</a>
   <a href="../graphics/material.html">Material</a>
@@ -54,7 +55,9 @@
 <h2>Role</h2>
 <p>
   Rendering a model means rendering each part individually: <code>render()</code> loops
-  its parts and calls <code>Renderer::renderMesh()</code> once per part, combining the
+  its parts, frustum-culls each one against
+  <a href="../graphics/frustum.html"><code>camera.frustum()</code></a>, and calls
+  <code>Renderer::renderMesh()</code> once per surviving part, combining the
   caller-supplied world transform with each part's local transform. No node hierarchy
   or scene graph — a flat list is all that's needed for what's actually loaded today.
   Each part can independently be a <code>StandardMesh</code> or an <code>InstancedMesh</code>
@@ -75,8 +78,9 @@
 <h2>Public API</h2>
 <pre><code>struct ModelPart {
     std::variant&lt;graphics::StandardMesh, graphics::InstancedMesh&gt; mesh;
-    Eigen::Matrix4f transform; // local to the model's own origin
+    Eigen::Matrix4f transform;        // local to the model's own origin
     graphics::Material material;
+    Eigen::AlignedBox3f local_bounds; // mesh-space AABB, pre-transform; for frustum culling
 
     void convertToStandard();    // shares buffers, no re-upload; warns and no-ops if already that kind
     void convertToInstanced();   // lossy for the reverse direction -- see graphics::Mesh
@@ -84,7 +88,7 @@
 
 class Model {
     template &lt;graphics::Mesh T&gt;
-    void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material);
+    void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material, Eigen::AlignedBox3f local_bounds);
     void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
     u32 partCount() const;
@@ -107,7 +111,24 @@ class Model {
     in <code>model.cpp</code> — same pattern as <code>Renderer::renderMesh&lt;T&gt;()</code>. Keeps
     the real function body out of the header while still accepting either mesh kind at the call
     site; a third <code>Mesh</code>-satisfying type would need its own explicit instantiation line
-    added.
+    added. Its trailing <code>local_bounds</code> is the mesh-space AABB
+    <a href="gltf_loader.html">loadGltf</a> computes per primitive (from the glTF
+    <code>POSITION</code> accessor's declared <code>min</code>/<code>max</code>, or a
+    vertex scan when those are absent).
+  </li>
+  <li>
+    <strong><code>render()</code> frustum-culls per part, but only <code>StandardMesh</code>
+    parts.</strong> For each part it builds a world AABB —
+    <code>worldBounds()</code> transforms the eight local corners by
+    <code>world_transform * part.transform</code> and re-fits an axis-aligned box around
+    them, which is loose for a rotated box but never smaller than the true bounds, so it
+    never culls something visible — and skips the draw if
+    <a href="../graphics/frustum.html"><code>Frustum::intersects()</code></a> returns
+    false. <code>InstancedMesh</code> parts are always submitted: their per-instance
+    transforms live in the instance buffer and aren't culled yet, so one part's AABB
+    can't stand in for the whole grid. The frustum itself is fetched once per
+    <code>render()</code> call from <code>camera.frustum()</code> (cached on the
+    <a href="../graphics/camera.html">Camera</a>).
   </li>
   <li>
     <strong><code>render()</code> is non-<code>const</code></strong>, and iterates

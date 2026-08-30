@@ -63,9 +63,7 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
     light_manager.build();
 
 
-    graphics::Skybox sky;
-    sky.intensity = 300.0f;
-    renderer.setSkybox(sky); // default: skyblue zenith, gray ground gradient
+    renderer.setSkybox(graphics::Skybox{}); // calibrated default gradient sky
 
     VkExtent2D extent = app.swapchain().extent();
     RLOG(LL_DEBUG, "Extent: " + std::to_string(extent.width) + " by " + std::to_string(extent.height));

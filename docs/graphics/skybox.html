@@ -71,9 +71,10 @@
 
 <h2>Public API</h2>
 <pre><code>// Procedural vertical gradient: ground colour at the horizon fading to zenith overhead.
+// zenith/ground are linear radiance in the lights' units, calibrated for the default exposure.
 struct GradientSky {
-    Eigen::Vector3f zenith{0.53f, 0.71f, 1.0f}; // skyblue
-    Eigen::Vector3f ground{0.15f, 0.15f, 0.15f}; // dark gray
+    Eigen::Vector3f zenith{90.0f, 120.0f, 170.0f}; // slightly unsaturated skyblue
+    Eigen::Vector3f ground{25.0f, 25.0f, 25.0f};   // dim ground bounce
 };
 
 // Reserves the variant slot; no cubemap loader exists yet.
@@ -103,26 +104,24 @@ struct Skybox {
     <strong><code>variant</code>, not an enum with dead fields.</strong> A gradient and a
     cubemap are mutually exclusive, so the two configs live in separate structs in a
     <code>std::variant</code> (matching <a href="../scene/model.html"><code>ModelPart::mesh</code></a>).
-    <code>intensity</code> sits outside the variant because it applies to both — it
-    scales the sky colour before the tonemap.
+    <code>intensity</code> sits outside the variant because it applies to both — a plain
+    artistic multiplier on top of the calibrated sky colour.
   </li>
   <li>
-    <strong><code>intensity</code> is a calibration knob, and the default is nowhere near
-    calibrated.</strong> The lighting output is HDR and gets an ACES + exposure tonemap
-    at roughly <code>0.003</code> (see <a href="renderer.html">Renderer</a>). A literal
-    <code>(0.53, 0.71, 1.0)</code> sky colour is crushed to near-black by that exposure,
-    so <code>intensity</code> has to lift it back — <code>sandbox/model_test/main.cpp</code>
-    currently sets <code>300.0f</code> as a first guess. <code>sky.frag</code> carries a
-    <code>FIXME</code> that the gradient still needs proper calibration against the
-    exposure. Expect to tune <code>intensity</code> per scene, like a light's intensity.
+    <strong>The gradient colours are linear radiance in the lights' units.</strong> The
+    lighting output is HDR and gets an ACES + exposure tonemap at roughly <code>0.003</code>
+    (see <a href="renderer.html">Renderer</a>), so the sky is authored in that same
+    scene-referred range: <code>zenith (90, 120, 170)</code>, <code>ground (25, 25, 25)</code>
+    land mid-curve after exposure. The default <code>Skybox{}</code> with
+    <code>intensity = 1.0</code> renders a plausible sky with no per-scene tuning; reach for
+    <code>intensity</code> only when you want a deliberately brighter or dimmer sky.
   </li>
   <li>
     <strong>The gradient band is tight and just above the horizon.</strong>
-    <code>sky.frag</code> does <code>mix(ground, zenith, smoothstep(-0.02, 0.12, dir.y))</code>
+    <code>sky.frag</code> does <code>mix(ground, zenith, smoothstep(-0.05, 0.25, dir.y))</code>
     on the world-space view-ray Y — so everything below the horizon is flat ground
-    colour, the fade happens in a narrow wedge just above it, and most of the visible
-    sky dome is flat zenith colour. Widen the <code>smoothstep</code> edges if you want
-    a softer, taller gradient.
+    colour, the fade happens in a wedge above it, and the upper sky dome is flat zenith
+    colour. Widen the <code>smoothstep</code> edges further for a softer, taller gradient.
   </li>
   <li>
     <strong>Constructing a <code>CubemapSky</code> today sets <code>kind = 1</code> but
@@ -137,9 +136,9 @@ struct Skybox {
   <li>
     <strong>The <code>Renderer</code>'s ambient default was tuned to match this.</strong>
     <code>lighting.frag</code>'s flat ambient term (a stand-in for sky bounce until IBL
-    exists) defaults to <code>(300, 300, 300)</code> — the same order of magnitude as the
-    gradient's <code>intensity</code>, for the same exposure reason. Tune the two
-    together.
+    exists) defaults to <code>(300, 300, 300)</code> — large for the same exposure reason,
+    but still a hand-tuned stand-in and <em>not</em> derived from the sky gradient. The two
+    are unrelated today; IBL later unifies them.
   </li>
 </ul>
 

@@ -32,8 +32,8 @@ void main() {
     vec3 color;
     switch (pc.kind) {
         default: // 0 = gradient
-            // FIXME: gradient still needs calibration against the tonemap exposure (~0.003).
-            color = mix(pc.ground.rgb, pc.zenith_intensity.rgb, smoothstep(-0.02, 0.12, dir.y));
+            // ground/zenith are linear radiance in the lights' units; tonemap.frag applies exposure.
+            color = mix(pc.ground.rgb, pc.zenith_intensity.rgb, smoothstep(-0.05, 0.25, dir.y));
             break;
         // case 1: color = texture(samplerCube(tCubemap, sLinear), dir).rgb; break; // CubemapSky
     }

@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
 	engine.addLinkFlag("-std=c++23");
 
 	engine.addInclude(Include<Direct>("external/NVRHI/include"));
+	engine.addInclude(Include<Direct>("external/sokol"));
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
 	engine.addInclude(Include<Direct>("external/cgltf"));
@@ -26,6 +27,13 @@ int main(int argc, char** argv) {
 	engine.addLink(Link<Dependency>("vulkan"));
 	engine.addLink(Link<Dependency>("pthread"));
 	engine.addLink(Link<Dependency>("glfw"));
+
+	// sokol_app on Linux: X11 windowing plus dlopen for the Vulkan loader.
+	engine.addLink(Link<Dependency>("X11"));
+	engine.addLink(Link<Dependency>("Xi"));
+	engine.addLink(Link<Dependency>("Xcursor"));
+	engine.addLink(Link<Dependency>("dl"));
+	engine.addLink(Link<Dependency>("m"));
 
 	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
 	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
@@ -82,6 +90,7 @@ int main(int argc, char** argv) {
 	};
 
 	const std::vector<std::string> engine_sources = {
+	    "src/gpu/sokol.cpp",
 	    "src/gpu/instance.cpp",
 	    "src/gpu/device.cpp",
 	    "src/gpu/swapchain.cpp",

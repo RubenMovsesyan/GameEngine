@@ -16,3 +16,9 @@
 [submodule "external/stb"]
 	path = external/stb
 	url = https://github.com/nothings/stb.git
+[submodule "external/sokol"]
+	path = external/sokol
+	url = https://github.com/floooh/sokol.git
+[submodule "external/sokol-tools-bin"]
+	path = external/sokol-tools-bin
+	url = https://github.com/floooh/sokol-tools-bin.git

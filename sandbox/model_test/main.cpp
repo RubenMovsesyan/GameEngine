@@ -31,28 +31,28 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
 
     // TEST: override every loaded material with a fully metallic, fully rough one.
     // 1x1 texture with glTF MR packing (R=occlusion, G=roughness, B=metallic), factors at 1.0.
-    const std::array<u8, 4> kMaxMrPixel = {255, 25, 50, 255};
-    graphics::Texture max_mr_texture = graphics::Texture::create(app.device(), kMaxMrPixel, 1, 1);
+    // const std::array<u8, 4> kMaxMrPixel = {255, 25, 50, 255};
+    // graphics::Texture max_mr_texture = graphics::Texture::create(app.device(), kMaxMrPixel, 1, 1);
 
     // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
     // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
     scene::Scene standalone_scene = scene::loadGltf(app.device(), model_path);
-    for (scene::Model& model : standalone_scene.mutableModels()) {
-        for (scene::ModelPart& part : model.mutableParts()) {
-            part.material = graphics::Material::create(
-                app.device(), part.material.baseColorTexture(), max_mr_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
-            );
-        }
-    }
+    // for (scene::Model& model : standalone_scene.mutableModels()) {
+    //     for (scene::ModelPart& part : model.mutableParts()) {
+    //         // part.material = graphics::Material::create(
+    //         //     app.device(), part.material.baseColorTexture(), max_mr_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
+    //         // );
+    //     }
+    // }
     Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
     standalone_transform(1, 3) = 10.0f;
 
     for (scene::Model& model : scene.mutableModels()) {
         for (scene::ModelPart& part : model.mutableParts()) {
-            part.material = graphics::Material::create(
-                app.device(), part.material.baseColorTexture(), max_mr_texture,
-                {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
-            );
+            // part.material = graphics::Material::create(
+            //     app.device(), part.material.baseColorTexture(), max_mr_texture,
+            //     {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
+            // );
 
             part.convertToInstanced();
             graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
@@ -107,6 +107,12 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
 
         if (app.input().isKeyPressed(GLFW_KEY_ESCAPE)) {
             app.toggleCursorCapture();
+        }
+        if (app.input().isKeyPressed(GLFW_KEY_F1)) {
+            renderer.toggleShadowMapDebug();
+        }
+        if (app.input().isKeyPressed(GLFW_KEY_F2)) {
+            renderer.cycleShadowMapDebugLayer();
         }
 
         Eigen::Vector3f forward = camera.direction().normalized();

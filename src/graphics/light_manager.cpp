@@ -30,6 +30,15 @@ void LightManager::add(const Light& light) {
     m_lights.push_back(&light);
 }
 
+const Light* LightManager::directionalLight() const {
+    for (const Light* light : m_lights) {
+        if (light->type == LightType::Directional && light->casts_shadows) {
+            return light;
+        }
+    }
+    return nullptr;
+}
+
 void LightManager::build() {
     if (m_lights.empty()) {
         m_buffer = nullptr;

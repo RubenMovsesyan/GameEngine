@@ -16,6 +16,8 @@ class LightManager {
         void build();
         nvrhi::IBuffer* buffer() const { return m_buffer; }
         u32 count() const { return static_cast<u32>(m_lights.size()); }
+        // First registered shadow-casting directional light, or nullptr. Used to aim the shadow cascades.
+        const Light* directionalLight() const;
 
     private:
         const gpu::Device* m_device;

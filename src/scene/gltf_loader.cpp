@@ -195,8 +195,9 @@ void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Sce
     const Eigen::Matrix3f normal_basis = transform.block<3, 3>(0, 0).inverse().transpose();
     const Eigen::Vector3f direction = (normal_basis * Eigen::Vector3f(0.0f, 0.0f, -1.0f)).normalized();
 
+    const graphics::LightType type = toLightType(light.type);
     scene.addLight(graphics::Light{
-        .type = toLightType(light.type),
+        .type = type,
         .color = Eigen::Vector3f(light.color[0], light.color[1], light.color[2]),
         .intensity = light.intensity,
         .position = transform.block<3, 1>(0, 3),
@@ -204,6 +205,7 @@ void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Sce
         .range = light.range,
         .spot_inner_cone_angle = light.spot_inner_cone_angle,
         .spot_outer_cone_angle = light.spot_outer_cone_angle,
+        .casts_shadows = type != graphics::LightType::Point, // glTF has no flag; point-light shadows aren't built
     });
 }
 

@@ -26,6 +26,7 @@ class Light {
         f32 range;                 // meters; 0 means infinite range per glTF spec
         f32 spot_inner_cone_angle; // radians; Spot only
         f32 spot_outer_cone_angle; // radians; Spot only
+        bool casts_shadows;        // no glTF equivalent -- set by the loader (Directional/Spot yes, Point no)
 
         std::string display() const;
 };

@@ -26,7 +26,7 @@ std::string Light::display() const {
     return "Light{type=" + lightTypeName(type) + ", color=" + vec3String(color) + ", intensity=" + std::to_string(intensity) +
            ", position=" + vec3String(position) + ", direction=" + vec3String(direction) + ", range=" + std::to_string(range) +
            ", spot_inner_cone_angle=" + std::to_string(spot_inner_cone_angle) + ", spot_outer_cone_angle=" +
-           std::to_string(spot_outer_cone_angle) + "}";
+           std::to_string(spot_outer_cone_angle) + ", casts_shadows=" + (casts_shadows ? "true" : "false") + "}";
 }
 
 } // namespace graphics

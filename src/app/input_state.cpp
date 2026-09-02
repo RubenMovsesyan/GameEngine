@@ -2,9 +2,6 @@
 
 #include <mutex>
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-
 namespace app {
 
 namespace {
@@ -13,34 +10,33 @@ bool inRange(int index, usize count) {
 }
 } // namespace
 
-void InputState::handleKey(int key, int action) {
-    if (!inRange(key, kKeyCount) || action == GLFW_REPEAT) {
+void InputState::handleKey(int key, bool down) {
+    if (!inRange(key, kKeyCount)) {
         return;
     }
     std::unique_lock lock(m_mutex);
-    bool down = action == GLFW_PRESS;
     m_key_down[key] = down;
     (down ? m_key_pressed_accum : m_key_released_accum)[key] = true;
 }
 
-void InputState::handleMouseButton(int button, int action) {
-    if (!inRange(button, kMouseButtonCount) || action == GLFW_REPEAT) {
+void InputState::handleMouseButton(int button, bool down) {
+    if (!inRange(button, kMouseButtonCount)) {
         return;
     }
     std::unique_lock lock(m_mutex);
-    bool down = action == GLFW_PRESS;
     m_mouse_down[button] = down;
     (down ? m_mouse_pressed_accum : m_mouse_released_accum)[button] = true;
 }
 
-void InputState::handleCursorPos(f64 x, f64 y) {
+void InputState::handleMouseMove(f32 x, f32 y, f32 dx, f32 dy) {
     std::unique_lock lock(m_mutex);
-    m_mouse_position = Eigen::Vector2f(static_cast<f32>(x), static_cast<f32>(y));
+    m_mouse_position = Eigen::Vector2f(x, y);
+    m_mouse_delta_accum += Eigen::Vector2f(dx, dy);
 }
 
-void InputState::handleScroll(f64 x_offset, f64 y_offset) {
+void InputState::handleScroll(f32 x_offset, f32 y_offset) {
     std::unique_lock lock(m_mutex);
-    m_scroll_accum += Eigen::Vector2f(static_cast<f32>(x_offset), static_cast<f32>(y_offset));
+    m_scroll_accum += Eigen::Vector2f(x_offset, y_offset);
 }
 
 void InputState::beginFrame() {
@@ -56,8 +52,8 @@ void InputState::beginFrame() {
     m_mouse_pressed_accum.fill(false);
     m_mouse_released_accum.fill(false);
 
-    m_mouse_delta_snapshot = m_mouse_position - m_mouse_position_last_frame;
-    m_mouse_position_last_frame = m_mouse_position;
+    m_mouse_delta_snapshot = m_mouse_delta_accum;
+    m_mouse_delta_accum = Eigen::Vector2f(0.0f, 0.0f);
 
     m_scroll_snapshot = m_scroll_accum;
     m_scroll_accum = Eigen::Vector2f(0.0f, 0.0f);

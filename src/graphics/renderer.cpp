@@ -1,599 +1,412 @@
 #include <graphics/renderer.hpp>
 
-#include <algorithm>
-#include <cassert>
-#include <cstddef>
+#include <graphics/frustum.hpp>
+#include <graphics/texture.hpp>
+
+#include <sokol_app.h>
+
+#include <sokol_gfx.h>
+#include <sokol_glue.h>
+
+#include "engine.glsl.h"
+
+namespace graphics {
 
 namespace {
 
-constexpr u32 kGBufferVertSpv[] =
-#include "gbuffer.vert.h"
-    ;
-constexpr u32 kGBufferInstancedVertSpv[] =
-#include "gbuffer_instanced.vert.h"
-    ;
-constexpr u32 kGBufferFragSpv[] =
-#include "gbuffer.frag.h"
-    ;
-constexpr u32 kFullscreenTriangleVertSpv[] =
-#include "fullscreen_triangle.vert.h"
-    ;
-constexpr u32 kLightingFragSpv[] =
-#include "lighting.frag.h"
-    ;
-constexpr u32 kTonemapFragSpv[] =
-#include "tonemap.frag.h"
-    ;
-constexpr u32 kSkyFragSpv[] =
-#include "sky.frag.h"
-    ;
-constexpr u32 kFxaaFragSpv[] =
-#include "fxaa.frag.h"
-    ;
-constexpr u32 kShadowDepthVertSpv[] =
-#include "shadow_depth.vert.h"
-    ;
-constexpr u32 kShadowDepthInstancedVertSpv[] =
-#include "shadow_depth_instanced.vert.h"
-    ;
-constexpr u32 kShadowDepthFragSpv[] =
-#include "shadow_depth.frag.h"
-    ;
-constexpr u32 kShadowDebugFragSpv[] =
-#include "shadow_debug.frag.h"
-    ;
+constexpr sg_pixel_format kAlbedoFormat = SG_PIXELFORMAT_SRGB8A8;
+constexpr sg_pixel_format kNormalFormat = SG_PIXELFORMAT_RG16F;
+constexpr sg_pixel_format kMaterialFormat = SG_PIXELFORMAT_RGBA8;
+constexpr sg_pixel_format kDepthFormat = SG_PIXELFORMAT_DEPTH;
+constexpr sg_pixel_format kHdrFormat = SG_PIXELFORMAT_RGBA16F;
+constexpr sg_pixel_format kLdrFormat = SG_PIXELFORMAT_RGBA8;
 
-constexpr u32 kFullscreenTriangleVertexCount = 3;
+constexpr int kFullscreenTriangleVertexCount = 3;
 
-struct TonemapPushConstants {
-    f32 exposure;
-};
+RenderTarget makeColorTarget(int width, int height, sg_pixel_format format, const char* label) {
+    sg_image_desc image_desc = {};
+    image_desc.usage.color_attachment = true;
+    image_desc.width = width;
+    image_desc.height = height;
+    image_desc.pixel_format = format;
+    image_desc.label = label;
 
-struct FxaaPushConstants {
-    Eigen::Vector2f rcp_frame; // 1.0 / screen size
-    f32 enabled;               // < 0.5 -> passthrough
-};
+    RenderTarget target;
+    target.image = gpu::makeImage(image_desc);
 
-struct GBufferPushConstants {
-    Eigen::Matrix4f model;
-    Eigen::Matrix4f normal_matrix; // inverse-transpose of mat3(model); only the 3x3 is read
-};
+    sg_view_desc attachment_desc = {};
+    attachment_desc.color_attachment.image = *target.image;
+    attachment_desc.label = label;
+    target.attachment = gpu::makeView(attachment_desc);
 
-// std140-matched to lighting.frag's LightingUniforms block.
-struct LightingUniforms {
-    Eigen::Matrix4f inverse_view_projection;
-    Eigen::Matrix4f view;
-    std::array<Eigen::Matrix4f, graphics::kShadowCascadeCount> cascade_view_proj;
-    Eigen::Vector4f view_position;
-    Eigen::Vector4f ambient;             // rgb = flat ambient irradiance (pre-tonemap)
-    Eigen::Vector4f cascade_split_depth; // x..w = view-space far edge of each cascade
-    Eigen::Vector4f shadow_params;       // x = depth bias, y = normal offset
-    u32 light_count;
-    u32 _pad[3];
-};
-static_assert(graphics::kShadowCascadeCount == 4, "lighting.frag packs cascade_split_depth as a vec4");
+    sg_view_desc texture_desc = {};
+    texture_desc.texture.image = *target.image;
+    texture_desc.label = label;
+    target.texture = gpu::makeView(texture_desc);
 
-struct SkyPushConstants {
-    Eigen::Matrix4f inverse_view_projection;
-    Eigen::Vector4f view_position;
-    Eigen::Vector4f zenith_intensity; // rgb = zenith, a = intensity
-    Eigen::Vector4f ground;           // rgb = ground
-    u32 kind;                         // 0 = gradient, 1 = cubemap (unused today)
-};
-
-struct ShadowPushConstants {
-    Eigen::Matrix4f light_view_proj;
-    Eigen::Matrix4f model; // exactly 128 bytes -- the guaranteed push-constant minimum
-};
-
-nvrhi::ShaderHandle loadShader(nvrhi::IDevice* device, nvrhi::ShaderType type, const u32* spirv, usize word_count) {
-    nvrhi::ShaderDesc desc{};
-    desc.shaderType = type;
-    return device->createShader(desc, spirv, word_count * sizeof(u32));
+    return target;
 }
 
-nvrhi::RenderState opaqueNoDepth() {
-    nvrhi::RenderState state{};
-    state.rasterState.setCullNone();
-    state.depthStencilState.disableDepthTest();
-    state.depthStencilState.setDepthWriteEnable(false);
-    return state;
+RenderTarget makeDepthTarget(int width, int height, const char* label) {
+    sg_image_desc image_desc = {};
+    image_desc.usage.depth_stencil_attachment = true;
+    image_desc.width = width;
+    image_desc.height = height;
+    image_desc.pixel_format = kDepthFormat;
+    image_desc.label = label;
+
+    RenderTarget target;
+    target.image = gpu::makeImage(image_desc);
+
+    sg_view_desc attachment_desc = {};
+    attachment_desc.depth_stencil_attachment.image = *target.image;
+    attachment_desc.label = label;
+    target.attachment = gpu::makeView(attachment_desc);
+
+    sg_view_desc texture_desc = {};
+    texture_desc.texture.image = *target.image;
+    texture_desc.label = label;
+    target.texture = gpu::makeView(texture_desc);
+
+    return target;
 }
 
-nvrhi::TextureHandle createGBufferTexture(const gpu::Device& device, VkExtent2D extent, nvrhi::Format format, nvrhi::ResourceStates initial_state, const char* name) {
-    nvrhi::TextureDesc desc{};
-    desc.width = extent.width;
-    desc.height = extent.height;
-    desc.format = format;
-    desc.isRenderTarget = true;
-    desc.isShaderResource = true;
-    desc.initialState = initial_state;
-    desc.keepInitialState = true;
-    desc.debugName = name;
-    return device.createTexture(desc);
+// Vertex layout shared by the G-buffer and shadow passes: interleaved Vertex at buffer 0.
+void setMeshLayout(sg_vertex_layout_state& layout) {
+    layout.buffers[0].stride = sizeof(Vertex);
+    layout.attrs[ATTR_gbuffer_position].format = SG_VERTEXFORMAT_FLOAT3;
+    layout.attrs[ATTR_gbuffer_position].offset = offsetof(Vertex, position);
+    layout.attrs[ATTR_gbuffer_position].buffer_index = 0;
+    layout.attrs[ATTR_gbuffer_normal].format = SG_VERTEXFORMAT_FLOAT3;
+    layout.attrs[ATTR_gbuffer_normal].offset = offsetof(Vertex, normal);
+    layout.attrs[ATTR_gbuffer_normal].buffer_index = 0;
+    layout.attrs[ATTR_gbuffer_texcoord].format = SG_VERTEXFORMAT_FLOAT2;
+    layout.attrs[ATTR_gbuffer_texcoord].offset = offsetof(Vertex, uv);
+    layout.attrs[ATTR_gbuffer_texcoord].buffer_index = 0;
+}
+
+// The shadow pass reads the same interleaved vertex buffer but only consumes position;
+// declaring the unused attributes makes Vulkan complain that they go unread.
+void setShadowMeshLayout(sg_vertex_layout_state& layout) {
+    layout.buffers[0].stride = sizeof(Vertex);
+    layout.attrs[ATTR_shadow_depth_position].format = SG_VERTEXFORMAT_FLOAT3;
+    layout.attrs[ATTR_shadow_depth_position].offset = offsetof(Vertex, position);
+    layout.attrs[ATTR_shadow_depth_position].buffer_index = 0;
+}
+
+// Per-instance InstanceData at buffer 1: a mat4 is four consecutive FLOAT4 attributes.
+void setInstanceLayout(sg_vertex_layout_state& layout, int first_location, bool include_normal_matrix) {
+    layout.buffers[1].stride = sizeof(InstanceData);
+    layout.buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE;
+
+    for (int i = 0; i < 4; i++) {
+        const int slot = first_location + i;
+        layout.attrs[slot].format = SG_VERTEXFORMAT_FLOAT4;
+        layout.attrs[slot].offset = static_cast<int>(offsetof(InstanceData, transform) + i * sizeof(Eigen::Vector4f));
+        layout.attrs[slot].buffer_index = 1;
+    }
+
+    if (!include_normal_matrix) {
+        return;
+    }
+    for (int i = 0; i < 4; i++) {
+        const int slot = ATTR_gbuffer_instanced_inst_normal_matrix + i;
+        layout.attrs[slot].format = SG_VERTEXFORMAT_FLOAT4;
+        layout.attrs[slot].offset = static_cast<int>(offsetof(InstanceData, normal_matrix) + i * sizeof(Eigen::Vector4f));
+        layout.attrs[slot].buffer_index = 1;
+    }
+}
+
+Eigen::Vector4f toVec4(const Eigen::Vector3f& v, f32 w) {
+    return Eigen::Vector4f(v.x(), v.y(), v.z(), w);
+}
+
+// SG_RANGE expands to a temporary in C++, which can't be passed by address, so name it first.
+template <typename T>
+void applyUniforms(int slot, const T& value) {
+    const sg_range range{&value, sizeof(T)};
+    sg_apply_uniforms(slot, &range);
 }
 
 } // namespace
 
-namespace graphics {
+Renderer::Renderer() {
+    const Skybox defaults{};
+    setSkybox(defaults);
 
-Renderer::Renderer(const gpu::Device& device, gpu::Swapchain& swapchain)
-    : m_device(&device), m_swapchain(&swapchain), m_hdr_color(Surface::createOffscreen(device, swapchain.extent(), nvrhi::Format::RGBA16_FLOAT)),
-      m_post_process(device) {
-    m_cmd = device.nvrhi()->createCommandList();
-    for (nvrhi::EventQueryHandle& query : m_frame_done) {
-        query = device.nvrhi()->createEventQuery();
-    }
-    // A swapchain acquire semaphore must not be re-waited while its submit is still pending.
-    assert(m_swapchain->imageCount() > kFramesInFlight);
-    rebuildSwapchainSurfaces();
-    rebuildGBuffer();
+    sg_sampler_desc material_sampler = {};
+    material_sampler.min_filter = SG_FILTER_LINEAR;
+    material_sampler.mag_filter = SG_FILTER_LINEAR;
+    material_sampler.mipmap_filter = SG_FILTER_LINEAR;
+    material_sampler.label = "material sampler";
+    m_material_sampler = gpu::makeSampler(material_sampler);
 
-    nvrhi::IDevice* nvrhi_device = device.nvrhi();
+    sg_sampler_desc gbuffer_sampler = {};
+    gbuffer_sampler.min_filter = SG_FILTER_NEAREST;
+    gbuffer_sampler.mag_filter = SG_FILTER_NEAREST;
+    gbuffer_sampler.wrap_u = SG_WRAP_CLAMP_TO_EDGE;
+    gbuffer_sampler.wrap_v = SG_WRAP_CLAMP_TO_EDGE;
+    gbuffer_sampler.label = "gbuffer sampler";
+    m_gbuffer_sampler = gpu::makeSampler(gbuffer_sampler);
 
-    // Geometry (g_buffer) pass: writes albedo + depth from a Mesh's vertex/index buffers.
-    nvrhi::VertexAttributeDesc mesh_attrs[] = {
-        nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, position)).setElementStride(sizeof(Vertex)),
-        nvrhi::VertexAttributeDesc().setName("NORMAL").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, normal)).setElementStride(sizeof(Vertex)),
-        nvrhi::VertexAttributeDesc().setName("UV").setFormat(nvrhi::Format::RG32_FLOAT).setOffset(offsetof(Vertex, uv)).setElementStride(sizeof(Vertex)),
-    };
-
-    nvrhi::ShaderHandle gbuffer_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kGBufferVertSpv, std::size(kGBufferVertSpv));
-    nvrhi::ShaderHandle gbuffer_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kGBufferFragSpv, std::size(kGBufferFragSpv));
-    m_mesh_input_layout = nvrhi_device->createInputLayout(mesh_attrs, static_cast<u32>(std::size(mesh_attrs)), gbuffer_vs);
-
-    nvrhi::FramebufferInfo gbuffer_fb_info = nvrhi::FramebufferInfo()
-                                                  .addColorFormat(nvrhi::Format::SRGBA8_UNORM)
-                                                  .addColorFormat(nvrhi::Format::RG16_FLOAT) // octahedral-encoded world normal
-                                                  .addColorFormat(nvrhi::Format::RGBA8_UNORM)
-                                                  .setDepthFormat(nvrhi::Format::D32);
-
-    nvrhi::RenderState gbuffer_state{};
-    // Matches camera.cpp's projection parity (no Y-flip there).
-    gbuffer_state.rasterState.setFrontCounterClockwise(true);
-
-    // NVRHI's Vulkan backend offsets constant-buffer registers by 256 by default; zero it so GLSL `binding = 1` matches.
-    nvrhi::BindingLayoutHandle gbuffer_push_constant_layout = nvrhi_device->createBindingLayout(
-        nvrhi::BindingLayoutDesc()
-            .setVisibility(nvrhi::ShaderType::Vertex)
-            .addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(GBufferPushConstants)))
-            .addItem(nvrhi::BindingLayoutItem::VolatileConstantBuffer(1)) // m_camera_buffer is volatile
-            .setBindingOffsets(nvrhi::VulkanBindingOffsets().setConstantBufferOffset(0))
-    );
-
-    // Volatile: NVRHI auto-versions each writeBuffer, so maxVersions only needs to cover outstanding frames.
-    nvrhi::BufferDesc camera_buffer_desc{};
-    camera_buffer_desc.byteSize = sizeof(Eigen::Matrix4f);
-    camera_buffer_desc.isConstantBuffer = true;
-    camera_buffer_desc.isVolatile = true;
-    camera_buffer_desc.maxVersions = kFramesInFlight + 2;
-    camera_buffer_desc.debugName = "gbuffer camera view-projection";
-    m_camera_buffer = nvrhi_device->createBuffer(camera_buffer_desc);
-
-    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
-    m_gbuffer_texture_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
-                                                                              .setVisibility(nvrhi::ShaderType::Pixel)
-                                                                              .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
-                                                                              .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
-                                                                              .addItem(nvrhi::BindingLayoutItem::Sampler(2))
-                                                                              .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3))
-                                                                              .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
-    m_gbuffer_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
+    sg_sampler_desc shadow_sampler = {};
+    shadow_sampler.min_filter = SG_FILTER_LINEAR;
+    shadow_sampler.mag_filter = SG_FILTER_LINEAR;
+    shadow_sampler.wrap_u = SG_WRAP_CLAMP_TO_EDGE;
+    shadow_sampler.wrap_v = SG_WRAP_CLAMP_TO_EDGE;
+    shadow_sampler.compare = SG_COMPAREFUNC_LESS_EQUAL;
+    shadow_sampler.label = "shadow comparison sampler";
+    m_shadow_sampler = gpu::makeSampler(shadow_sampler);
 
     constexpr u8 kWhitePixel[4] = {255, 255, 255, 255};
-    nvrhi::TextureDesc white_texture_desc{};
-    white_texture_desc.width = 1;
-    white_texture_desc.height = 1;
-    white_texture_desc.format = nvrhi::Format::RGBA8_UNORM;
-    white_texture_desc.isShaderResource = true;
-    white_texture_desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    white_texture_desc.keepInitialState = true;
-    white_texture_desc.debugName = "white placeholder texture";
-    m_white_texture = device.createTexture(white_texture_desc, kWhitePixel, 4);
+    sg_image_desc white_desc = {};
+    white_desc.width = 1;
+    white_desc.height = 1;
+    white_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
+    white_desc.data.mip_levels[0] = sg_range{kWhitePixel, sizeof(kWhitePixel)};
+    white_desc.label = "white placeholder texture";
+    m_white_image = gpu::makeImage(white_desc);
 
-    m_gbuffer_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setInputLayout(m_mesh_input_layout)
-            .setVertexShader(gbuffer_vs)
-            .setPixelShader(gbuffer_fs)
-            .setRenderState(gbuffer_state)
-            .addBindingLayout(m_gbuffer_texture_binding_layout)
-            .addBindingLayout(gbuffer_push_constant_layout),
-        gbuffer_fb_info
-    );
-    m_gbuffer_push_constant_binding_set = nvrhi_device->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(GBufferPushConstants)))
-            .addItem(nvrhi::BindingSetItem::ConstantBuffer(1, m_camera_buffer)),
-        gbuffer_push_constant_layout
-    );
+    sg_view_desc white_view = {};
+    white_view.texture.image = *m_white_image;
+    white_view.label = "white placeholder texture";
+    m_white_texture = gpu::makeView(white_view);
 
-    // Per-instance InstanceData at buffer slot 1: transform at locations 3-6, normal matrix at 7-10.
-    nvrhi::VertexAttributeDesc instanced_mesh_attrs[] = {
-        mesh_attrs[0],
-        mesh_attrs[1],
-        mesh_attrs[2],
-        nvrhi::VertexAttributeDesc()
-            .setName("INSTANCE_TRANSFORM")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setArraySize(4)
-            .setBufferIndex(1)
-            .setOffset(0)
-            .setElementStride(sizeof(InstanceData))
-            .setIsInstanced(true),
-        nvrhi::VertexAttributeDesc()
-            .setName("INSTANCE_NORMAL_MATRIX")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setArraySize(4)
-            .setBufferIndex(1)
-            .setOffset(sizeof(Eigen::Matrix4f))
-            .setElementStride(sizeof(InstanceData))
-            .setIsInstanced(true),
-    };
+    // A single zeroed light; never read, since light_count is 0 when it is bound.
+    const std::array<Eigen::Vector4f, 4> kEmptyLight{};
+    sg_buffer_desc empty_desc = {};
+    empty_desc.size = sizeof(kEmptyLight);
+    empty_desc.usage.storage_buffer = true;
+    empty_desc.data = sg_range{kEmptyLight.data(), sizeof(kEmptyLight)};
+    empty_desc.label = "empty light buffer";
+    m_empty_light_buffer = gpu::makeBuffer(empty_desc);
 
-    nvrhi::ShaderHandle gbuffer_instanced_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kGBufferInstancedVertSpv, std::size(kGBufferInstancedVertSpv));
-    m_instanced_mesh_input_layout =
-        nvrhi_device->createInputLayout(instanced_mesh_attrs, static_cast<u32>(std::size(instanced_mesh_attrs)), gbuffer_instanced_vs);
+    sg_view_desc empty_view = {};
+    empty_view.storage_buffer.buffer = *m_empty_light_buffer;
+    empty_view.label = "empty light buffer";
+    m_empty_light_view = gpu::makeView(empty_view);
 
-    m_gbuffer_instanced_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setInputLayout(m_instanced_mesh_input_layout)
-            .setVertexShader(gbuffer_instanced_vs)
-            .setPixelShader(gbuffer_fs)
-            .setRenderState(gbuffer_state)
-            .addBindingLayout(m_gbuffer_texture_binding_layout)
-            .addBindingLayout(gbuffer_push_constant_layout),
-        gbuffer_fb_info
-    );
-
-    nvrhi::ShaderHandle lighting_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kFullscreenTriangleVertSpv, std::size(kFullscreenTriangleVertSpv));
-    nvrhi::ShaderHandle lighting_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kLightingFragSpv, std::size(kLightingFragSpv));
-
-    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
-    m_lighting_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
-                                                                        .setVisibility(nvrhi::ShaderType::Pixel)
-                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
-                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(1))
-                                                                        .addItem(nvrhi::BindingLayoutItem::Sampler(2))
-                                                                        .addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3))
-                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(4))
-                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(5))
-                                                                        .addItem(nvrhi::BindingLayoutItem::Texture_SRV(6)) // shadow cascade array
-                                                                        .addItem(nvrhi::BindingLayoutItem::Sampler(7))     // comparison sampler
-                                                                        .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
-
-    // Separate descriptor set (b0) for the per-frame uniforms -- too big for a push constant with the
-    // cascade matrices. Kept apart from the SRV set so b0 doesn't collide with t0, same as the g-buffer.
-    m_lighting_cb_layout = nvrhi_device->createBindingLayout(
-        nvrhi::BindingLayoutDesc()
-            .setVisibility(nvrhi::ShaderType::Pixel)
-            .addItem(nvrhi::BindingLayoutItem::VolatileConstantBuffer(0))
-            .setBindingOffsets(nvrhi::VulkanBindingOffsets().setConstantBufferOffset(0))
-    );
-
-    nvrhi::BufferDesc lighting_cb_desc{};
-    lighting_cb_desc.byteSize = sizeof(LightingUniforms);
-    lighting_cb_desc.isConstantBuffer = true;
-    lighting_cb_desc.isVolatile = true;
-    lighting_cb_desc.maxVersions = kFramesInFlight + 2;
-    lighting_cb_desc.debugName = "lighting uniforms";
-    m_lighting_cb = nvrhi_device->createBuffer(lighting_cb_desc);
-
-    nvrhi::FramebufferInfo lighting_fb_info = nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::RGBA16_FLOAT);
-
-    m_lighting_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setVertexShader(lighting_vs)
-            .setPixelShader(lighting_fs)
-            .setRenderState(opaqueNoDepth())
-            .addBindingLayout(m_lighting_binding_layout)
-            .addBindingLayout(m_lighting_cb_layout),
-        lighting_fb_info
-    );
-
-    m_lighting_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
-    m_lighting_cb_binding_set = nvrhi_device->createBindingSet(
-        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::ConstantBuffer(0, m_lighting_cb)), m_lighting_cb_layout
-    );
-
-    // Sky pass: fullscreen gradient into m_hdr_color, reading only g-buffer depth (discards on geometry).
-    nvrhi::ShaderHandle sky_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kSkyFragSpv, std::size(kSkyFragSpv));
-
-    // NVRHI's Vulkan backend offsets sampler bindings by 128 by default; zero it.
-    m_sky_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
-                                                                 .setVisibility(nvrhi::ShaderType::Pixel)
-                                                                 .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
-                                                                 .addItem(nvrhi::BindingLayoutItem::Sampler(1))
-                                                                 .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
-
-    m_sky_push_constant_layout = nvrhi_device->createBindingLayout(
-        nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Pixel).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(SkyPushConstants)))
-    );
-
-    m_sky_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setVertexShader(lighting_vs) // shared fullscreen-triangle vertex shader
-            .setPixelShader(sky_fs)
-            .setRenderState(opaqueNoDepth())
-            .addBindingLayout(m_sky_binding_layout)
-            .addBindingLayout(m_sky_push_constant_layout),
-        lighting_fb_info
-    );
-
-    m_sky_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
-    m_sky_push_constant_binding_set = nvrhi_device->createBindingSet(
-        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(SkyPushConstants))), m_sky_push_constant_layout
-    );
-
-    // Placeholder for slot 3 -- never read (light_count is 0 whenever this is bound).
-    nvrhi::BufferDesc empty_light_desc{};
-    empty_light_desc.byteSize = sizeof(Eigen::Vector4f);
-    empty_light_desc.structStride = sizeof(Eigen::Vector4f);
-    empty_light_desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    empty_light_desc.keepInitialState = true;
-    empty_light_desc.debugName = "empty light buffer";
-    m_empty_light_buffer = device.createBuffer(empty_light_desc);
-
-    m_tonemap_pass = m_post_process.addPass(kTonemapFragSpv, std::size(kTonemapFragSpv), sizeof(TonemapPushConstants));
-    m_fxaa_pass = m_post_process.addPass(kFxaaFragSpv, std::size(kFxaaFragSpv), sizeof(FxaaPushConstants));
-    rebuildPostProcessTargets(); // also seeds the FXAA push constants for the current extent
-    buildShadowResources();      // must precede rebuildLightingBindingSet -- that set binds m_shadow_map
-    rebuildLightingBindingSet();
-    rebuildSkyBindingSet();
-
-    constexpr f32 kDefaultExposure = 0.003f; // real Blender-exported intensities are huge; expect to tune this per scene
-    setExposure(kDefaultExposure);
-
-    setSkybox(Skybox{}); // seed m_sky_* from the canonical default in skybox.hpp
-}
-
-void Renderer::rebuildSwapchainSurfaces() {
-    m_swapchain_surfaces.clear();
-    for (u32 i = 0; i < m_swapchain->imageCount(); ++i) {
-        m_swapchain_surfaces.push_back(Surface::fromSwapchainImage(*m_device, m_swapchain->texture(i), m_swapchain->extent()));
-    }
-}
-
-void Renderer::rebuildGBuffer() {
-    VkExtent2D extent = m_swapchain->extent();
-    m_albedo = createGBufferTexture(*m_device, extent, nvrhi::Format::SRGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer albedo");
-    m_normal = createGBufferTexture(*m_device, extent, nvrhi::Format::RG16_FLOAT, nvrhi::ResourceStates::ShaderResource, "gbuffer normal (octahedral)");
-    m_material = createGBufferTexture(*m_device, extent, nvrhi::Format::RGBA8_UNORM, nvrhi::ResourceStates::ShaderResource, "gbuffer material");
-    m_depth = createGBufferTexture(*m_device, extent, nvrhi::Format::D32, nvrhi::ResourceStates::DepthWrite, "gbuffer depth");
-
-    m_gbuffer_framebuffer = m_device->nvrhi()->createFramebuffer(
-        nvrhi::FramebufferDesc().addColorAttachment(m_albedo).addColorAttachment(m_normal).addColorAttachment(m_material).setDepthAttachment(m_depth)
-    );
-}
-
-void Renderer::rebuildLightingBindingSet() {
-    m_lighting_binding_set = m_device->nvrhi()->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_albedo))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(1, m_normal))
-            .addItem(nvrhi::BindingSetItem::Sampler(2, m_lighting_sampler))
-            .addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, m_light_buffer ? m_light_buffer : m_empty_light_buffer.Get()))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(4, m_depth))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(5, m_material))
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(6, m_shadow_map))
-            .addItem(nvrhi::BindingSetItem::Sampler(7, m_shadow_cmp_sampler)),
-        m_lighting_binding_layout
-    );
-}
-
-void Renderer::rebuildSkyBindingSet() {
-    m_sky_binding_set = m_device->nvrhi()->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_depth))
-            .addItem(nvrhi::BindingSetItem::Sampler(1, m_sky_sampler)),
-        m_sky_binding_layout
-    );
+    buildShadowResources();
+    buildPipelines();
+    rebuildTargets(sapp_width(), sapp_height());
 }
 
 void Renderer::buildShadowResources() {
-    nvrhi::IDevice* nvrhi_device = m_device->nvrhi();
+    sg_image_desc desc = {};
+    desc.usage.depth_stencil_attachment = true;
+    desc.type = SG_IMAGETYPE_ARRAY;
+    desc.width = kShadowMapResolution;
+    desc.height = kShadowMapResolution;
+    desc.num_slices = static_cast<int>(kCascadeCount);
+    desc.pixel_format = kDepthFormat;
+    desc.label = "shadow map (D32 cascade array)";
+    m_shadow_image = gpu::makeImage(desc);
 
-    nvrhi::TextureDesc shadow_desc{};
-    shadow_desc.width = kShadowMapResolution;
-    shadow_desc.height = kShadowMapResolution;
-    shadow_desc.arraySize = kCascadeCount;
-    shadow_desc.dimension = nvrhi::TextureDimension::Texture2DArray;
-    shadow_desc.format = nvrhi::Format::D32;
-    shadow_desc.isRenderTarget = true;
-    shadow_desc.isShaderResource = true;
-    shadow_desc.initialState = nvrhi::ResourceStates::DepthWrite;
-    shadow_desc.keepInitialState = true;
-    shadow_desc.debugName = "shadow map (D32 cascade array)";
-    m_shadow_map = m_device->createTexture(shadow_desc);
-
-    for (u32 c = 0; c < kCascadeCount; ++c) {
-        m_shadow_framebuffers[c] = nvrhi_device->createFramebuffer(
-            nvrhi::FramebufferDesc().setDepthAttachment(m_shadow_map, nvrhi::TextureSubresourceSet().setArraySlices(c, 1))
-        );
+    for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
+        sg_view_desc attachment = {};
+        attachment.depth_stencil_attachment.image = *m_shadow_image;
+        attachment.depth_stencil_attachment.slice = static_cast<int>(cascade);
+        attachment.label = "shadow cascade";
+        m_shadow_attachments[cascade] = gpu::makeView(attachment);
     }
 
-    // Depth-only caster pipelines: one per mesh kind, mirroring the g-buffer split.
-    nvrhi::VertexAttributeDesc shadow_attrs[] = {
-        nvrhi::VertexAttributeDesc().setName("POSITION").setFormat(nvrhi::Format::RGB32_FLOAT).setOffset(offsetof(Vertex, position)).setElementStride(sizeof(Vertex)),
-    };
-    nvrhi::VertexAttributeDesc shadow_instanced_attrs[] = {
-        shadow_attrs[0],
-        nvrhi::VertexAttributeDesc()
-            .setName("INSTANCE_TRANSFORM")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setArraySize(4)
-            .setBufferIndex(1)
-            .setOffset(0)
-            .setElementStride(sizeof(InstanceData))
-            .setIsInstanced(true),
-    };
-
-    nvrhi::ShaderHandle shadow_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kShadowDepthVertSpv, std::size(kShadowDepthVertSpv));
-    nvrhi::ShaderHandle shadow_instanced_vs =
-        loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kShadowDepthInstancedVertSpv, std::size(kShadowDepthInstancedVertSpv));
-    nvrhi::ShaderHandle shadow_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kShadowDepthFragSpv, std::size(kShadowDepthFragSpv));
-
-    m_shadow_input_layout = nvrhi_device->createInputLayout(shadow_attrs, static_cast<u32>(std::size(shadow_attrs)), shadow_vs);
-    m_shadow_instanced_input_layout =
-        nvrhi_device->createInputLayout(shadow_instanced_attrs, static_cast<u32>(std::size(shadow_instanced_attrs)), shadow_instanced_vs);
-
-    m_shadow_push_constant_layout = nvrhi_device->createBindingLayout(
-        nvrhi::BindingLayoutDesc().setVisibility(nvrhi::ShaderType::Vertex).addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(ShadowPushConstants)))
-    );
-    m_shadow_push_constant_binding_set = nvrhi_device->createBindingSet(
-        nvrhi::BindingSetDesc().addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(ShadowPushConstants))), m_shadow_push_constant_layout
-    );
-
-    nvrhi::RenderState shadow_state{};
-    shadow_state.rasterState.setCullFront(); // cull front faces in the caster pass -- cheap acne reduction
-    shadow_state.rasterState.setFrontCounterClockwise(true);
-    shadow_state.depthStencilState.setDepthTestEnable(true).setDepthWriteEnable(true).setDepthFunc(nvrhi::ComparisonFunc::Less);
-
-    nvrhi::FramebufferInfo shadow_fb_info = nvrhi::FramebufferInfo().setDepthFormat(nvrhi::Format::D32);
-
-    m_shadow_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setInputLayout(m_shadow_input_layout)
-            .setVertexShader(shadow_vs)
-            .setPixelShader(shadow_fs)
-            .setRenderState(shadow_state)
-            .addBindingLayout(m_shadow_push_constant_layout),
-        shadow_fb_info
-    );
-    m_shadow_instanced_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setInputLayout(m_shadow_instanced_input_layout)
-            .setVertexShader(shadow_instanced_vs)
-            .setPixelShader(shadow_fs)
-            .setRenderState(shadow_state)
-            .addBindingLayout(m_shadow_push_constant_layout),
-        shadow_fb_info
-    );
-
-    // Fullscreen debug blit of slice 0 to the swapchain.
-    nvrhi::ShaderHandle fullscreen_vs = loadShader(nvrhi_device, nvrhi::ShaderType::Vertex, kFullscreenTriangleVertSpv, std::size(kFullscreenTriangleVertSpv));
-    nvrhi::ShaderHandle shadow_debug_fs = loadShader(nvrhi_device, nvrhi::ShaderType::Pixel, kShadowDebugFragSpv, std::size(kShadowDebugFragSpv));
-
-    m_shadow_debug_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc());
-    m_shadow_cmp_sampler = nvrhi_device->createSampler(nvrhi::SamplerDesc().setReductionType(nvrhi::SamplerReductionType::Comparison));
-    m_shadow_debug_binding_layout = nvrhi_device->createBindingLayout(nvrhi::BindingLayoutDesc()
-                                                                          .setVisibility(nvrhi::ShaderType::Pixel)
-                                                                          .addItem(nvrhi::BindingLayoutItem::Texture_SRV(0))
-                                                                          .addItem(nvrhi::BindingLayoutItem::Sampler(1))
-                                                                          .addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(u32)))
-                                                                          .setBindingOffsets(nvrhi::VulkanBindingOffsets().setSamplerOffset(0)));
-
-    m_shadow_debug_pipeline = nvrhi_device->createGraphicsPipeline(
-        nvrhi::GraphicsPipelineDesc()
-            .setVertexShader(fullscreen_vs)
-            .setPixelShader(shadow_debug_fs)
-            .setRenderState(opaqueNoDepth())
-            .addBindingLayout(m_shadow_debug_binding_layout),
-        nvrhi::FramebufferInfo().addColorFormat(nvrhi::Format::BGRA8_UNORM)
-    );
-    m_shadow_debug_binding_set = nvrhi_device->createBindingSet(
-        nvrhi::BindingSetDesc()
-            .addItem(nvrhi::BindingSetItem::Texture_SRV(0, m_shadow_map))
-            .addItem(nvrhi::BindingSetItem::Sampler(1, m_shadow_debug_sampler))
-            .addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(u32))),
-        m_shadow_debug_binding_layout
-    );
-
-    m_cascade_view_proj.fill(Eigen::Matrix4f::Identity()); // real values computed per frame in renderMesh
+    sg_view_desc texture = {};
+    texture.texture.image = *m_shadow_image;
+    texture.label = "shadow map";
+    m_shadow_texture = gpu::makeView(texture);
 }
 
-void Renderer::rebuildPostProcessTargets() {
-    VkExtent2D extent = m_swapchain->extent();
-    m_hdr_color = Surface::createOffscreen(*m_device, extent, nvrhi::Format::RGBA16_FLOAT);
-    m_post_process.rebuild(extent, nvrhi::Format::BGRA8_UNORM);
-    updateFxaaPushConstants();
+void Renderer::buildPipelines() {
+    // --- G-buffer: three colour attachments plus depth.
+    sg_pipeline_desc gbuffer = {};
+    gbuffer.shader = sg_make_shader(gbuffer_shader_desc(sg_query_backend()));
+    setMeshLayout(gbuffer.layout);
+    gbuffer.index_type = SG_INDEXTYPE_UINT32;
+    gbuffer.cull_mode = SG_CULLMODE_BACK;
+    gbuffer.face_winding = SG_FACEWINDING_CCW;
+    gbuffer.depth.pixel_format = kDepthFormat;
+    gbuffer.depth.compare = SG_COMPAREFUNC_LESS;
+    gbuffer.depth.write_enabled = true;
+    gbuffer.color_count = 3;
+    gbuffer.colors[0].pixel_format = kAlbedoFormat;
+    gbuffer.colors[1].pixel_format = kNormalFormat;
+    gbuffer.colors[2].pixel_format = kMaterialFormat;
+    gbuffer.label = "gbuffer pipeline";
+    m_gbuffer_pipeline = sg_make_pipeline(&gbuffer);
+
+    sg_pipeline_desc gbuffer_instanced = gbuffer;
+    gbuffer_instanced.shader = sg_make_shader(gbuffer_instanced_shader_desc(sg_query_backend()));
+    setInstanceLayout(gbuffer_instanced.layout, ATTR_gbuffer_instanced_inst_transform, true);
+    gbuffer_instanced.label = "gbuffer instanced pipeline";
+    m_gbuffer_instanced_pipeline = sg_make_pipeline(&gbuffer_instanced);
+
+    // --- Shadow: depth only. Front-face culling pushes acne to surfaces facing away from the light.
+    sg_pipeline_desc shadow = {};
+    shadow.shader = sg_make_shader(shadow_depth_shader_desc(sg_query_backend()));
+    setShadowMeshLayout(shadow.layout);
+    shadow.index_type = SG_INDEXTYPE_UINT32;
+    shadow.cull_mode = SG_CULLMODE_FRONT;
+    shadow.face_winding = SG_FACEWINDING_CCW;
+    shadow.depth.pixel_format = kDepthFormat;
+    shadow.depth.compare = SG_COMPAREFUNC_LESS;
+    shadow.depth.write_enabled = true;
+    // sokol only treats a pipeline as depth-only when colors[0] is explicitly NONE; a zeroed
+    // desc defaults to one colour attachment instead.
+    shadow.colors[0].pixel_format = SG_PIXELFORMAT_NONE;
+    shadow.color_count = 0;
+    shadow.label = "shadow pipeline";
+    m_shadow_pipeline = sg_make_pipeline(&shadow);
+
+    sg_pipeline_desc shadow_instanced = shadow;
+    shadow_instanced.shader = sg_make_shader(shadow_depth_instanced_shader_desc(sg_query_backend()));
+    setInstanceLayout(shadow_instanced.layout, ATTR_shadow_depth_instanced_inst_transform, false);
+    shadow_instanced.label = "shadow instanced pipeline";
+    m_shadow_instanced_pipeline = sg_make_pipeline(&shadow_instanced);
+
+    // --- Fullscreen passes: no vertex buffer, no depth.
+    sg_pipeline_desc lighting = {};
+    lighting.shader = sg_make_shader(lighting_shader_desc(sg_query_backend()));
+    lighting.color_count = 1;
+    lighting.colors[0].pixel_format = kHdrFormat;
+    lighting.depth.pixel_format = SG_PIXELFORMAT_NONE;
+    lighting.label = "lighting pipeline";
+    m_lighting_pipeline = sg_make_pipeline(&lighting);
+
+    sg_pipeline_desc sky = lighting;
+    sky.shader = sg_make_shader(sky_shader_desc(sg_query_backend()));
+    sky.label = "sky pipeline";
+    m_sky_pipeline = sg_make_pipeline(&sky);
+
+    sg_pipeline_desc tonemap = {};
+    tonemap.shader = sg_make_shader(tonemap_shader_desc(sg_query_backend()));
+    tonemap.color_count = 1;
+    tonemap.colors[0].pixel_format = kLdrFormat;
+    tonemap.depth.pixel_format = SG_PIXELFORMAT_NONE;
+    tonemap.label = "tonemap pipeline";
+    m_tonemap_pipeline = sg_make_pipeline(&tonemap);
+
+    // FXAA and the debug blit render straight to the swapchain, so they take its formats.
+    sg_pipeline_desc fxaa = {};
+    fxaa.shader = sg_make_shader(fxaa_shader_desc(sg_query_backend()));
+    fxaa.label = "fxaa pipeline";
+    m_fxaa_pipeline = sg_make_pipeline(&fxaa);
+
+    sg_pipeline_desc shadow_debug = {};
+    shadow_debug.shader = sg_make_shader(shadow_debug_shader_desc(sg_query_backend()));
+    shadow_debug.label = "shadow debug pipeline";
+    m_shadow_debug_pipeline = sg_make_pipeline(&shadow_debug);
 }
 
-void Renderer::updateFxaaPushConstants() {
-    VkExtent2D extent = m_swapchain->extent();
-    FxaaPushConstants push{
-        Eigen::Vector2f(1.0f / static_cast<f32>(extent.width), 1.0f / static_cast<f32>(extent.height)),
-        m_fxaa_enabled ? 1.0f : 0.0f
-    };
-    m_post_process.setPushConstants(m_fxaa_pass, &push, sizeof(push));
+void Renderer::rebuildTargets(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    m_width = width;
+    m_height = height;
+
+    m_albedo = makeColorTarget(width, height, kAlbedoFormat, "gbuffer albedo");
+    m_normal = makeColorTarget(width, height, kNormalFormat, "gbuffer normal (octahedral)");
+    m_material = makeColorTarget(width, height, kMaterialFormat, "gbuffer material");
+    m_depth = makeDepthTarget(width, height, "gbuffer depth");
+    m_hdr = makeColorTarget(width, height, kHdrFormat, "hdr colour");
+    m_ldr = makeColorTarget(width, height, kLdrFormat, "tonemapped colour");
 }
 
 void Renderer::beginFrame() {
-    m_camera_uploaded = false;
+    // Textures decoded on worker threads can only be uploaded from here, on the sokol thread.
+    Texture::drainUploads();
+
+    if (sapp_width() != m_width || sapp_height() != m_height) {
+        rebuildTargets(sapp_width(), sapp_height());
+    }
+
     m_draw_list.clear();
+    m_has_shadow_light = false;
+}
 
-    // Pace the CPU: block only if it is already kFramesInFlight ahead of the GPU.
-    const u32 slot = static_cast<u32>(m_frame_counter % kFramesInFlight);
-    if (m_frame_counter >= kFramesInFlight) {
-        m_device->nvrhi()->waitEventQuery(m_frame_done[slot]);
+void Renderer::setLights(const LightManager& lights) {
+    m_light_view = lights.view();
+    m_light_count = lights.count();
+
+    if (const Light* directional = lights.directionalLight(); directional != nullptr) {
+        m_sun_direction = directional->direction.normalized();
+        m_has_shadow_light = true;
     }
+}
 
-    m_acquired = m_swapchain->acquire();
-    if (!m_acquired.ok) {
-        vkDeviceWaitIdle(m_device->handle());
-        m_swapchain->recreate(m_swapchain->extent());
-        rebuildSwapchainSurfaces();
-        rebuildGBuffer();
-        rebuildPostProcessTargets();
-        rebuildLightingBindingSet();
-        rebuildSkyBindingSet();
-        return;
+void Renderer::setSkybox(const Skybox& skybox) {
+    if (const GradientSky* gradient = std::get_if<GradientSky>(&skybox.source); gradient != nullptr) {
+        m_sky_zenith = gradient->zenith;
+        m_sky_ground = gradient->ground;
+        m_sky_kind = 0.0f;
+    } else {
+        m_sky_kind = 1.0f; // cubemap path is not built yet
     }
+    m_sky_intensity = skybox.intensity;
+}
 
-    m_frame_lock = m_device->lockSubmit();
-    m_cmd->open();
+void Renderer::setExposure(f32 exposure) {
+    m_exposure = exposure;
+}
 
-    // Must clear every frame -- an uncleared depth buffer fails the depth test against stale VRAM contents.
-    m_cmd->clearTextureFloat(m_albedo, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
-    m_cmd->clearTextureFloat(m_normal, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 0.0f));
-    m_cmd->clearTextureFloat(m_material, nvrhi::AllSubresources, nvrhi::Color(0.0f, 0.0f, 0.0f, 0.0f));
-    m_cmd->clearDepthStencilTexture(m_depth, nvrhi::AllSubresources, true, 1.0f, false, 0);
-    m_cmd->clearDepthStencilTexture(m_shadow_map, nvrhi::AllSubresources, true, 1.0f, false, 0);
+void Renderer::setAmbient(const Eigen::Vector3f& ambient) {
+    m_ambient = ambient;
+}
+
+void Renderer::setFxaaEnabled(bool enabled) {
+    m_fxaa_enabled = enabled;
+}
+
+void Renderer::setShadowDistance(f32 distance) {
+    m_shadow_distance = distance;
+}
+
+void Renderer::setCascadeSplitLambda(f32 lambda) {
+    m_cascade_split_lambda = lambda;
+}
+
+void Renderer::toggleShadowMapDebug() {
+    m_show_shadow_map_debug = !m_show_shadow_map_debug;
+}
+
+void Renderer::cycleShadowMapDebugLayer() {
+    m_shadow_debug_layer = (m_shadow_debug_layer + 1) % kCascadeCount;
 }
 
 template <Mesh T>
-void Renderer::renderMesh(T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds,
-                          bool camera_visible, const Camera& camera) {
-    if constexpr (requires { mesh.uploadIfDirty(*m_device); }) {
-        mesh.uploadIfDirty(*m_device);
-    }
+void Renderer::renderMesh(
+    T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible,
+    const Camera& camera
+) {
+    // The camera is the same for every draw in a frame, so the first one settles it -- and it is
+    // also what the cascades are fitted against.
+    if (m_draw_list.empty()) {
+        m_view_projection = camera.viewProjectionMatrix();
+        m_inverse_view_projection = camera.inverseViewProjectionMatrix();
+        m_view = camera.transformationMatrix();
+        m_view_position = camera.position();
 
-    if (!m_acquired.ok) {
-        return;
-    }
-
-    m_view_position = camera.position();
-    m_inverse_view_projection = camera.inverseViewProjectionMatrix();
-    m_view = camera.transformationMatrix();
-
-    // Per-frame setup, done on the first mesh: the shared view-projection CB and the shadow cascades
-    // (both need the live camera, which endFrame's passes don't have).
-    if (!m_camera_uploaded) {
-        const Eigen::Matrix4f view_projection = camera.viewProjectionMatrix();
-        m_cmd->writeBuffer(m_camera_buffer, view_projection.data(), sizeof(view_projection));
-
-        const CascadeSetup cascades = computeCascades(
-            camera, m_sun_direction, m_shadow_distance, m_cascade_split_lambda, static_cast<f32>(kShadowMapResolution)
-        );
+        const CascadeSetup cascades =
+            computeCascades(camera, m_sun_direction, m_shadow_distance, m_cascade_split_lambda, static_cast<f32>(kShadowMapResolution));
         m_cascade_view_proj = cascades.view_proj;
         m_cascade_split_depth = cascades.split_view_depth;
-
-        m_camera_uploaded = true;
     }
 
-    DrawItem item{};
+    DrawItem item;
     item.vertex = mesh.vertexBuffer();
     item.index = mesh.indexBuffer();
-    item.index_count = mesh.indexCount();
-    item.instance_count = mesh.instanceCount();
-    if constexpr (requires { mesh.instanceBuffer(); }) {
+    if constexpr (std::same_as<T, InstancedMesh>) {
         item.instance = mesh.instanceBuffer();
     }
+    item.index_count = mesh.indexCount();
+    item.instance_count = mesh.instanceCount();
     item.model = model;
     item.normal_matrix = normalMatrix(model);
     item.material = &material;
     item.world_bounds = world_bounds;
     item.camera_visible = camera_visible;
+
     m_draw_list.push_back(item);
 }
 
@@ -605,214 +418,245 @@ template void Renderer::renderMesh<InstancedMesh>(
 );
 
 void Renderer::recordShadowPass() {
-    for (u32 c = 0; c < kCascadeCount; ++c) {
-        const Eigen::Matrix4f& cascade_vp = m_cascade_view_proj[c];
-        const Frustum light_frustum = Frustum::fromViewProjection(cascade_vp);
+    for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
+        sg_pass pass = {};
+        pass.action.depth.load_action = SG_LOADACTION_CLEAR;
+        pass.action.depth.clear_value = 1.0f;
+        // Depth defaults to DONTCARE, which also means sokol never transitions the image into
+        // texture access -- and the lighting pass samples this.
+        pass.action.depth.store_action = SG_STOREACTION_STORE;
+        pass.action.stencil.load_action = SG_LOADACTION_DONTCARE;
+        pass.attachments.depth_stencil = *m_shadow_attachments[cascade];
+        pass.label = "shadow pass";
+        sg_begin_pass(&pass);
+
+        const Frustum light_frustum = Frustum::fromViewProjection(m_cascade_view_proj[cascade]);
 
         for (const DrawItem& item : m_draw_list) {
-            // Instanced items have only an identity-instance world_bounds, so they can't be culled yet.
-            if (item.instance == nullptr && !light_frustum.intersects(item.world_bounds)) {
+            const bool instanced = item.instance.id != SG_INVALID_ID;
+            // Instanced items carry per-instance transforms the bounds don't cover, so never cull them.
+            if (!instanced && !light_frustum.intersects(item.world_bounds)) {
                 continue;
             }
 
-            nvrhi::GraphicsState state{};
-            state.framebuffer = m_shadow_framebuffers[c];
-            state.viewport.addViewportAndScissorRect(
-                nvrhi::Viewport(static_cast<f32>(kShadowMapResolution), static_cast<f32>(kShadowMapResolution))
-            );
-            if (item.instance != nullptr) {
-                state.pipeline = m_shadow_instanced_pipeline;
-                state.vertexBuffers = {
-                    nvrhi::VertexBufferBinding().setBuffer(item.vertex).setSlot(0).setOffset(0),
-                    nvrhi::VertexBufferBinding().setBuffer(item.instance).setSlot(1).setOffset(0),
-                };
-            } else {
-                state.pipeline = m_shadow_pipeline;
-                state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(item.vertex).setSlot(0).setOffset(0)};
-            }
-            state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(item.index).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
-            state.bindings = {m_shadow_push_constant_binding_set};
+            sg_apply_pipeline(instanced ? m_shadow_instanced_pipeline : m_shadow_pipeline);
 
-            ShadowPushConstants push{cascade_vp, item.model};
-            m_cmd->setGraphicsState(state);
-            m_cmd->setPushConstants(&push, sizeof(push));
-            m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(item.index_count).setInstanceCount(item.instance_count));
+            sg_bindings bindings = {};
+            bindings.vertex_buffers[0] = item.vertex;
+            if (instanced) {
+                bindings.vertex_buffers[1] = item.instance;
+            }
+            bindings.index_buffer = item.index;
+            sg_apply_bindings(&bindings);
+
+            shadow_vs_params_t params{.light_view_proj = m_cascade_view_proj[cascade], .shadow_model = item.model};
+            applyUniforms(UB_shadow_vs_params, params);
+
+            sg_draw(0, static_cast<int>(item.index_count), static_cast<int>(item.instance_count));
         }
+
+        sg_end_pass();
     }
 }
 
 void Renderer::recordGBufferPass() {
-    VkExtent2D extent = m_swapchain->extent();
+    sg_pass pass = {};
+    for (int i = 0; i < 3; i++) {
+        pass.action.colors[i].load_action = SG_LOADACTION_CLEAR;
+        pass.action.colors[i].clear_value = {0.0f, 0.0f, 0.0f, 0.0f};
+    }
+    pass.action.depth.load_action = SG_LOADACTION_CLEAR;
+    pass.action.depth.clear_value = 1.0f;
+    // Sampled by the lighting and sky passes, so it has to be stored -- see recordShadowPass.
+    pass.action.depth.store_action = SG_STOREACTION_STORE;
+    pass.action.stencil.load_action = SG_LOADACTION_DONTCARE;
+    pass.attachments.colors[0] = *m_albedo.attachment;
+    pass.attachments.colors[1] = *m_normal.attachment;
+    pass.attachments.colors[2] = *m_material.attachment;
+    pass.attachments.depth_stencil = *m_depth.attachment;
+    pass.label = "gbuffer pass";
+    sg_begin_pass(&pass);
+
     for (const DrawItem& item : m_draw_list) {
         if (!item.camera_visible) {
-            continue; // shadow-cast only
+            continue;
         }
 
-        nvrhi::GraphicsState state{};
-        state.framebuffer = m_gbuffer_framebuffer;
-        state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-        if (item.instance != nullptr) {
-            state.pipeline = m_gbuffer_instanced_pipeline;
-            state.vertexBuffers = {
-                nvrhi::VertexBufferBinding().setBuffer(item.vertex).setSlot(0).setOffset(0),
-                nvrhi::VertexBufferBinding().setBuffer(item.instance).setSlot(1).setOffset(0),
-            };
-        } else {
-            state.pipeline = m_gbuffer_pipeline;
-            state.vertexBuffers = {nvrhi::VertexBufferBinding().setBuffer(item.vertex).setSlot(0).setOffset(0)};
+        const bool instanced = item.instance.id != SG_INVALID_ID;
+        sg_apply_pipeline(instanced ? m_gbuffer_instanced_pipeline : m_gbuffer_pipeline);
+
+        const Material& material = *item.material;
+        const sg_view albedo = material.baseColorTexture() ? material.baseColorTexture()->view() : *m_white_texture;
+        const sg_view metallic_roughness =
+            material.metallicRoughnessTexture() ? material.metallicRoughnessTexture()->view() : *m_white_texture;
+
+        sg_bindings bindings = {};
+        bindings.vertex_buffers[0] = item.vertex;
+        if (instanced) {
+            bindings.vertex_buffers[1] = item.instance;
         }
-        state.indexBuffer = nvrhi::IndexBufferBinding().setBuffer(item.index).setFormat(nvrhi::Format::R32_UINT).setOffset(0);
+        bindings.index_buffer = item.index;
+        bindings.views[VIEW_tex_albedo] = albedo;
+        bindings.views[VIEW_tex_metallic_roughness] = metallic_roughness;
+        bindings.samplers[SMP_smp_material] = *m_material_sampler;
+        sg_apply_bindings(&bindings);
 
-        nvrhi::IBindingSet* texture_binding_set =
-            item.material->gbufferBindingSet(m_device->nvrhi(), m_gbuffer_texture_binding_layout, m_white_texture, m_gbuffer_sampler);
-        state.bindings = {texture_binding_set, m_gbuffer_push_constant_binding_set};
+        gbuffer_vs_params_t vs_params{
+            .view_projection = m_view_projection,
+            .model = item.model,
+            .normal_matrix = item.normal_matrix,
+        };
+        applyUniforms(UB_gbuffer_vs_params, vs_params);
 
-        GBufferPushConstants push{item.model, item.normal_matrix};
-        m_cmd->setGraphicsState(state);
-        m_cmd->setPushConstants(&push, sizeof(push));
-        m_cmd->drawIndexed(nvrhi::DrawArguments().setVertexCount(item.index_count).setInstanceCount(item.instance_count));
+        gbuffer_fs_params_t fs_params{
+            .base_color_factor = material.baseColorFactor(),
+            .metallic_roughness_factor = Eigen::Vector4f(material.metallicFactor(), material.roughnessFactor(), 0.0f, 0.0f),
+        };
+        applyUniforms(UB_gbuffer_fs_params, fs_params);
+
+        sg_draw(0, static_cast<int>(item.index_count), static_cast<int>(item.instance_count));
     }
-}
 
-void Renderer::setLights(const LightManager& lights) {
-    m_light_count = lights.count();
-    if (const Light* sun = lights.directionalLight()) {
-        m_sun_direction = sun->direction;
-    }
-    if (lights.buffer() != m_light_buffer) {
-        m_light_buffer = lights.buffer();
-        rebuildLightingBindingSet(); // light buffer is the one moving resource in that set
-    }
-}
-
-void Renderer::setSkybox(const Skybox& skybox) {
-    m_sky_intensity = skybox.intensity;
-    if (const auto* gradient = std::get_if<GradientSky>(&skybox.source)) {
-        m_sky_kind = 0;
-        m_sky_zenith = gradient->zenith;
-        m_sky_ground = gradient->ground;
-    } else {
-        m_sky_kind = 1; // CubemapSky -- sampler binding not wired yet; gradient stash stays as-is
-    }
-}
-
-void Renderer::setExposure(f32 exposure) {
-    m_post_process.setPushConstants(m_tonemap_pass, &exposure, sizeof(exposure));
-}
-
-void Renderer::setAmbient(const Eigen::Vector3f& ambient) {
-    m_ambient = ambient;
-}
-
-void Renderer::setFxaaEnabled(bool enabled) {
-    m_fxaa_enabled = enabled;
-    updateFxaaPushConstants();
-}
-
-void Renderer::setShadowDistance(f32 distance) {
-    m_shadow_distance = distance;
-}
-
-void Renderer::setCascadeSplitLambda(f32 lambda) {
-    m_cascade_split_lambda = std::clamp(lambda, 0.0f, 1.0f);
-}
-
-void Renderer::toggleShadowMapDebug() {
-    m_show_shadow_map_debug = !m_show_shadow_map_debug;
-}
-
-void Renderer::cycleShadowMapDebugLayer() {
-    m_shadow_debug_layer = (m_shadow_debug_layer + 1) % kCascadeCount;
+    sg_end_pass();
 }
 
 void Renderer::endFrame() {
-    if (!m_acquired.ok) {
-        return; // beginFrame already recreated the swapchain; nothing to submit
-    }
-
     recordShadowPass();
     recordGBufferPass();
 
-    const Surface& target = m_swapchain_surfaces[m_acquired.image_index];
+    // --- Lighting: resolve the G-buffer into HDR.
+    {
+        sg_pass pass = {};
+        pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+        pass.action.colors[0].clear_value = {0.0f, 0.0f, 0.0f, 1.0f};
+        pass.attachments.colors[0] = *m_hdr.attachment;
+        pass.label = "lighting pass";
+        sg_begin_pass(&pass);
 
-    VkExtent2D extent = m_swapchain->extent();
+        sg_apply_pipeline(m_lighting_pipeline);
 
-    LightingUniforms lighting_uniforms{};
-    lighting_uniforms.inverse_view_projection = m_inverse_view_projection;
-    lighting_uniforms.view = m_view;
-    lighting_uniforms.cascade_view_proj = m_cascade_view_proj;
-    lighting_uniforms.view_position = Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f);
-    lighting_uniforms.ambient = Eigen::Vector4f(m_ambient.x(), m_ambient.y(), m_ambient.z(), 0.0f);
-    lighting_uniforms.cascade_split_depth =
-        Eigen::Vector4f(m_cascade_split_depth[0], m_cascade_split_depth[1], m_cascade_split_depth[2], m_cascade_split_depth[3]);
-    lighting_uniforms.shadow_params = Eigen::Vector4f(m_shadow_depth_bias, m_shadow_normal_offset, 0.0f, 0.0f);
-    lighting_uniforms.light_count = m_light_count;
-    m_cmd->writeBuffer(m_lighting_cb, &lighting_uniforms, sizeof(lighting_uniforms));
+        sg_bindings bindings = {};
+        bindings.views[VIEW_tex_gbuffer_albedo] = *m_albedo.texture;
+        bindings.views[VIEW_tex_gbuffer_normal] = *m_normal.texture;
+        bindings.views[VIEW_tex_gbuffer_depth] = *m_depth.texture;
+        bindings.views[VIEW_tex_gbuffer_material] = *m_material.texture;
+        bindings.views[VIEW_tex_shadow] = *m_shadow_texture;
+        bindings.views[VIEW_light_buffer] = m_light_count > 0 ? m_light_view : *m_empty_light_view;
+        bindings.samplers[SMP_smp_gbuffer] = *m_gbuffer_sampler;
+        bindings.samplers[SMP_smp_shadow] = *m_shadow_sampler;
+        sg_apply_bindings(&bindings);
 
-    nvrhi::GraphicsState state{};
-    state.pipeline = m_lighting_pipeline;
-    state.framebuffer = m_hdr_color.framebuffer();
-    state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-    state.bindings = {m_lighting_binding_set, m_lighting_cb_binding_set};
+        lighting_params_t params{};
+        params.inverse_view_projection = m_inverse_view_projection;
+        params.view = m_view;
+        for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
+            params.cascade_view_proj[cascade] = m_cascade_view_proj[cascade];
+        }
+        params.view_position = toVec4(m_view_position, 1.0f);
+        params.ambient = toVec4(m_ambient, 0.0f);
+        params.cascade_split_depth = Eigen::Vector4f(
+            m_cascade_split_depth[0], m_cascade_split_depth[1], m_cascade_split_depth[2], m_cascade_split_depth[3]
+        );
+        params.shadow_params = Eigen::Vector4f(m_shadow_depth_bias, m_shadow_normal_offset, m_has_shadow_light ? 1.0f : 0.0f, 0.0f);
+        params.light_count = static_cast<int>(m_light_count);
+        applyUniforms(UB_lighting_params, params);
 
-    m_cmd->setGraphicsState(state);
-    m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
-
-    // Sky fills the far-plane pixels of m_hdr_color; the shader discards where geometry was drawn.
-    nvrhi::GraphicsState sky_state{};
-    sky_state.pipeline = m_sky_pipeline;
-    sky_state.framebuffer = m_hdr_color.framebuffer();
-    sky_state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-    sky_state.bindings = {m_sky_binding_set, m_sky_push_constant_binding_set};
-
-    m_cmd->setGraphicsState(sky_state);
-    SkyPushConstants sky_push{
-        m_inverse_view_projection,
-        Eigen::Vector4f(m_view_position.x(), m_view_position.y(), m_view_position.z(), 1.0f),
-        Eigen::Vector4f(m_sky_zenith.x(), m_sky_zenith.y(), m_sky_zenith.z(), m_sky_intensity),
-        Eigen::Vector4f(m_sky_ground.x(), m_sky_ground.y(), m_sky_ground.z(), 0.0f),
-        m_sky_kind
-    };
-    m_cmd->setPushConstants(&sky_push, sizeof(sky_push));
-    m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
-
-    m_post_process.run(m_cmd, m_hdr_color.texture(), target);
-
-    if (m_show_shadow_map_debug) {
-        nvrhi::GraphicsState debug_state{};
-        debug_state.pipeline = m_shadow_debug_pipeline;
-        debug_state.framebuffer = target.framebuffer();
-        debug_state.viewport.addViewportAndScissorRect(nvrhi::Viewport(static_cast<f32>(extent.width), static_cast<f32>(extent.height)));
-        debug_state.bindings = {m_shadow_debug_binding_set};
-        m_cmd->setGraphicsState(debug_state);
-        m_cmd->setPushConstants(&m_shadow_debug_layer, sizeof(m_shadow_debug_layer));
-        m_cmd->draw(nvrhi::DrawArguments().setVertexCount(kFullscreenTriangleVertexCount));
+        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        sg_end_pass();
     }
 
-    m_cmd->close();
+    // --- Sky: fills the pixels the G-buffer never wrote. Loads, does not clear.
+    {
+        sg_pass pass = {};
+        pass.action.colors[0].load_action = SG_LOADACTION_LOAD;
+        pass.attachments.colors[0] = *m_hdr.attachment;
+        pass.label = "sky pass";
+        sg_begin_pass(&pass);
 
-    nvrhi::vulkan::IDevice* vk_device = m_device->vulkanDevice();
-    vk_device->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, m_swapchain->imageAvailable(), 0);
-    vk_device->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, m_swapchain->renderFinished(m_acquired.image_index), 0);
-    m_device->nvrhi()->executeCommandList(m_cmd);
+        sg_apply_pipeline(m_sky_pipeline);
 
-    // Signal this slot's fence instead of draining the GPU; beginFrame kFramesInFlight later waits on it.
-    const u32 slot = static_cast<u32>(m_frame_counter % kFramesInFlight);
-    m_device->nvrhi()->resetEventQuery(m_frame_done[slot]);
-    m_device->nvrhi()->setEventQuery(m_frame_done[slot], nvrhi::CommandQueue::Graphics);
-    m_frame_counter++;
+        sg_bindings bindings = {};
+        bindings.views[VIEW_tex_sky_depth] = *m_depth.texture;
+        bindings.samplers[SMP_smp_sky] = *m_gbuffer_sampler;
+        sg_apply_bindings(&bindings);
 
-    if (!m_swapchain->present(m_acquired.image_index)) {
-        vkDeviceWaitIdle(m_device->handle());
-        m_swapchain->recreate(m_swapchain->extent());
-        rebuildSwapchainSurfaces();
-        rebuildGBuffer();
-        rebuildPostProcessTargets();
-        rebuildLightingBindingSet();
-        rebuildSkyBindingSet();
+        sky_params_t params{
+            .sky_inverse_view_projection = m_inverse_view_projection,
+            .sky_view_position = toVec4(m_view_position, 1.0f),
+            .zenith_intensity = toVec4(m_sky_zenith, m_sky_intensity),
+            .ground = toVec4(m_sky_ground, 0.0f),
+            .sky_kind = Eigen::Vector4f(m_sky_kind, 0.0f, 0.0f, 0.0f),
+        };
+        applyUniforms(UB_sky_params, params);
+
+        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        sg_end_pass();
     }
 
-    m_frame_lock.unlock();
+    // --- Tonemap: HDR -> LDR.
+    {
+        sg_pass pass = {};
+        pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
+        pass.attachments.colors[0] = *m_ldr.attachment;
+        pass.label = "tonemap pass";
+        sg_begin_pass(&pass);
+
+        sg_apply_pipeline(m_tonemap_pipeline);
+
+        sg_bindings bindings = {};
+        bindings.views[VIEW_tex_source] = *m_hdr.texture;
+        bindings.samplers[SMP_smp_source] = *m_material_sampler;
+        sg_apply_bindings(&bindings);
+
+        tonemap_params_t params{.exposure = Eigen::Vector4f(m_exposure, 0.0f, 0.0f, 0.0f)};
+        applyUniforms(UB_tonemap_params, params);
+
+        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        sg_end_pass();
+    }
+
+    // --- FXAA straight to the swapchain, then the optional shadow-map blit over the top.
+    {
+        sg_pass pass = {};
+        pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
+        pass.swapchain = sglue_swapchain();
+        pass.label = "fxaa pass";
+        sg_begin_pass(&pass);
+
+        sg_apply_pipeline(m_fxaa_pipeline);
+
+        sg_bindings bindings = {};
+        bindings.views[VIEW_tex_source] = *m_ldr.texture;
+        bindings.samplers[SMP_smp_source] = *m_material_sampler;
+        sg_apply_bindings(&bindings);
+
+        fxaa_params_t params{
+            .rcp_frame = Eigen::Vector4f(
+                1.0f / static_cast<f32>(m_width), 1.0f / static_cast<f32>(m_height), m_fxaa_enabled ? 1.0f : 0.0f, 0.0f
+            ),
+        };
+        applyUniforms(UB_fxaa_params, params);
+
+        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+
+        if (m_show_shadow_map_debug) {
+            sg_apply_pipeline(m_shadow_debug_pipeline);
+
+            sg_bindings debug_bindings = {};
+            debug_bindings.views[VIEW_tex_shadow_debug] = *m_shadow_texture;
+            debug_bindings.samplers[SMP_smp_shadow_debug] = *m_gbuffer_sampler;
+            sg_apply_bindings(&debug_bindings);
+
+            shadow_debug_params_t debug_params{.layer = Eigen::Vector4f(static_cast<f32>(m_shadow_debug_layer), 0.0f, 0.0f, 0.0f)};
+            applyUniforms(UB_shadow_debug_params, debug_params);
+
+            sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        }
+
+        sg_end_pass();
+    }
+
+    sg_commit();
 }
 
 } // namespace graphics

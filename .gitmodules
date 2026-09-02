@@ -4,9 +4,6 @@
 [submodule "external/devtools"]
 	path = external/devtools
 	url = git@github.com:RubenMovsesyan/devtools.git
-[submodule "external/NVRHI"]
-	path = external/NVRHI
-	url = https://github.com/NVIDIA-RTX/NVRHI.git
 [submodule "external/Eigen"]
 	path = external/Eigen
 	url = https://gitlab.com/libeigen/eigen.git
@@ -16,3 +13,9 @@
 [submodule "external/stb"]
 	path = external/stb
 	url = https://github.com/nothings/stb.git
+[submodule "external/sokol"]
+	path = external/sokol
+	url = https://github.com/floooh/sokol.git
+[submodule "external/sokol-tools-bin"]
+	path = external/sokol-tools-bin
+	url = https://github.com/floooh/sokol-tools-bin.git

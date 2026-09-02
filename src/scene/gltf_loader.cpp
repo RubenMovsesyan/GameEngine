@@ -86,16 +86,16 @@ graphics::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
     return result;
 }
 
-std::optional<graphics::Texture> loadTexture(const gpu::Device& device, const cgltf_texture* tex, const std::filesystem::path& gltf_path,
-                                              nvrhi::Format format) {
+std::optional<graphics::Texture> loadTexture(const cgltf_texture* tex, const std::filesystem::path& gltf_path,
+                                              sg_pixel_format format) {
     if (tex == nullptr || tex->image == nullptr) {
         return std::nullopt;
     }
     auto decode = [bytes = resolveImageBytes(tex, gltf_path)]() mutable { return decodeImageBytes(std::move(bytes)); };
-    return graphics::Texture::loadAsyncThread(device, std::move(decode), format);
+    return graphics::Texture::loadAsyncThread(std::move(decode), format);
 }
 
-graphics::Material loadMaterial(const gpu::Device& device, const cgltf_material* material, const std::filesystem::path& gltf_path) {
+graphics::Material loadMaterial(const cgltf_material* material, const std::filesystem::path& gltf_path) {
     Eigen::Vector4f base_color_factor{1.0f, 1.0f, 1.0f, 1.0f};
     f32 metallic_factor = 1.0f;
     f32 roughness_factor = 1.0f;
@@ -107,15 +107,15 @@ graphics::Material loadMaterial(const gpu::Device& device, const cgltf_material*
         base_color_factor = Eigen::Vector4f(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2], pbr.base_color_factor[3]);
         metallic_factor = pbr.metallic_factor;
         roughness_factor = pbr.roughness_factor;
-        base_color_texture = loadTexture(device, pbr.base_color_texture.texture, gltf_path, nvrhi::Format::SRGBA8_UNORM);
-        metallic_roughness_texture = loadTexture(device, pbr.metallic_roughness_texture.texture, gltf_path, nvrhi::Format::RGBA8_UNORM);
+        base_color_texture = loadTexture(pbr.base_color_texture.texture, gltf_path, SG_PIXELFORMAT_SRGB8A8);
+        metallic_roughness_texture = loadTexture(pbr.metallic_roughness_texture.texture, gltf_path, SG_PIXELFORMAT_RGBA8);
     }
 
-    return graphics::Material::create(device, std::move(base_color_texture), std::move(metallic_roughness_texture), base_color_factor, metallic_factor,
+    return graphics::Material::create(std::move(base_color_texture), std::move(metallic_roughness_texture), base_color_factor, metallic_factor,
                                        roughness_factor);
 }
 
-void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive, const Eigen::Matrix4f& transform,
+void appendPrimitive(const cgltf_primitive& primitive, const Eigen::Matrix4f& transform,
                       const std::filesystem::path& gltf_path, Model& model) {
     if (primitive.type != cgltf_primitive_type_triangles) {
         RLOG(LL_FATAL, "gltf: only triangle primitives are supported");
@@ -172,8 +172,8 @@ void appendPrimitive(const gpu::Device& device, const cgltf_primitive& primitive
         indices[i] = static_cast<u32>(cgltf_accessor_read_index(primitive.indices, i));
     }
 
-    graphics::Material material = loadMaterial(device, primitive.material, gltf_path);
-    model.addPart(graphics::StandardMesh::create(device, vertices, indices), transform, std::move(material), local_bounds);
+    graphics::Material material = loadMaterial(primitive.material, gltf_path);
+    model.addPart(graphics::StandardMesh::create(vertices, indices), transform, std::move(material), local_bounds);
 }
 
 graphics::LightType toLightType(cgltf_light_type type) {
@@ -209,7 +209,7 @@ void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Sce
     });
 }
 
-void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Matrix4f& parent_transform, const std::filesystem::path& gltf_path,
+void walkNode(const cgltf_node& node, const Eigen::Matrix4f& parent_transform, const std::filesystem::path& gltf_path,
               Model& model, Scene& scene) {
     float local[16];
     cgltf_node_transform_local(&node, local);
@@ -217,20 +217,20 @@ void walkNode(const gpu::Device& device, const cgltf_node& node, const Eigen::Ma
 
     if (node.mesh != nullptr) {
         for (cgltf_size i = 0; i < node.mesh->primitives_count; i++) {
-            appendPrimitive(device, node.mesh->primitives[i], transform, gltf_path, model);
+            appendPrimitive(node.mesh->primitives[i], transform, gltf_path, model);
         }
     }
     if (node.light != nullptr) {
         appendLight(*node.light, transform, scene);
     }
     for (cgltf_size i = 0; i < node.children_count; i++) {
-        walkNode(device, *node.children[i], transform, gltf_path, model, scene);
+        walkNode(*node.children[i], transform, gltf_path, model, scene);
     }
 }
 
 } // namespace
 
-Scene loadGltf(const gpu::Device& device, const std::filesystem::path& path) {
+Scene loadGltf(const std::filesystem::path& path) {
     cgltf_options options{};
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
@@ -248,7 +248,7 @@ Scene loadGltf(const gpu::Device& device, const std::filesystem::path& path) {
     Scene scene;
     Model model;
     for (cgltf_size i = 0; i < data->scene->nodes_count; i++) {
-        walkNode(device, *data->scene->nodes[i], Eigen::Matrix4f::Identity(), path, model, scene);
+        walkNode(*data->scene->nodes[i], Eigen::Matrix4f::Identity(), path, model, scene);
     }
 
     cgltf_free(data);

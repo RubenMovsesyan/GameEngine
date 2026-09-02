@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
 	engine.addCompileFlag("-std=c++23");
 	engine.addLinkFlag("-std=c++23");
 
-	engine.addInclude(Include<Direct>("external/NVRHI/include"));
+	engine.addInclude(Include<Direct>("external/sokol"));
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
 	engine.addInclude(Include<Direct>("external/cgltf"));
@@ -25,84 +25,51 @@ int main(int argc, char** argv) {
 
 	engine.addLink(Link<Dependency>("vulkan"));
 	engine.addLink(Link<Dependency>("pthread"));
-	engine.addLink(Link<Dependency>("glfw"));
 
-	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
-	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
-	// headers below get tracked as depending on them and rebuild when a shader changes.
-	const std::vector<std::string> shader_names = {
-	    "gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag",
-	    "sky.frag", "fxaa.frag", "shadow_depth.vert", "shadow_depth_instanced.vert", "shadow_depth.frag", "shadow_debug.frag"};
+	// sokol_app on Linux: X11 windowing plus dlopen for the Vulkan loader.
+	engine.addLink(Link<Dependency>("X11"));
+	engine.addLink(Link<Dependency>("Xi"));
+	engine.addLink(Link<Dependency>("Xcursor"));
+	engine.addLink(Link<Dependency>("dl"));
+	engine.addLink(Link<Dependency>("m"));
+
+	// Shaders -> a single sokol-shdc generated header carrying the SPIR-V for every program,
+	// so the binary keeps shipping its own bytecode. A real Task (not a raw exec()'d Command),
+	// renderer.cpp is tracked as depending on it and rebuilds when a shader changes.
+	const std::string shader_source = "src/graphics/shaders/engine.glsl";
+	const std::string shader_header = ".build/shaders/engine.glsl.h";
 
 	// A Command Output is always considered stale (see Output::isStale), so guard the
-	// glslc invocation ourselves: only add the Task when the .h is missing or older than
-	// its shader source. Skipped shaders just don't get a Task -- the depends_on() wiring
-	// below tolerates a missing entry.
-	auto shaderStale = [](const std::string& name) {
-	    std::filesystem::path src = "src/graphics/shaders/" + name;
-	    std::filesystem::path hdr = ".build/shaders/" + name + ".h";
-	    return !std::filesystem::exists(hdr) || std::filesystem::last_write_time(src) > std::filesystem::last_write_time(hdr);
-	};
+	// sokol-shdc invocation ourselves: only add the Task when the header is missing or older
+	// than its source.
+	const bool shader_stale = !std::filesystem::exists(shader_header) ||
+	                          std::filesystem::last_write_time(shader_source) > std::filesystem::last_write_time(shader_header);
 
-	std::unordered_map<std::string, std::reference_wrapper<Task>> shader_tasks;
-	for (const std::string& name : shader_names) {
-	    if (!shaderStale(name)) continue;
-	    Task& task = engine.addTask(Output(Command({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name})));
-	    shader_tasks.emplace(name, task);
+	Task* shader_task = nullptr;
+	if (shader_stale) {
+	    shader_task = &engine.addTask(Output(Command({"external/sokol-tools-bin/bin/linux/sokol-shdc", "-i", shader_source, "-o",
+	                                                  shader_header, "-l", "spirv_vk", "-f", "sokol"})));
 	}
 
-	// NVRHI, built from source: common bookkeeping, validation layer, Vulkan backend.
-	const std::vector<std::string> nvrhi_sources = {
-	    "external/NVRHI/src/common/format-info.cpp",
-	    "external/NVRHI/src/common/misc.cpp",
-	    "external/NVRHI/src/common/state-tracking.cpp",
-	    "external/NVRHI/src/common/utils.cpp",
-	    "external/NVRHI/src/common/aftermath.cpp",
-
-	    "external/NVRHI/src/validation/validation-commandlist.cpp",
-	    "external/NVRHI/src/validation/validation-device.cpp",
-
-	    "external/NVRHI/src/vulkan/vulkan-allocator.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-buffer.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-commandlist.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-compute.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-constants.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-device.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-graphics.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-meshlets.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-queries.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-queue.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-raytracing.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-resource-bindings.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-shader.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-staging-texture.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-state-tracking.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-texture.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-upload.cpp",
-	};
-
 	const std::vector<std::string> engine_sources = {
-	    "src/gpu/instance.cpp",
-	    "src/gpu/device.cpp",
-	    "src/gpu/swapchain.cpp",
+	    "src/gpu/sokol.cpp",
+	    "src/gpu/handle.cpp",
 
-	    "src/graphics/surface.cpp",
-	    "src/graphics/renderer.cpp",
 	    "src/graphics/camera.cpp",
 	    "src/graphics/frustum.cpp",
 	    "src/graphics/shadow.cpp",
+	    "src/graphics/light.cpp",
 	    "src/graphics/mesh.cpp",
 	    "src/graphics/texture.cpp",
 	    "src/graphics/material.cpp",
-	    "src/graphics/light.cpp",
 	    "src/graphics/light_manager.cpp",
-	    "src/graphics/post_process_chain.cpp",
+	    "src/graphics/renderer.cpp",
 
 	    "src/scene/model.cpp",
 	    "src/scene/scene.cpp",
 	    "src/scene/gltf_loader.cpp",
 
-	    "src/app/window.cpp",
+
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",
 	    "src/app/input_state.cpp",
@@ -111,19 +78,10 @@ int main(int argc, char** argv) {
 	};
 
 	std::vector<std::reference_wrapper<Task>> objects;
-	for (const auto& source : nvrhi_sources) {
-	    objects.push_back(engine.addTask(Output(Object(source))));
-	}
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
-	    if (source == "src/graphics/renderer.cpp") {
-	        for (const std::string& name : shader_names) {
-	            auto it = shader_tasks.find(name);
-	            if (it != shader_tasks.end()) task.depends_on(it->second);
-	        }
-	    } else if (source == "src/graphics/post_process_chain.cpp") {
-	        auto it = shader_tasks.find("fullscreen_triangle.vert");
-	        if (it != shader_tasks.end()) task.depends_on(it->second);
+	    if (source == "src/graphics/renderer.cpp" && shader_task != nullptr) {
+	        task.depends_on(*shader_task);
 	    }
 	    objects.push_back(task);
 	}

@@ -1,22 +1,34 @@
 #pragma once
 
 #include <app/input_state.hpp>
-#include <app/window.hpp>
 #include <app/worker.hpp>
-#include <gpu/device.hpp>
-#include <gpu/instance.hpp>
-#include <gpu/swapchain.hpp>
 
-#include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
+struct sapp_event;
+
 namespace app {
 
-// Owns the window, the GPU device and swapchain, and the workers.
+// Owns the window and the sokol_gfx context, and drives the frame loop.
+//
+// sokol_gfx is single-threaded and sokol_app owns the loop, so the callbacks below all run
+// on the thread that called run(). Nothing on a Worker may touch the GPU.
 class Application {
     public:
-        Application();
+        struct Config {
+                int width = 1280;
+                int height = 720;
+                const char* title = "GameEngine";
+        };
+
+        using Callback = std::function<void(Application&)>;
+
+        // init runs once, after the GPU is up; frame runs once per presented frame; cleanup runs
+        // once before the GPU is torn down. Anything holding GPU handles must release them in
+        // cleanup -- destroying them after sg_shutdown() asserts.
+        Application(Config, Callback init, Callback frame, Callback cleanup = {});
         ~Application();
 
         Application(Application&&) = delete;
@@ -24,17 +36,24 @@ class Application {
         Application(const Application&) = delete;
         Application& operator=(const Application&) = delete;
 
+        // Blocks until the window closes.
         void run();
 
-        std::atomic<bool> running = false;
+        // Asks for a clean shutdown; the frame callback still finishes.
+        void quit();
 
-        gpu::Device& device() { return m_device; }
-        gpu::Swapchain& swapchain() { return m_swapchain; }
         InputState& input() { return m_input; }
-        bool isCursorCaptured() const { return m_window.isCursorCaptured(); }
-        void toggleCursorCapture() { m_window.toggleCursorCapture(); }
+
+        // Framebuffer size in pixels. Only meaningful once init has run.
+        int width() const;
+        int height() const;
+
+        bool isCursorCaptured() const;
+        void setCursorCaptured(bool captured);
+        void toggleCursorCapture() { setCursorCaptured(!isCursorCaptured()); }
 
         // UserData is inferred from work's second parameter; args construct it.
+        // For CPU work only -- a Worker must never call into the GPU.
         template <typename F, typename... Args>
         void addWorker(F&& work, Args&&... args) {
             using UserData = typename detail::WorkerCallableTraits<std::decay_t<F>>::UserData;
@@ -44,29 +63,15 @@ class Application {
         }
 
     private:
-        // Must outlive the swapchain but not the instance -- see member declaration order below.
-        class OwnedSurface {
-            public:
-                OwnedSurface(VkInstance instance, VkSurfaceKHR surface) : m_instance(instance), m_surface(surface) {}
-                ~OwnedSurface();
+        static void initCallback(void* user_data);
+        static void frameCallback(void* user_data);
+        static void eventCallback(const sapp_event* event, void* user_data);
+        static void cleanupCallback(void* user_data);
 
-                OwnedSurface(OwnedSurface&&) = delete;
-                OwnedSurface& operator=(OwnedSurface&&) = delete;
-                OwnedSurface(const OwnedSurface&) = delete;
-                OwnedSurface& operator=(const OwnedSurface&) = delete;
-
-                operator VkSurfaceKHR() const { return m_surface; }
-
-            private:
-                VkInstance m_instance;
-                VkSurfaceKHR m_surface;
-        };
-
-        Window m_window;
-        gpu::Instance m_instance;
-        OwnedSurface m_surface;
-        gpu::Device m_device;
-        gpu::Swapchain m_swapchain;
+        Config m_config;
+        Callback m_init;
+        Callback m_frame;
+        Callback m_cleanup;
         InputState m_input;
 
         std::vector<std::unique_ptr<WorkerBase>> m_workers;

@@ -10,14 +10,19 @@
 namespace app {
 
 // Thread-safe: handle*()/beginFrame() take a unique lock, queries take a shared lock.
+//
+// Key and button indices are sokol_app's (SAPP_KEYCODE_*, SAPP_MOUSEBUTTON_*); this class
+// never includes sokol_app.h itself -- Application translates sapp_event and calls in here.
 class InputState {
     public:
-        void handleKey(int key, int action);
-        void handleMouseButton(int button, int action);
-        void handleCursorPos(f64 x, f64 y);
-        void handleScroll(f64 x_offset, f64 y_offset);
+        void handleKey(int key, bool down);
+        void handleMouseButton(int button, bool down);
+        // dx/dy are sokol_app's relative movement, which stays valid while the mouse is
+        // locked -- absolute x/y does not, so the frame delta is accumulated, not derived.
+        void handleMouseMove(f32 x, f32 y, f32 dx, f32 dy);
+        void handleScroll(f32 x_offset, f32 y_offset);
 
-        // Call once per frame from whichever worker drives the game loop.
+        // Call once per frame, before reading any of the queries below.
         void beginFrame();
 
         bool isKeyDown(int key) const;
@@ -31,8 +36,8 @@ class InputState {
         Eigen::Vector2f scrollDelta() const;
 
     private:
-        static constexpr usize kKeyCount = 349;        // GLFW_KEY_LAST + 1
-        static constexpr usize kMouseButtonCount = 8;  // GLFW_MOUSE_BUTTON_LAST + 1
+        static constexpr usize kKeyCount = 512;       // SAPP_MAX_KEYCODES
+        static constexpr usize kMouseButtonCount = 3; // SAPP_MOUSEBUTTON_{LEFT,RIGHT,MIDDLE}
 
         mutable std::shared_mutex m_mutex;
 
@@ -49,7 +54,7 @@ class InputState {
         std::array<bool, kMouseButtonCount> m_mouse_released_snapshot{};
 
         Eigen::Vector2f m_mouse_position{0.0f, 0.0f};
-        Eigen::Vector2f m_mouse_position_last_frame{0.0f, 0.0f};
+        Eigen::Vector2f m_mouse_delta_accum{0.0f, 0.0f};
         Eigen::Vector2f m_mouse_delta_snapshot{0.0f, 0.0f};
 
         Eigen::Vector2f m_scroll_accum{0.0f, 0.0f};

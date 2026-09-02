@@ -2,62 +2,56 @@
 
 namespace graphics {
 
-StandardMesh StandardMesh::create(const gpu::Device& device, std::span<const Vertex> vertices, std::span<const u32> indices) {
-    nvrhi::BufferDesc vertex_desc{};
-    vertex_desc.byteSize = vertices.size_bytes();
-    vertex_desc.isVertexBuffer = true;
-    vertex_desc.initialState = nvrhi::ResourceStates::VertexBuffer;
-    vertex_desc.keepInitialState = true;
-    vertex_desc.debugName = "mesh vertex buffer";
+namespace {
 
-    nvrhi::BufferDesc index_desc{};
-    index_desc.byteSize = indices.size_bytes();
-    index_desc.isIndexBuffer = true;
-    index_desc.initialState = nvrhi::ResourceStates::IndexBuffer;
-    index_desc.keepInitialState = true;
-    index_desc.debugName = "mesh index buffer";
+gpu::BufferHandle makeVertexBuffer(std::span<const Vertex> vertices, const char* label) {
+    sg_buffer_desc desc = {};
+    desc.size = vertices.size_bytes();
+    desc.usage.vertex_buffer = true;
+    desc.data = sg_range{vertices.data(), vertices.size_bytes()};
+    desc.label = label;
+    return gpu::makeBuffer(desc);
+}
 
+gpu::BufferHandle makeIndexBuffer(std::span<const u32> indices, const char* label) {
+    sg_buffer_desc desc = {};
+    desc.size = indices.size_bytes();
+    desc.usage.index_buffer = true;
+    desc.data = sg_range{indices.data(), indices.size_bytes()};
+    desc.label = label;
+    return gpu::makeBuffer(desc);
+}
+
+} // namespace
+
+StandardMesh StandardMesh::create(std::span<const Vertex> vertices, std::span<const u32> indices) {
     StandardMesh mesh;
-    mesh.m_vertices = device.createBuffer(vertex_desc, vertices.data(), vertices.size_bytes());
-    mesh.m_indices = device.createBuffer(index_desc, indices.data(), indices.size_bytes());
+    mesh.m_vertices = makeVertexBuffer(vertices, "mesh vertex buffer");
+    mesh.m_indices = makeIndexBuffer(indices, "mesh index buffer");
     mesh.m_index_count = static_cast<u32>(indices.size());
     return mesh;
 }
 
 StandardMesh StandardMesh::fromInstanced(const InstancedMesh& other) {
     StandardMesh mesh;
-    mesh.m_vertices = other.vertexBuffer();
-    mesh.m_indices = other.indexBuffer();
+    mesh.m_vertices = other.m_vertices;
+    mesh.m_indices = other.m_indices;
     mesh.m_index_count = other.indexCount();
     return mesh;
 }
 
-InstancedMesh InstancedMesh::create(const gpu::Device& device, std::span<const Vertex> vertices, std::span<const u32> indices) {
-    nvrhi::BufferDesc vertex_desc{};
-    vertex_desc.byteSize = vertices.size_bytes();
-    vertex_desc.isVertexBuffer = true;
-    vertex_desc.initialState = nvrhi::ResourceStates::VertexBuffer;
-    vertex_desc.keepInitialState = true;
-    vertex_desc.debugName = "instanced mesh vertex buffer";
-
-    nvrhi::BufferDesc index_desc{};
-    index_desc.byteSize = indices.size_bytes();
-    index_desc.isIndexBuffer = true;
-    index_desc.initialState = nvrhi::ResourceStates::IndexBuffer;
-    index_desc.keepInitialState = true;
-    index_desc.debugName = "instanced mesh index buffer";
-
+InstancedMesh InstancedMesh::create(std::span<const Vertex> vertices, std::span<const u32> indices) {
     InstancedMesh mesh;
-    mesh.m_vertices = device.createBuffer(vertex_desc, vertices.data(), vertices.size_bytes());
-    mesh.m_indices = device.createBuffer(index_desc, indices.data(), indices.size_bytes());
+    mesh.m_vertices = makeVertexBuffer(vertices, "instanced mesh vertex buffer");
+    mesh.m_indices = makeIndexBuffer(indices, "instanced mesh index buffer");
     mesh.m_index_count = static_cast<u32>(indices.size());
     return mesh;
 }
 
 InstancedMesh InstancedMesh::fromStandard(const StandardMesh& other) {
     InstancedMesh mesh;
-    mesh.m_vertices = other.vertexBuffer();
-    mesh.m_indices = other.indexBuffer();
+    mesh.m_vertices = other.m_vertices;
+    mesh.m_indices = other.m_indices;
     mesh.m_index_count = other.indexCount();
     return mesh;
 }
@@ -79,8 +73,14 @@ Eigen::Matrix4f* InstancedMesh::mutableInstance(u32 index) {
     return &m_instances[index].transform;
 }
 
-void InstancedMesh::uploadIfDirty(const gpu::Device& device) {
+void InstancedMesh::uploadIfDirty() {
     if (!m_dirty) {
+        return;
+    }
+
+    if (m_instances.empty()) {
+        m_instance_buffer = nullptr;
+        m_dirty = false;
         return;
     }
 
@@ -89,14 +89,16 @@ void InstancedMesh::uploadIfDirty(const gpu::Device& device) {
         instance.normal_matrix = normalMatrix(instance.transform);
     }
 
-    nvrhi::BufferDesc instance_desc{};
-    instance_desc.byteSize = m_instances.size() * sizeof(InstanceData);
-    instance_desc.isVertexBuffer = true;
-    instance_desc.initialState = nvrhi::ResourceStates::VertexBuffer;
-    instance_desc.keepInitialState = true;
-    instance_desc.debugName = "instanced mesh instance buffer";
+    const usize byte_size = m_instances.size() * sizeof(InstanceData);
 
-    m_instance_buffer = device.createBuffer(instance_desc, m_instances.data(), instance_desc.byteSize);
+    sg_buffer_desc desc = {};
+    desc.size = byte_size;
+    desc.usage.vertex_buffer = true;
+    desc.data = sg_range{m_instances.data(), byte_size};
+    desc.label = "instanced mesh instance buffer";
+
+    // Assigning through the handle destroys the previous buffer, if any.
+    m_instance_buffer = gpu::makeBuffer(desc);
     m_dirty = false;
 }
 

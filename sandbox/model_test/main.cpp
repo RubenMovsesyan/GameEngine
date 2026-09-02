@@ -8,52 +8,58 @@
 #include <graphics/renderer.hpp>
 #include <scene/gltf_loader.hpp>
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
+#include <sokol_app.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <variant>
 
-// Loads a glTF/glb model given at construction; WASD + Space/Ctrl fly the camera.
-void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::filesystem::path& model_path) {
-    RLOG(LL_INFO, "Starting Render Thread");
+namespace {
 
-    scene::Scene scene = scene::loadGltf(app.device(), model_path);
-    RLOG(LL_DEBUG, scene.display());
+constexpr f32 kMoveSpeed = 5.0f;        // units/sec
+constexpr f32 kLookSensitivity = 0.15f; // radians per pixel of mouse delta, per second
+constexpr f32 kPitchLimit = 1.5533f;    // ~89 degrees; avoids forward/world_up going parallel
 
-    // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane, 2 units apart.
-    constexpr u32 kGridSize = 10;
-    constexpr f32 kGridSpacing = 3.0f;
+constexpr u32 kGridSize = 10;
+constexpr f32 kGridSpacing = 3.0f;
 
-    // TEST: override every loaded material with a fully metallic, fully rough one.
-    // 1x1 texture with glTF MR packing (R=occlusion, G=roughness, B=metallic), factors at 1.0.
-    // const std::array<u8, 4> kMaxMrPixel = {255, 25, 50, 255};
-    // graphics::Texture max_mr_texture = graphics::Texture::create(app.device(), kMaxMrPixel, 1, 1);
+const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 
-    // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
-    // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
-    scene::Scene standalone_scene = scene::loadGltf(app.device(), model_path);
-    // for (scene::Model& model : standalone_scene.mutableModels()) {
-    //     for (scene::ModelPart& part : model.mutableParts()) {
-    //         // part.material = graphics::Material::create(
-    //         //     app.device(), part.material.baseColorTexture(), max_mr_texture, {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
-    //         // );
-    //     }
-    // }
-    Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
-    standalone_transform(1, 3) = 10.0f;
+// Everything that has to survive between the init and frame callbacks. sokol_app owns the
+// loop, so this lives in main() and the callbacks capture it by reference.
+struct Sandbox {
+        std::filesystem::path model_path;
 
-    for (scene::Model& model : scene.mutableModels()) {
+        // All constructed in init(), once the GPU and the window size are up.
+        std::optional<graphics::Renderer> renderer;
+        std::optional<scene::Scene> scene;
+        std::optional<scene::Scene> standalone_scene;
+        std::optional<graphics::LightManager> lights;
+        std::optional<graphics::Camera> camera;
+
+        Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
+        Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
+
+        // yaw=0, pitch=0 matches the camera's initial direction (0,0,-1), so mouse-look
+        // starts from exactly where the camera is already pointed.
+        f32 yaw = 0.0f;
+        f32 pitch = 0.0f;
+
+        std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+};
+
+void init(app::Application& app, Sandbox& sandbox) {
+    sandbox.renderer.emplace();
+
+    sandbox.scene = scene::loadGltf(sandbox.model_path);
+    RLOG(LL_DEBUG, sandbox.scene->display());
+
+    // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane.
+    for (scene::Model& model : sandbox.scene->mutableModels()) {
         for (scene::ModelPart& part : model.mutableParts()) {
-            // part.material = graphics::Material::create(
-            //     app.device(), part.material.baseColorTexture(), max_mr_texture,
-            //     {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 1.0f
-            // );
-
             part.convertToInstanced();
             graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
             for (u32 x = 0; x < kGridSize; x++) {
@@ -64,98 +70,108 @@ void renderLoop(app::Application& app, graphics::Renderer& renderer, const std::
                     instanced.addInstance(transform);
                 }
             }
-            instanced.uploadIfDirty(app.device()); // must run before the frame loop -- see Renderer docs
+            instanced.uploadIfDirty(); // must run before the frame loop -- see Renderer docs
         }
     }
 
-    graphics::LightManager light_manager{app.device()};
-    for (const graphics::Light& light : scene.lights()) {
-	RLOG(LL_DEBUG, "Added light: " + light.display());
-        light_manager.add(light);
+    // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
+    // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
+    sandbox.standalone_scene = scene::loadGltf(sandbox.model_path);
+    sandbox.standalone_transform(1, 3) = 10.0f;
+
+    sandbox.lights.emplace();
+    for (const graphics::Light& light : sandbox.scene->lights()) {
+        RLOG(LL_DEBUG, "Added light: " + light.display());
+        sandbox.lights->add(light);
     }
-    light_manager.build();
+    sandbox.lights->build();
 
+    sandbox.renderer->setSkybox(graphics::Skybox{}); // calibrated default gradient sky
 
-    renderer.setSkybox(graphics::Skybox{}); // calibrated default gradient sky
+    const f32 aspect = static_cast<f32>(app.width()) / static_cast<f32>(app.height());
+    sandbox.camera.emplace(1.0472f, aspect, 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp);
 
-    VkExtent2D extent = app.swapchain().extent();
-    RLOG(LL_DEBUG, "Extent: " + std::to_string(extent.width) + " by " + std::to_string(extent.height));
-    graphics::Camera camera{
-        1.0472f, static_cast<f32>(extent.width) / static_cast<f32>(extent.height), 0.1f, 100.0f,
-        {0.0f, 0.0f, 3.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 0.0f}
-    };
-    Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
+    sandbox.last_time = std::chrono::steady_clock::now();
+}
 
-    const Eigen::Vector3f world_up{0.0f, 1.0f, 0.0f};
-    constexpr f32 kMoveSpeed = 5.0f; // units/sec
-    constexpr f32 kLookSensitivity = 0.15f; // radians per pixel of mouse delta, per second
-    constexpr f32 kPitchLimit = 1.5533f; // ~89 degrees; avoids forward/world_up going parallel
+void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
+    graphics::Camera& camera = *sandbox.camera;
 
-    // yaw=0, pitch=0 matches the camera's initial direction (0,0,-1) below, so
-    // mouse-look starts from exactly where the camera is already pointed.
-    f32 yaw = 0.0f;
-    f32 pitch = 0.0f;
+    const Eigen::Vector3f forward = camera.direction().normalized();
+    const Eigen::Vector3f right = forward.cross(kWorldUp).normalized();
 
-    auto last_time = std::chrono::steady_clock::now();
+    if (app.input().isKeyDown(SAPP_KEYCODE_W)) {
+        *camera.mutablePosition() += forward * kMoveSpeed * dt;
+    }
+    if (app.input().isKeyDown(SAPP_KEYCODE_S)) {
+        *camera.mutablePosition() -= forward * kMoveSpeed * dt;
+    }
+    if (app.input().isKeyDown(SAPP_KEYCODE_D)) {
+        *camera.mutablePosition() += right * kMoveSpeed * dt;
+    }
+    if (app.input().isKeyDown(SAPP_KEYCODE_A)) {
+        *camera.mutablePosition() -= right * kMoveSpeed * dt;
+    }
+    if (app.input().isKeyDown(SAPP_KEYCODE_SPACE)) {
+        *camera.mutablePosition() += kWorldUp * kMoveSpeed * dt;
+    }
+    if (app.input().isKeyDown(SAPP_KEYCODE_LEFT_CONTROL)) {
+        *camera.mutablePosition() -= kWorldUp * kMoveSpeed * dt;
+    }
 
-    while (app.running.load()) {
-        auto now = std::chrono::steady_clock::now();
-        f32 dt = std::chrono::duration<f32>(now - last_time).count();
-        last_time = now;
+    const Eigen::Vector2f mouse_delta = app.input().mouseDelta();
+    if (app.isCursorCaptured() && (mouse_delta.x() != 0.0f || mouse_delta.y() != 0.0f)) {
+        sandbox.yaw += mouse_delta.x() * kLookSensitivity * dt;
+        sandbox.pitch = std::clamp(sandbox.pitch - mouse_delta.y() * kLookSensitivity * dt, -kPitchLimit, kPitchLimit);
 
-        app.input().beginFrame();
-
-        if (app.input().isKeyPressed(GLFW_KEY_ESCAPE)) {
-            app.toggleCursorCapture();
-        }
-        if (app.input().isKeyPressed(GLFW_KEY_F1)) {
-            renderer.toggleShadowMapDebug();
-        }
-        if (app.input().isKeyPressed(GLFW_KEY_F2)) {
-            renderer.cycleShadowMapDebugLayer();
-        }
-
-        Eigen::Vector3f forward = camera.direction().normalized();
-        Eigen::Vector3f right = forward.cross(world_up).normalized();
-
-        if (app.input().isKeyDown(GLFW_KEY_W)) {
-            *camera.mutablePosition() += forward * kMoveSpeed * dt;
-        }
-        if (app.input().isKeyDown(GLFW_KEY_S)) {
-            *camera.mutablePosition() -= forward * kMoveSpeed * dt;
-        }
-        if (app.input().isKeyDown(GLFW_KEY_D)) {
-            *camera.mutablePosition() += right * kMoveSpeed * dt;
-        }
-        if (app.input().isKeyDown(GLFW_KEY_A)) {
-            *camera.mutablePosition() -= right * kMoveSpeed * dt;
-        }
-        if (app.input().isKeyDown(GLFW_KEY_SPACE)) {
-            *camera.mutablePosition() += world_up * kMoveSpeed * dt;
-        }
-        if (app.input().isKeyDown(GLFW_KEY_LEFT_CONTROL)) {
-            *camera.mutablePosition() -= world_up * kMoveSpeed * dt;
-        }
-
-        Eigen::Vector2f mouse_delta = app.input().mouseDelta();
-        if (app.isCursorCaptured() && (mouse_delta.x() != 0.0f || mouse_delta.y() != 0.0f)) {
-            yaw += mouse_delta.x() * kLookSensitivity * dt;
-            pitch = std::clamp(pitch - mouse_delta.y() * kLookSensitivity * dt, -kPitchLimit, kPitchLimit);
-
-            *camera.mutableDirection() = Eigen::Vector3f{
-                std::cos(pitch) * std::sin(yaw),
-                std::sin(pitch),
-                -std::cos(pitch) * std::cos(yaw),
-            };
-        }
-
-        renderer.beginFrame();
-        renderer.setLights(light_manager);
-        scene.render(renderer, world_transform, camera);
-        standalone_scene.render(renderer, standalone_transform, camera);
-        renderer.endFrame();
+        *camera.mutableDirection() = Eigen::Vector3f{
+            std::cos(sandbox.pitch) * std::sin(sandbox.yaw),
+            std::sin(sandbox.pitch),
+            -std::cos(sandbox.pitch) * std::cos(sandbox.yaw),
+        };
     }
 }
+
+void frame(app::Application& app, Sandbox& sandbox) {
+    const auto now = std::chrono::steady_clock::now();
+    const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
+    sandbox.last_time = now;
+
+    // The window is resizable, so keep the projection matching the framebuffer.
+    if (app.height() > 0) {
+        sandbox.camera->setAspectRatio(static_cast<f32>(app.width()) / static_cast<f32>(app.height()));
+    }
+
+    if (app.input().isKeyPressed(SAPP_KEYCODE_ESCAPE)) {
+        app.toggleCursorCapture();
+    }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F1)) {
+        sandbox.renderer->toggleShadowMapDebug();
+    }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F2)) {
+        sandbox.renderer->cycleShadowMapDebugLayer();
+    }
+
+    flyCamera(app, sandbox, dt);
+
+    graphics::Renderer& renderer = *sandbox.renderer;
+    renderer.beginFrame();
+    renderer.setLights(*sandbox.lights);
+    sandbox.scene->render(renderer, sandbox.world_transform, *sandbox.camera);
+    sandbox.standalone_scene->render(renderer, sandbox.standalone_transform, *sandbox.camera);
+    renderer.endFrame();
+}
+
+// Every one of these owns sokol handles, so they have to go before sg_shutdown().
+void cleanup(Sandbox& sandbox) {
+    sandbox.scene.reset();
+    sandbox.standalone_scene.reset();
+    sandbox.lights.reset();
+    sandbox.renderer.reset();
+    sandbox.camera.reset();
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     initLog(1024 * 1024);
@@ -173,13 +189,15 @@ int main(int argc, char** argv) {
     if (model_ext != ".glb" && model_ext != ".gltf") {
         RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
     }
-    const std::filesystem::path model_path = *model_arg;
 
-    app::Application app;
-    app.addWorker(
-        [model_path](app::Application& app, graphics::Renderer& renderer) { renderLoop(app, renderer, model_path); },
-        app.device(), app.swapchain()
-    );
+    Sandbox sandbox{.model_path = *model_arg};
+
+    app::Application app{
+        app::Application::Config{},
+        [&sandbox](app::Application& app) { init(app, sandbox); },
+        [&sandbox](app::Application& app) { frame(app, sandbox); },
+        [&sandbox](app::Application&) { cleanup(sandbox); },
+    };
     app.run();
 
     return 0;

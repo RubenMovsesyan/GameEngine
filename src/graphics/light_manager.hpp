@@ -1,6 +1,6 @@
 #pragma once
 
-#include <gpu/device.hpp>
+#include <gpu/handle.hpp>
 #include <graphics/light.hpp>
 
 #include <vector>
@@ -10,19 +10,21 @@ namespace graphics {
 // Non-owning: caller keeps each Light alive while it's registered. Call build() after add()ing.
 class LightManager {
     public:
-        explicit LightManager(const gpu::Device&);
+        LightManager() = default;
 
         void add(const Light&);
         void build();
-        nvrhi::IBuffer* buffer() const { return m_buffer; }
+
+        // Storage-buffer view, bound straight into sg_bindings.views[]. Invalid until build().
+        sg_view view() const { return m_view ? *m_view : sg_view{}; }
         u32 count() const { return static_cast<u32>(m_lights.size()); }
         // First registered shadow-casting directional light, or nullptr. Used to aim the shadow cascades.
         const Light* directionalLight() const;
 
     private:
-        const gpu::Device* m_device;
         std::vector<const Light*> m_lights;
-        nvrhi::BufferHandle m_buffer;
+        gpu::BufferHandle m_buffer;
+        gpu::ViewHandle m_view;
 };
 
 } // namespace graphics

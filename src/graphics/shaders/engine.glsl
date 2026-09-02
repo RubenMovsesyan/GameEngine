@@ -406,9 +406,10 @@ void main() {
     vec4 world = sky_inverse_view_projection * ndc;
     vec3 dir = normalize(world.xyz / world.w - sky_view_position.xyz);
 
-    float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 colour = mix(ground.rgb, zenith_intensity.rgb, t) * zenith_intensity.a;
-    out_color = vec4(colour, 1.0);
+    // ground/zenith are linear radiance in the lights' units; the tonemap applies exposure.
+    // The smoothstep band is tuned -- see roadmap-issue-sky-calibration.
+    vec3 colour = mix(ground.rgb, zenith_intensity.rgb, smoothstep(-0.05, 0.25, dir.y));
+    out_color = vec4(colour * zenith_intensity.a, 1.0);
 }
 @end
 

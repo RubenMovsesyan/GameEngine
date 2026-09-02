@@ -4,9 +4,6 @@
 [submodule "external/devtools"]
 	path = external/devtools
 	url = git@github.com:RubenMovsesyan/devtools.git
-[submodule "external/NVRHI"]
-	path = external/NVRHI
-	url = https://github.com/NVIDIA-RTX/NVRHI.git
 [submodule "external/Eigen"]
 	path = external/Eigen
 	url = https://gitlab.com/libeigen/eigen.git

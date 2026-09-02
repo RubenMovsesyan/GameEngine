@@ -1,89 +1,95 @@
 # GameEngine
 
-A game engine built as independent modules. Each module is a top-level directory that
-compiles to its own static library; `sandbox/` is the executable that exercises them.
-
-Currently: `gpu/` and `graphics/`.
+A game engine built as independent modules under `src/`, each its own namespace and
+directory; `sandbox/` holds the executables that exercise them.
 
 ## Layout
 
 ```
-buildcpp/   git submodule, the build system (build.h)
-build.c     the build script, C23
-common/     shared across modules (see common/AGENTS.md)
+buildcpp/   git submodule, the build system (build.hpp)
+build.cpp   the build script, C++23
+external/   third-party dependencies, one submodule per directory (see external/AGENTS.md)
 docs/       system overview + the stylesheet every module's docs share
-gpu/        Vulkan device, queues, commands, sync, swapchain, buffers
-graphics/   the graphics engine: window (GLFW) and renderer. links gpu
-sandbox/    test executable
+notes/      working notes on in-flight or recently finished work
+src/gpu/    the sokol_gfx context, resource handles, and the native-handle seam
+src/graphics/  the graphics engine: renderer, meshes, materials, lights, shaders
+src/scene/  glTF loading and the scene/model tree
+src/app/    window, input, frame loop (sokol_app)
+src/utils/  small shared helpers
+sandbox/    test executables
 ```
 
-`gpu/` is a library of RAII value types, not a framework — no base class to subclass, no
-singleton, no `shared_ptr` graph. `graphics/` drives it and calls into it; `gpu/` never
-calls back. Two rules keep the split real, and a future `physics/` depends on both:
+`src/gpu/` is a thin ownership layer over sokol, not a framework — no base class to
+subclass, no singleton, no `shared_ptr` graph beyond the resource handles themselves.
+`src/graphics/` drives it and calls into it; `src/gpu/` never calls back.
 
-- **`gpu/` never includes GLFW, and never mentions `graphics/`.** The window layer passes
-  it a `std::span<const char* const>` of instance extensions and a bare `vk::SurfaceKHR`.
-- **No virtual functions in either module.** The extension point is that you record
-  whatever commands you want onto a `vk::raii::CommandBuffer&`.
+- **No virtual functions in `gpu/` or `graphics/`.** The extension point is that you
+  record whatever passes you want against `sg_*` directly.
+- **`src/gpu/sokol.cpp` is the only translation unit that defines `SOKOL_IMPL`.** It also
+  picks the backend (`SOKOL_VULKAN`) and sets `SOKOL_NO_ENTRY` so we keep our own `main`.
+  Note the include order inside it: `sokol_app.h` must come first, because it is the header
+  that defines `VK_USE_PLATFORM_XLIB_KHR` before pulling in `<vulkan/vulkan.h>`.
 
-Check both after touching `gpu/`:
+**sokol_gfx is single-threaded and sokol_app owns the frame loop.** Every `sg_*` call must
+happen on the thread that runs the `app::Application` callbacks. `app::Worker` exists for
+CPU work only — a worker must never touch the GPU. Work that needs both (texture loading)
+decodes on a worker and uploads from the frame callback; see `graphics::Texture::drainUploads`.
 
-```sh
-grep -rn 'GLFW\|glfw\|graphics/' gpu/     # only the comment in gpu/vk.hpp
-nm -uC .build/libgpu.a | grep -i glfw     # empty
-```
-
-A module is laid out as:
-
-```
-<module>/include/<module>/   public API, the only headers other modules may include
-<module>/src/                implementation and private headers
-<module>/docs/               how this module works
-```
-
-**Every module gets a `docs/` directory** — create it when you create the module. It holds
-an HTML page (dark mode) explaining how that module works, with real code examples pulled
-from the module itself. Link the shared stylesheet at `../../docs/style.css` rather than
-restyling; add more pages under `docs/` when one topic deserves its own. Start from
-`docs/index.html` at the repo root, which is the system overview and links every module.
-Update the module's page in the same change as the code — a docs page that describes an
-older design is worse than none.
+**Every module gets a `docs/` page** — an HTML page (dark mode) explaining how that module
+works, with real code examples pulled from the module itself. Link the shared stylesheet at
+`../style.css` rather than restyling. Start from `docs/index.html`, which is the system
+overview and links every page. Update a module's page in the same change as the code — a
+docs page that describes an older design is worse than none.
 
 ## Building
 
-Needs `vulkan-headers`, `vulkan-validation-layers`, `vulkan-memory-allocator`, `glfw`.
+Needs `vulkan-headers`, `vulkan-validation-layers`, and X11 development headers
+(`libx11`, `libxi`, `libxcursor`).
 
 ```sh
-clang -std=c23 build.c -o build   # once, to bootstrap
-./build                           # every time after
+clang++ -std=c++23 build.cpp -o build   # once, to bootstrap
+./build                                 # every time after
+./run --model <path>.glb                # build, then launch the sandbox
 ```
 
-`./build` rebuilds itself when `build.c` or `buildcpp/build.h` changes, and writes
+`./build` rebuilds itself when `build.cpp` or `buildcpp/build.hpp` changes, and writes
 `compile_commands.json`. Artifacts land in `.build/`.
 
-Adding a source file means adding a `buildAddObject` line to `build.c` — there is no
+Adding a source file means adding a line to `engine_sources` in `build.cpp` — there is no
 globbing.
+
+## Shaders
+
+All shader programs live in one file, `src/graphics/shaders/engine.glsl`, written in
+sokol-shdc's annotated GLSL. `build.cpp` runs `external/sokol-tools-bin/bin/linux/sokol-shdc`
+over it to generate `.build/shaders/engine.glsl.h`, which carries the SPIR-V for every
+program plus generated uniform-block structs and bind-slot constants. `renderer.cpp` is the
+only file that includes it.
+
+Bind slots are three separate spaces, each declared explicitly in the GLSL:
+
+- `layout(binding=N) uniform { ... }`, N in 0..7 → `sg_apply_uniforms(N, ...)`
+- textures and storage buffers, N in 0..31 → `sg_bindings.views[N]`
+- `layout(binding=N) uniform sampler`, N in 0..11 → `sg_bindings.samplers[N]`
+
+Resources sharing a name across programs must share a binding. Use the generated
+`UB_*`, `VIEW_*`, `SMP_*` and `ATTR_*` constants rather than writing slot numbers by hand.
 
 ## Choices
 
-- C++23, clang. The build script is C23 because `build.h` is a C header.
-- Vulkan only. No render-backend abstraction until there is a second backend.
-- GLFW for windowing and input.
-- Linux only. No platform `#ifdef`s until there is a second platform.
-- Shaders will be compiled by `build.c` with `glslc -mfmt=c` and embedded as headers,
-  so the binary carries its own SPIR-V. Not wired up yet — `graphics/shaders/` is empty.
+- C++23, clang. The build script is C++23 because `build.hpp` is a C++ header.
+- sokol_gfx for rendering, sokol_app for windowing and input. Vulkan backend on Linux;
+  the same code targets Metal, D3D11, GL and WebGPU without changes.
+- Eigen for math. Column-major, matching GLSL.
+- Deferred shading: G-buffer → lighting → sky → tonemap → FXAA, with a directional
+  cascaded shadow-map pass ahead of the G-buffer.
 
 ## Gotchas
 
+- `SG_RANGE(x)` expands to a temporary in C++, so it cannot be passed by address. Name the
+  range first, or use the `applyUniforms` helper in `renderer.cpp`.
+- sokol's native-handle accessors (`sg_gl_query_buffer_info` and friends) exist for every
+  backend **except** Vulkan. `gpu::nativeHandle()` returns `std::nullopt` there. See
+  `notes/sokol-migration.md` before wiring CUDA/SYCL interop.
 - A build step's output must not share a name with a top-level source directory. Object
-  files mirror source paths into `.build/`, so `sandbox/src/main.cpp` makes `.build/sandbox`
-  a directory — hence the executable is `sandbox_app`.
-- Use `newBuild`, not `newBuildWithCompiler`. The build script rebuilds itself with the
-  default compiler, which has to be a C compiler; set `clang++` per step with
-  `buildStepSetCompiler`.
-- Compilation flags are per-step, not inherited. `cxxStep()` in `build.c` applies the
-  shared ones so `-DVULKAN_HPP_NO_CONSTRUCTORS` can never differ between steps — it
-  changes `vk::` class definitions, so a mismatch would be an ODR violation.
-- Never call a method on a bare `vk::Device` / `vk::CommandBuffer` / `vk::Queue`. Those
-  route through a second, static dispatcher. `vk::raii::` types carry their own. Bare
-  handles are passed, never called on.
+  files mirror source paths into `.build/`.

@@ -61,6 +61,24 @@ change in the migration:
 - `gpu::Device::lockSubmit()`, its recursive submit mutex, and `Renderer::m_frame_lock` all deleted —
   they existed only to serialise cross-thread submits that can no longer happen.
 
+## Things that changed shape, not just API
+
+- **`PostProcessChain` is gone**, folded into `Renderer`. It existed to register arbitrary
+  SPIR-V blobs with opaque push-constant blobs at runtime. Under sokol-shdc each pass has a
+  generated, typed `sg_shader_desc` and its own uniform struct, so a generic chain could no
+  longer be generic -- it would have needed a `std::function` per pass to apply uniforms.
+  Two fixed passes (tonemap, FXAA) inline in `Renderer::endFrame` are smaller and clearer.
+- **`graphics::Surface` is gone.** It bundled a texture, a framebuffer and an extent; sokol's
+  `sg_image` + `sg_view` + `sg_attachments` cover it. `RenderTarget` in `renderer.hpp` is the
+  replacement and additionally carries the sampling view.
+- **`Material` no longer owns GPU memory.** Its factors were a 32-byte per-material storage
+  buffer; they are per-draw constants, so they moved into the G-buffer uniform block.
+- **Mouse delta is now accumulated from `sapp_event.mouse_dx/dy`** rather than derived from
+  absolute cursor positions. sokol_app documents `mouse_x/y` as invalid while the mouse is
+  locked; the old GLFW code only worked because `CURSOR_DISABLED` fakes an unbounded cursor.
+- **Frames-in-flight pacing deleted.** The `nvrhi::EventQuery` ring and `kFramesInFlight`
+  are gone; sokol paces internally at `SG_NUM_INFLIGHT_FRAMES = 2`, the same depth.
+
 ## Known losses
 
 Recorded, not solved. None of these are used by the engine today.
@@ -92,3 +110,21 @@ exposes one and `std::nullopt` on Vulkan. When interop actually gets wired, the 
    the storage buffers the light buffer uses.
 
 Neither is urgent until there is compute work to hand off.
+
+## Still to verify after the port
+
+The migration is a mechanical port, so the things most likely to be wrong are the ones where
+NVRHI and sokol disagree about conventions rather than about API:
+
+- **Clip-space Y direction.** `reconstructWorldPosition` and `sampleCascade` both negate or
+  flip Y with comments referring to "the NVRHI viewport flip". sokol reports its convention
+  in `sg_features.origin_top_left` (true on Vulkan/D3D/Metal, false on GL). If the lighting
+  is mirrored vertically or the shadows land in the wrong place, this is the first suspect.
+- **sRGB handling.** The albedo target is `SG_PIXELFORMAT_SRGB8A8` and the swapchain is
+  whatever sokol_app picked; a double-encode or a missing one shows up as a washed-out or
+  overly dark image.
+- **Depth sampled as a texture.** The G-buffer depth is bound with `unfilterable_float` and a
+  non-filtering sampler so it can be read as raw depth rather than compared. Validation will
+  complain here first if the pairing is wrong.
+- **Exposure and ambient calibration.** Both carry over unchanged (`~0.003` exposure, ambient
+  at 300) but they were tuned against the old pipeline's sRGB and tonemap behaviour.

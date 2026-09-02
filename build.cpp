@@ -33,28 +33,22 @@ int main(int argc, char** argv) {
 	engine.addLink(Link<Dependency>("dl"));
 	engine.addLink(Link<Dependency>("m"));
 
-	// Shaders -> SPIR-V embedded as C headers, so the binary carries its own bytecode.
-	// Real Tasks (not raw exec()'d Commands) so C++ files that #include the generated
-	// headers below get tracked as depending on them and rebuild when a shader changes.
-	const std::vector<std::string> shader_names = {
-	    "gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag",
-	    "sky.frag", "fxaa.frag", "shadow_depth.vert", "shadow_depth_instanced.vert", "shadow_depth.frag", "shadow_debug.frag"};
+	// Shaders -> a single sokol-shdc generated header carrying the SPIR-V for every program,
+	// so the binary keeps shipping its own bytecode. A real Task (not a raw exec()'d Command),
+	// renderer.cpp is tracked as depending on it and rebuilds when a shader changes.
+	const std::string shader_source = "src/graphics/shaders/engine.glsl";
+	const std::string shader_header = ".build/shaders/engine.glsl.h";
 
 	// A Command Output is always considered stale (see Output::isStale), so guard the
-	// glslc invocation ourselves: only add the Task when the .h is missing or older than
-	// its shader source. Skipped shaders just don't get a Task -- the depends_on() wiring
-	// below tolerates a missing entry.
-	auto shaderStale = [](const std::string& name) {
-	    std::filesystem::path src = "src/graphics/shaders/" + name;
-	    std::filesystem::path hdr = ".build/shaders/" + name + ".h";
-	    return !std::filesystem::exists(hdr) || std::filesystem::last_write_time(src) > std::filesystem::last_write_time(hdr);
-	};
+	// sokol-shdc invocation ourselves: only add the Task when the header is missing or older
+	// than its source.
+	const bool shader_stale = !std::filesystem::exists(shader_header) ||
+	                          std::filesystem::last_write_time(shader_source) > std::filesystem::last_write_time(shader_header);
 
-	std::unordered_map<std::string, std::reference_wrapper<Task>> shader_tasks;
-	for (const std::string& name : shader_names) {
-	    if (!shaderStale(name)) continue;
-	    Task& task = engine.addTask(Output(Command({"glslc", "-mfmt=c", "-o", ".build/shaders/" + name + ".h", "src/graphics/shaders/" + name})));
-	    shader_tasks.emplace(name, task);
+	Task* shader_task = nullptr;
+	if (shader_stale) {
+	    shader_task = &engine.addTask(Output(Command({"external/sokol-tools-bin/bin/linux/sokol-shdc", "-i", shader_source, "-o",
+	                                                  shader_header, "-l", "spirv_vk", "-f", "sokol"})));
 	}
 
 	const std::vector<std::string> engine_sources = {
@@ -69,6 +63,11 @@ int main(int argc, char** argv) {
 	    "src/graphics/texture.cpp",
 	    "src/graphics/material.cpp",
 	    "src/graphics/light_manager.cpp",
+	    "src/graphics/renderer.cpp",
+
+	    "src/scene/model.cpp",
+	    "src/scene/scene.cpp",
+	    "src/scene/gltf_loader.cpp",
 
 
 	    "src/app/application.cpp",
@@ -81,14 +80,8 @@ int main(int argc, char** argv) {
 	std::vector<std::reference_wrapper<Task>> objects;
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
-	    if (source == "src/graphics/renderer.cpp") {
-	        for (const std::string& name : shader_names) {
-	            auto it = shader_tasks.find(name);
-	            if (it != shader_tasks.end()) task.depends_on(it->second);
-	        }
-	    } else if (source == "src/graphics/post_process_chain.cpp") {
-	        auto it = shader_tasks.find("fullscreen_triangle.vert");
-	        if (it != shader_tasks.end()) task.depends_on(it->second);
+	    if (source == "src/graphics/renderer.cpp" && shader_task != nullptr) {
+	        task.depends_on(*shader_task);
 	    }
 	    objects.push_back(task);
 	}

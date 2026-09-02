@@ -3,30 +3,28 @@
 
 #include <app/application.hpp>
 #include <app/cli_parser.hpp>
-#include <gpu/handle.hpp>
 #include <graphics/camera.hpp>
 #include <graphics/light_manager.hpp>
-#include <graphics/material.hpp>
-#include <graphics/mesh.hpp>
-#include <graphics/texture.hpp>
+#include <graphics/renderer.hpp>
+#include <scene/gltf_loader.hpp>
 
 #include <sokol_app.h>
 
-#include <sokol_gfx.h>
-#include <sokol_glue.h>
-
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <optional>
+#include <variant>
 
 namespace {
 
 constexpr f32 kMoveSpeed = 5.0f;        // units/sec
 constexpr f32 kLookSensitivity = 0.15f; // radians per pixel of mouse delta, per second
 constexpr f32 kPitchLimit = 1.5533f;    // ~89 degrees; avoids forward/world_up going parallel
+
+constexpr u32 kGridSize = 10;
+constexpr f32 kGridSpacing = 3.0f;
 
 const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 
@@ -35,8 +33,15 @@ const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 struct Sandbox {
         std::filesystem::path model_path;
 
-        // Constructed in init(), once the window size is known.
+        // All constructed in init(), once the GPU and the window size are up.
+        std::optional<graphics::Renderer> renderer;
+        std::optional<scene::Scene> scene;
+        std::optional<scene::Scene> standalone_scene;
+        std::optional<graphics::LightManager> lights;
         std::optional<graphics::Camera> camera;
+
+        Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
+        Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
 
         // yaw=0, pitch=0 matches the camera's initial direction (0,0,-1), so mouse-look
         // starts from exactly where the camera is already pointed.
@@ -46,39 +51,42 @@ struct Sandbox {
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 };
 
-// TEMPORARY (phase 3): nothing renders yet, so exercise the ported resource layer here to
-// prove sokol accepts the descs. Deleted once the renderer comes back.
-void smokeTestResources() {
-    const graphics::Texture texture = graphics::Texture::createPlaceholder();
-    const bool texture_ok = sg_query_image_state(texture.image()) == SG_RESOURCESTATE_VALID;
-
-    const std::array<graphics::Vertex, 3> vertices{};
-    const std::array<u32, 3> indices{0, 1, 2};
-    const graphics::StandardMesh mesh = graphics::StandardMesh::create(vertices, indices);
-    const bool mesh_ok = sg_query_buffer_state(mesh.vertexBuffer()) == SG_RESOURCESTATE_VALID &&
-                         sg_query_buffer_state(mesh.indexBuffer()) == SG_RESOURCESTATE_VALID;
-
-    graphics::LightManager lights;
-    const graphics::Light light{
-        .type = graphics::LightType::Directional,
-        .color = {1.0f, 1.0f, 1.0f},
-        .intensity = 1.0f,
-        .direction = {0.0f, -1.0f, 0.0f},
-        .casts_shadows = true,
-    };
-    lights.add(light);
-    lights.build();
-    const bool lights_ok = sg_query_view_state(lights.view()) == SG_RESOURCESTATE_VALID;
-
-    RLOG(LL_INFO, "Resource smoke test -- texture: %d, mesh: %d, light storage buffer: %d", texture_ok, mesh_ok, lights_ok);
-    RLOG(LL_INFO, "Native buffer handle available: %d (0 is expected on the Vulkan backend)",
-         gpu::nativeHandle(mesh.vertexBuffer()).has_value());
-}
-
 void init(app::Application& app, Sandbox& sandbox) {
-    RLOG(LL_INFO, "Sokol backend up, model: " + sandbox.model_path.string());
+    sandbox.renderer.emplace();
 
-    smokeTestResources();
+    sandbox.scene = scene::loadGltf(sandbox.model_path);
+    RLOG(LL_DEBUG, sandbox.scene->display());
+
+    // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane.
+    for (scene::Model& model : sandbox.scene->mutableModels()) {
+        for (scene::ModelPart& part : model.mutableParts()) {
+            part.convertToInstanced();
+            graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
+            for (u32 x = 0; x < kGridSize; x++) {
+                for (u32 z = 0; z < kGridSize; z++) {
+                    Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+                    transform(0, 3) = (static_cast<f32>(x) - (kGridSize - 1) / 2.0f) * kGridSpacing;
+                    transform(2, 3) = (static_cast<f32>(z) - (kGridSize - 1) / 2.0f) * kGridSpacing;
+                    instanced.addInstance(transform);
+                }
+            }
+            instanced.uploadIfDirty(); // must run before the frame loop -- see Renderer docs
+        }
+    }
+
+    // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
+    // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
+    sandbox.standalone_scene = scene::loadGltf(sandbox.model_path);
+    sandbox.standalone_transform(1, 3) = 10.0f;
+
+    sandbox.lights.emplace();
+    for (const graphics::Light& light : sandbox.scene->lights()) {
+        RLOG(LL_DEBUG, "Added light: " + light.display());
+        sandbox.lights->add(light);
+    }
+    sandbox.lights->build();
+
+    sandbox.renderer->setSkybox(graphics::Skybox{}); // calibrated default gradient sky
 
     const f32 aspect = static_cast<f32>(app.width()) / static_cast<f32>(app.height());
     sandbox.camera.emplace(1.0472f, aspect, 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp);
@@ -132,18 +140,21 @@ void frame(app::Application& app, Sandbox& sandbox) {
     if (app.input().isKeyPressed(SAPP_KEYCODE_ESCAPE)) {
         app.toggleCursorCapture();
     }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F1)) {
+        sandbox.renderer->toggleShadowMapDebug();
+    }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F2)) {
+        sandbox.renderer->cycleShadowMapDebugLayer();
+    }
 
     flyCamera(app, sandbox, dt);
 
-    // Nothing is rendered yet -- the scene and renderer come back in the next phases.
-    sg_pass pass = {};
-    pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
-    pass.action.colors[0].clear_value = {0.15f, 0.16f, 0.18f, 1.0f};
-    pass.swapchain = sglue_swapchain();
-
-    sg_begin_pass(&pass);
-    sg_end_pass();
-    sg_commit();
+    graphics::Renderer& renderer = *sandbox.renderer;
+    renderer.beginFrame();
+    renderer.setLights(*sandbox.lights);
+    sandbox.scene->render(renderer, sandbox.world_transform, *sandbox.camera);
+    sandbox.standalone_scene->render(renderer, sandbox.standalone_transform, *sandbox.camera);
+    renderer.endFrame();
 }
 
 } // namespace

@@ -31,6 +31,8 @@ class Texture {
         static void drainUploads();
 
         sg_image image() const;
+        // Texture view, bound straight into sg_bindings.views[].
+        sg_view view() const;
         u32 width() const;
         u32 height() const;
         bool isReady() const; // false while still showing the placeholder
@@ -39,6 +41,7 @@ class Texture {
         struct State {
             std::shared_mutex mutex;
             gpu::ImageHandle image;
+            gpu::ViewHandle view;
             u32 width = 0;
             u32 height = 0;
             bool ready = false;

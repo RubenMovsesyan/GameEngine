@@ -9,7 +9,12 @@ namespace graphics {
 
 namespace {
 
-gpu::ImageHandle uploadPixels(std::span<const u8> pixels, u32 width, u32 height, sg_pixel_format format) {
+struct Uploaded {
+    gpu::ImageHandle image;
+    gpu::ViewHandle view;
+};
+
+Uploaded uploadPixels(std::span<const u8> pixels, u32 width, u32 height, sg_pixel_format format) {
     sg_image_desc desc = {};
     desc.width = static_cast<int>(width);
     desc.height = static_cast<int>(height);
@@ -17,7 +22,14 @@ gpu::ImageHandle uploadPixels(std::span<const u8> pixels, u32 width, u32 height,
     desc.data.mip_levels[0] = sg_range{pixels.data(), pixels.size_bytes()};
     desc.label = "texture";
 
-    return gpu::makeImage(desc);
+    Uploaded uploaded;
+    uploaded.image = gpu::makeImage(desc);
+
+    sg_view_desc view_desc = {};
+    view_desc.texture.image = *uploaded.image;
+    view_desc.label = "texture";
+    uploaded.view = gpu::makeView(view_desc);
+    return uploaded;
 }
 
 // Decoded on a worker thread, uploaded on the sokol_gfx thread by drainUploads().
@@ -35,8 +47,11 @@ std::vector<PendingUpload> g_pending;
 Texture::Texture() : m_state(std::make_shared<State>()) {}
 
 Texture Texture::create(std::span<const u8> pixels, u32 width, u32 height, sg_pixel_format format) {
+    Uploaded uploaded = uploadPixels(pixels, width, height, format);
+
     Texture texture;
-    texture.m_state->image = uploadPixels(pixels, width, height, format);
+    texture.m_state->image = std::move(uploaded.image);
+    texture.m_state->view = std::move(uploaded.view);
     texture.m_state->width = width;
     texture.m_state->height = height;
     texture.m_state->ready = true;
@@ -79,11 +94,12 @@ void Texture::drainUploads() {
     }
 
     for (PendingUpload& upload : ready) {
-        gpu::ImageHandle image = uploadPixels(upload.decoded.pixels, upload.decoded.width, upload.decoded.height, upload.format);
+        Uploaded uploaded = uploadPixels(upload.decoded.pixels, upload.decoded.width, upload.decoded.height, upload.format);
 
         State& state = *static_cast<State*>(upload.state.get());
         std::unique_lock lock(state.mutex);
-        state.image = std::move(image);
+        state.image = std::move(uploaded.image);
+        state.view = std::move(uploaded.view);
         state.width = upload.decoded.width;
         state.height = upload.decoded.height;
         state.ready = true;
@@ -93,6 +109,11 @@ void Texture::drainUploads() {
 sg_image Texture::image() const {
     std::shared_lock lock(m_state->mutex);
     return m_state->image ? *m_state->image : sg_image{};
+}
+
+sg_view Texture::view() const {
+    std::shared_lock lock(m_state->mutex);
+    return m_state->view ? *m_state->view : sg_view{};
 }
 
 u32 Texture::width() const {

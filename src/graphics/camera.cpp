@@ -11,6 +11,19 @@ Camera::Camera(
     : m_fov_y(fov_y_radians), m_aspect_ratio(aspect_ratio), m_near_plane(near_plane), m_far_plane(far_plane),
       m_position(position), m_direction(direction), m_up(up), m_projection(Eigen::Matrix4f::Zero()),
       m_inverse_projection(Eigen::Matrix4f::Zero()) {
+    rebuildProjection();
+}
+
+void Camera::setAspectRatio(f32 aspect_ratio) {
+    if (aspect_ratio == m_aspect_ratio || aspect_ratio <= 0.0f) {
+        return;
+    }
+    m_aspect_ratio = aspect_ratio;
+    rebuildProjection();
+    m_dirty = true;
+}
+
+void Camera::rebuildProjection() {
     // Vulkan clip space, depth [0, 1]. No Y-flip on row 1: sokol's Vulkan backend rasterises
     // through a negative-height viewport (_sg_vk_begin_pass), which flips Y for us -- so this
     // stays GL-style and the shaders undo the flip when they reconstruct from screen uv.

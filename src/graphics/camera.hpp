@@ -26,6 +26,10 @@ class Camera {
         const Eigen::Vector3f& direction() const { return m_direction; }
         f32 nearPlane() const { return m_near_plane; }
         f32 farPlane() const { return m_far_plane; }
+        f32 aspectRatio() const { return m_aspect_ratio; }
+
+        // Rebuilds the projection; call when the window is resized.
+        void setAspectRatio(f32);
 
         // Both unconditionally mark the cached matrices dirty.
         Eigen::Vector3f* mutablePosition() {
@@ -38,6 +42,7 @@ class Camera {
         }
 
     private:
+        void rebuildProjection();
         void rebuildIfDirty() const;
 
         f32 m_fov_y;

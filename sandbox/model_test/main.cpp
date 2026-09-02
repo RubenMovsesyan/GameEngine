@@ -137,6 +137,11 @@ void frame(app::Application& app, Sandbox& sandbox) {
     const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
     sandbox.last_time = now;
 
+    // The window is resizable, so keep the projection matching the framebuffer.
+    if (app.height() > 0) {
+        sandbox.camera->setAspectRatio(static_cast<f32>(app.width()) / static_cast<f32>(app.height()));
+    }
+
     if (app.input().isKeyPressed(SAPP_KEYCODE_ESCAPE)) {
         app.toggleCursorCapture();
     }

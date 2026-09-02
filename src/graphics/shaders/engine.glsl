@@ -41,7 +41,11 @@ vec3 octDecode(vec2 f) {
 out vec2 v_uv;
 void main() {
     v_uv = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
-    gl_Position = vec4(v_uv * 2.0 - 1.0, 0.0, 1.0);
+    // sokol's Vulkan backend rasterises through a negative-height viewport, so clip +Y is the
+    // top of the screen while texture v=0 is the top of the image. Emitting 1 - 2v (rather than
+    // 2v - 1) keeps v_uv a top-left-origin screen uv, which makes a fullscreen pass an identity
+    // copy -- otherwise every one of them flips, and the odd number of them lands inverted.
+    gl_Position = vec4(v_uv.x * 2.0 - 1.0, 1.0 - v_uv.y * 2.0, 0.0, 1.0);
 }
 @end
 
@@ -224,7 +228,7 @@ const float kPi = 3.14159265359;
 const vec3 kDielectricF0 = vec3(0.04); // glTF's fixed non-metal reflectance
 
 vec3 reconstructWorldPosition(vec2 uv, float depth) {
-    vec4 ndc = vec4(uv.x * 2.0 - 1.0, uv.y * 2.0 - 1.0, depth, 1.0);
+    vec4 ndc = vec4(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0); // Y negated: the viewport is flipped
     vec4 world = inverse_view_projection * ndc;
     return world.xyz / world.w;
 }
@@ -235,6 +239,7 @@ float sampleCascade(int cascade, vec3 world_pos, vec3 N) {
     lp.xyz /= lp.w;
 
     vec2 uv = lp.xy * 0.5 + 0.5;
+    uv.y = 1.0 - uv.y; // undo the viewport Y-flip, matching reconstructWorldPosition
 
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || lp.z > 1.0) {
         return 1.0;
@@ -397,7 +402,7 @@ void main() {
         discard;
     }
 
-    vec4 ndc = vec4(v_uv.x * 2.0 - 1.0, v_uv.y * 2.0 - 1.0, 1.0, 1.0);
+    vec4 ndc = vec4(v_uv.x * 2.0 - 1.0, -(v_uv.y * 2.0 - 1.0), 1.0, 1.0);
     vec4 world = sky_inverse_view_projection * ndc;
     vec3 dir = normalize(world.xyz / world.w - sky_view_position.xyz);
 

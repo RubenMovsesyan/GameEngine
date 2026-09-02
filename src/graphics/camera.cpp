@@ -11,22 +11,22 @@ Camera::Camera(
     : m_fov_y(fov_y_radians), m_aspect_ratio(aspect_ratio), m_near_plane(near_plane), m_far_plane(far_plane),
       m_position(position), m_direction(direction), m_up(up), m_projection(Eigen::Matrix4f::Zero()),
       m_inverse_projection(Eigen::Matrix4f::Zero()) {
-    // Vulkan clip space: depth [0, 1] and +Y points DOWN in NDC, so row 1 is negated. NVRHI used
-    // to get this by rasterising through a negative-height viewport instead; sokol does not, so the
-    // flip has to live in the projection. Shaders therefore reconstruct from raw NDC, no negation.
+    // Vulkan clip space, depth [0, 1]. No Y-flip on row 1: sokol's Vulkan backend rasterises
+    // through a negative-height viewport (_sg_vk_begin_pass), which flips Y for us -- so this
+    // stays GL-style and the shaders undo the flip when they reconstruct from screen uv.
     f32 f = 1.0f / std::tan(m_fov_y / 2.0f);
     f32 a = m_far_plane / (m_near_plane - m_far_plane);
     f32 b = (m_near_plane * m_far_plane) / (m_near_plane - m_far_plane);
 
     m_projection(0, 0) = f / m_aspect_ratio;
-    m_projection(1, 1) = -f;
+    m_projection(1, 1) = f;
     m_projection(2, 2) = a;
     m_projection(2, 3) = b;
     m_projection(3, 2) = -1.0f;
 
     // Closed-form inverse of the sparse projection matrix above -- see camera plan notes.
     m_inverse_projection(0, 0) = m_aspect_ratio / f;
-    m_inverse_projection(1, 1) = -1.0f / f;
+    m_inverse_projection(1, 1) = 1.0f / f;
     m_inverse_projection(2, 3) = -1.0f;
     m_inverse_projection(3, 2) = 1.0f / b;
     m_inverse_projection(3, 3) = a / b;

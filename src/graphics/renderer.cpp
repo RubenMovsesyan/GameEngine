@@ -223,9 +223,7 @@ void Renderer::buildPipelines() {
     setMeshLayout(gbuffer.layout);
     gbuffer.index_type = SG_INDEXTYPE_UINT32;
     gbuffer.cull_mode = SG_CULLMODE_BACK;
-    // The projection negates Y (Vulkan NDC is Y-down), which reverses screen-space winding --
-    // so a glTF counter-clockwise front face rasterises clockwise here.
-    gbuffer.face_winding = SG_FACEWINDING_CW;
+    gbuffer.face_winding = SG_FACEWINDING_CCW;
     gbuffer.depth.pixel_format = kDepthFormat;
     gbuffer.depth.compare = SG_COMPAREFUNC_LESS;
     gbuffer.depth.write_enabled = true;
@@ -248,7 +246,7 @@ void Renderer::buildPipelines() {
     setShadowMeshLayout(shadow.layout);
     shadow.index_type = SG_INDEXTYPE_UINT32;
     shadow.cull_mode = SG_CULLMODE_FRONT;
-    shadow.face_winding = SG_FACEWINDING_CW; // same Y-flip reasoning as the G-buffer pipeline
+    shadow.face_winding = SG_FACEWINDING_CCW;
     shadow.depth.pixel_format = kDepthFormat;
     shadow.depth.compare = SG_COMPAREFUNC_LESS;
     shadow.depth.write_enabled = true;

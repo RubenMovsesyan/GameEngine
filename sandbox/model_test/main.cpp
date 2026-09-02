@@ -47,6 +47,13 @@ struct Sandbox {
         Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
         Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
 
+        // F5 snapshots the camera's frustum corners here for debug-draw. Drawing the LIVE
+        // camera's own frustum through its own view-projection is degenerate -- it's always
+        // exactly the NDC unit cube, so it can't respond to rotation and flickers at the
+        // near-plane clip boundary. A frozen snapshot, viewed from the still-moving live
+        // camera, is a real external vantage on a real static shape.
+        std::optional<std::array<Eigen::Vector3f, 8>> frozen_frustum;
+
         // yaw=0, pitch=0 matches the camera's initial direction (0,0,-1), so mouse-look
         // starts from exactly where the camera is already pointed.
         f32 yaw = 0.0f;
@@ -190,6 +197,9 @@ void frame(app::Application& app, Sandbox& sandbox) {
             app.setCursorCaptured(false);
         }
     }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F5)) {
+        sandbox.frozen_frustum = sandbox.camera->frustum().corners();
+    }
 
     flyCamera(app, sandbox, dt);
 
@@ -210,11 +220,11 @@ void frame(app::Application& app, Sandbox& sandbox) {
             renderer.debugDraw().aabb(world_bounds, Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f));
         }
     }
-    // Traces the live camera's own frustum -- so it draws along the screen edges, not a
-    // separate shape. A detached debug vantage needs a second Camera; not worth it just
-    // to exercise this call. Confirms the API and wiring; roadmap-nice-debug-draw can
-    // upgrade this once something else (e.g. a light) wants a real off-camera frustum.
-    renderer.debugDraw().frustum(frustum.corners(), Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
+    // F5 freezes a snapshot (see the Sandbox field's comment for why the live frustum is
+    // never drawn directly); nothing draws until the first freeze.
+    if (sandbox.frozen_frustum) {
+        renderer.debugDraw().frustum(*sandbox.frozen_frustum, Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
+    }
 
     renderer.endFrame([&]() {
         app.debugUI().draw(app.width(), app.height(), dt, sapp_dpi_scale(), [&]() {

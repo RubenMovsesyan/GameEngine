@@ -3,15 +3,19 @@
 namespace graphics {
 
 DebugDraw::DebugDraw() {
+    // color_format and depth_format both left zero-initialized (the "unset" sentinel,
+    // distinct from the real SG_PIXELFORMAT_NONE value): sokol_gl copies them verbatim
+    // into its pipeline desc, which only lets sg_make_pipeline resolve them against the
+    // swapchain's actual formats when they're left unset -- the same default every
+    // fullscreen pipeline in Renderer already relies on. Setting depth_format explicitly
+    // to NONE here previously mismatched the swapchain's real depth attachment and
+    // tripped VALIDATE_APIP_SWAPCHAIN_DEPTH_FORMAT. The "no depth test" behaviour this
+    // pass wants comes from sokol_gl's own default depth.compare = SG_COMPAREFUNC_ALWAYS,
+    // not from having no depth format at all.
     sgl_desc_t desc = {};
-    // color_format left at SG_PIXELFORMAT_NONE: sgl_make_context passes it straight
-    // through to sg_make_pipeline, which resolves it against the swapchain's format --
-    // the same default every fullscreen pipeline in Renderer already relies on.
-    desc.depth_format = SG_PIXELFORMAT_NONE; // overlay only, no depth test
     sgl_setup(&desc);
 
     sgl_context_desc_t ctx_desc = {};
-    ctx_desc.depth_format = SG_PIXELFORMAT_NONE;
     m_context = sgl_make_context(&ctx_desc);
 }
 

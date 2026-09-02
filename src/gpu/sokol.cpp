@@ -23,3 +23,10 @@
 
 #define SOKOL_GL_IMPL
 #include <sokol_gl.h>
+
+// sokol_imgui.h's C++ implementation calls straight into Dear ImGui's C++ API, so imgui.h
+// must be visible before the impl block, same as sokol_gfx.h has to precede sokol_gl.h.
+#include <imgui.h>
+
+#define SOKOL_IMGUI_IMPL
+#include <sokol_imgui.h>

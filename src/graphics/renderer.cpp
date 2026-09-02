@@ -510,7 +510,7 @@ void Renderer::recordGBufferPass() {
     sg_end_pass();
 }
 
-void Renderer::endFrame() {
+void Renderer::endFrame(const std::function<void()>& overlay) {
     // Fitted here, not in beginFrame(): needs m_sun_direction, which setLights() -- called
     // after beginFrame() by contract -- is what sets. m_pending_camera is non-owning and
     // only valid for this frame; beginFrame() must have run first to set it.
@@ -655,6 +655,11 @@ void Renderer::endFrame() {
         // Unlit overlay, no depth test -- see graphics::DebugDraw. No-op while disabled.
         m_debug_draw.begin(m_view_projection);
         m_debug_draw.render();
+
+        // Opaque hook (see endFrame's declaration) -- Renderer never knows this is a debug UI.
+        if (overlay) {
+            overlay();
+        }
 
         sg_end_pass();
     }

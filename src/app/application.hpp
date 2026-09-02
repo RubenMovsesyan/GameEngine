@@ -1,10 +1,12 @@
 #pragma once
 
+#include <app/debug_ui.hpp>
 #include <app/input_state.hpp>
 #include <app/worker.hpp>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 struct sapp_event;
@@ -43,6 +45,10 @@ class Application {
         void quit();
 
         InputState& input() { return m_input; }
+        // Constructed once init() has run (needs sg_setup() to already be up). Owned here,
+        // not by Renderer -- a debug panel toggling engine-wide features isn't tied to one
+        // render target.
+        DebugUI& debugUI() { return *m_debug_ui; }
 
         // Framebuffer size in pixels. Only meaningful once init has run.
         int width() const;
@@ -73,6 +79,7 @@ class Application {
         Callback m_frame;
         Callback m_cleanup;
         InputState m_input;
+        std::optional<DebugUI> m_debug_ui;
 
         std::vector<std::unique_ptr<WorkerBase>> m_workers;
 };

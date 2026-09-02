@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
 
 	engine.addInclude(Include<Direct>("external/sokol"));
 	engine.addInclude(Include<Direct>("external/sokol/util"));
+	engine.addInclude(Include<Direct>("external/imgui"));
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
 	engine.addInclude(Include<Direct>("external/cgltf"));
@@ -56,6 +57,11 @@ int main(int argc, char** argv) {
 	    "src/gpu/sokol.cpp",
 	    "src/gpu/handle.cpp",
 
+	    "external/imgui/imgui.cpp",
+	    "external/imgui/imgui_draw.cpp",
+	    "external/imgui/imgui_tables.cpp",
+	    "external/imgui/imgui_widgets.cpp",
+
 	    "src/graphics/camera.cpp",
 	    "src/graphics/frustum.cpp",
 	    "src/graphics/shadow.cpp",
@@ -75,6 +81,7 @@ int main(int argc, char** argv) {
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",
 	    "src/app/input_state.cpp",
+	    "src/app/debug_ui.cpp",
 
 	    "sandbox/model_test/main.cpp",
 	};

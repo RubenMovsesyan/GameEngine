@@ -25,6 +25,10 @@ void Application::initCallback(void* user_data) {
     desc.logger.func = slog_func;
     sg_setup(&desc);
 
+    // Needs sg_setup() to already be up; constructed here rather than in Application's own
+    // ctor so app.debugUI() is valid by the time the app-provided init() callback runs.
+    app.m_debug_ui.emplace();
+
     if (app.m_init) {
         app.m_init(app);
     }
@@ -41,6 +45,11 @@ void Application::frameCallback(void* user_data) {
 
 void Application::eventCallback(const sapp_event* event, void* user_data) {
     Application& app = *static_cast<Application*>(user_data);
+
+    // ImGui-consumed events (a click on the debug panel, etc.) never reach InputState.
+    if (app.m_debug_ui && app.m_debug_ui->handleEvent(*event)) {
+        return;
+    }
 
     switch (event->type) {
         case SAPP_EVENTTYPE_KEY_DOWN:
@@ -76,6 +85,7 @@ void Application::cleanupCallback(void* user_data) {
     if (app.m_cleanup) {
         app.m_cleanup(app);
     }
+    app.m_debug_ui.reset();
     sg_shutdown();
 }
 

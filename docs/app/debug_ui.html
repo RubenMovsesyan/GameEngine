@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>app::DebugUI — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol_gfx · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/debug_draw.html">DebugDraw</a>
+  <a href="../graphics/frustum.html">Frustum</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/material.html">Material</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/skybox.html">Skybox</a>
+  <a href="../graphics/texture.html">Texture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>app::DebugUI</code></h1>
+<p class="lede">Dear ImGui, wired to the window rather than to any particular <code>Renderer</code> target — a checkbox panel for engine-wide debug toggles.</p>
+
+<h2>Role</h2>
+<p>
+  A thin wrapper over <a href="https://github.com/floooh/sokol/blob/master/util/sokol_imgui.h"><code>sokol_imgui.h</code></a>
+  (vendored at <code>external/sokol/util/sokol_imgui.h</code>), which does the actual ImGui
+  setup, rendering, and event translation against <a href="https://github.com/ocornut/imgui">Dear ImGui</a>
+  itself (vendored at <code>external/imgui</code>, pinned to <code>v1.92.9b</code> — a
+  tagged release, not <code>master</code>, since ImGui's API shifts more than the other
+  vendored dependencies here). <code>DebugUI</code> adds nothing beyond a visibility flag
+  and the "no-op while hidden" contract described below.
+</p>
+
+<h2>Owned by <code>Application</code>, not <code>Renderer</code></h2>
+<p>
+  <code>Renderer</code> is a "draw a scene from a camera into some target" object — it
+  already renders several offscreen targets internally (G-buffer, HDR, LDR) before ever
+  touching the swapchain, and nothing stops a second camera from targeting an offscreen
+  texture (a minimap, a security-camera view) later. A debug panel toggling engine-wide
+  features is a window/session concept, not tied to any one render target, so
+  <code>app::Application</code> owns one <code>DebugUI</code> for the life of the window —
+  exactly like it already owns one <code>InputState</code> — independent of however many
+  <code>Renderer</code>s or cameras exist.
+</p>
+<p>
+  This runs into one real constraint: ImGui still has to render <em>into</em> the actual
+  swapchain image, and the only point in the frame that touches the swapchain is inside
+  <code>Renderer::endFrame()</code>'s FXAA pass. Rather than have <code>Renderer</code>
+  learn about <code>DebugUI</code> or ImGui at all, <code>endFrame()</code> takes one new
+  parameter — an opaque <code>std::function&lt;void()&gt;</code> — invoked at the same
+  point <code>DebugDraw::render()</code> already runs, right before <code>sg_end_pass()</code>.
+  <code>Renderer</code> never names <code>DebugUI</code> or <code>ImGui</code>; the sandbox
+  is what wires "the app's debug panel" into "the renderer's last swapchain-writing point,"
+  the same way it already wires <code>renderer.debugDraw()</code> calls into the frame.
+</p>
+
+<h2>Off by default, and a true no-op when hidden</h2>
+<p>
+  <code>setVisible(false)</code> is the constructed state. <code>draw()</code> starts with
+  <code>if (!m_visible) return;</code> before touching <code>simgui_new_frame</code>,
+  before invoking the caller's <code>panels</code> callback, before
+  <code>simgui_render()</code> — so no <code>ImGui::</code> call the caller makes inside
+  <code>panels</code> ever runs while the panel is hidden, and no ImGui frame is even
+  constructed. Same guarantee <code>graphics::DebugDraw</code> already gives.
+</p>
+<p>
+  <code>handleEvent()</code> is the one method that does <em>not</em> gate on visibility —
+  it always forwards to <code>simgui_handle_event()</code>. With nothing drawn, ImGui has
+  nothing to hover or focus, so it naturally never reports an event as consumed while
+  hidden; always feeding keeps its internal input state (deltas, hover) correct for the
+  moment the panel is shown again, rather than resyncing from a blank state on every open.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class DebugUI {
+    DebugUI();  // simgui_setup() -- unconditional, one-time cost
+    ~DebugUI(); // simgui_shutdown()
+
+    void setVisible(bool);
+    bool isVisible() const;
+
+    bool handleEvent(const sapp_event&);  // true if ImGui consumed it
+
+    void draw(int width, int height, double delta_time, float dpi_scale,
+              const std::function&lt;void()&gt;&amp; panels);
+};</code></pre>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on the vendored <code>sokol_imgui.h</code> and, transitively, real
+  <code>imgui.h</code> — no dependency on <code>graphics/</code> or any GPU resource
+  wrapper. <code>Application</code> owns the only instance
+  (<code>std::optional&lt;DebugUI&gt;</code>, constructed once <code>sg_setup()</code> has
+  run — see <code>initCallback</code>), feeds it every <code>sapp_event</code> from
+  <code>eventCallback</code> before <code>InputState</code> gets a look, and exposes it via
+  <code>Application::debugUI()</code>. Game code (the sandbox) reaches it through that
+  accessor to register panel content and to wire it into <code>Renderer::endFrame</code>'s
+  overlay parameter each frame.
+</p>
+
+<h2>Event routing</h2>
+<p>
+  <code>Application::eventCallback</code> calls <code>debugUI().handleEvent(event)</code>
+  first; if it returns <code>true</code>, the event stops there and never reaches
+  <code>InputState</code>. This is why clicking a checkbox doesn't also register as a
+  mouse click for gameplay — but it also means an open panel silently swallows any input
+  the game might otherwise have wanted, so the sandbox force-uncaptures the cursor when the
+  panel opens (<code>flyCamera</code> already gates mouse-look on
+  <code>isCursorCaptured()</code>, so nothing else is needed to stop the camera fighting
+  the panel).
+</p>
+
+<h2>What isn't here yet</h2>
+<ul>
+  <li>
+    <strong>Keyboard capture.</strong> Nothing checks
+    <code>ImGui::GetIO().WantCaptureKeyboard</code>, so WASD still moves the camera while
+    the panel is focused. Not a problem yet — today's panel is checkboxes and a slider, no
+    text fields to steal keystrokes from. Worth wiring if a text input is ever added.
+  </li>
+  <li>
+    <strong>Panel content beyond the three existing debug toggles</strong> (shadow-map
+    debug, cascade layer, <code>DebugDraw</code> enable). Extending it is adding another
+    <code>ImGui::Checkbox</code>/<code>SliderInt</code>/etc. call inside the sandbox's
+    <code>panels</code> lambda — no engine-side change needed.
+  </li>
+  <li>
+    <strong>Docking, viewports, the demo window.</strong> None vendored or wired up; the
+    pinned tag (<code>v1.92.9b</code>) is deliberately the non-docking release.
+  </li>
+</ul>
+
+</main>
+</div>
+</body>
+</html>

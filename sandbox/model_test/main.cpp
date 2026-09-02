@@ -3,11 +3,14 @@
 
 #include <app/application.hpp>
 #include <app/cli_parser.hpp>
+#include <app/debug_ui.hpp>
 #include <graphics/camera.hpp>
 #include <graphics/debug_draw.hpp>
 #include <graphics/light_manager.hpp>
 #include <graphics/renderer.hpp>
 #include <scene/gltf_loader.hpp>
+
+#include <imgui.h>
 
 #include <sokol_app.h>
 
@@ -177,6 +180,16 @@ void frame(app::Application& app, Sandbox& sandbox) {
         graphics::DebugDraw& debug_draw = sandbox.renderer->debugDraw();
         debug_draw.setEnabled(!debug_draw.isEnabled());
     }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F4)) {
+        app::DebugUI& debug_ui = app.debugUI();
+        debug_ui.setVisible(!debug_ui.isVisible());
+        // Opening the panel needs a usable cursor; flyCamera already gates mouse-look on
+        // isCursorCaptured(), so uncapturing here is the only change needed to stop the
+        // camera fighting the panel. Closing does not auto-recapture -- Escape still does.
+        if (debug_ui.isVisible()) {
+            app.setCursorCaptured(false);
+        }
+    }
 
     flyCamera(app, sandbox, dt);
 
@@ -203,7 +216,27 @@ void frame(app::Application& app, Sandbox& sandbox) {
     // upgrade this once something else (e.g. a light) wants a real off-camera frustum.
     renderer.debugDraw().frustum(frustum.corners(), Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
 
-    renderer.endFrame();
+    renderer.endFrame([&]() {
+        app.debugUI().draw(app.width(), app.height(), dt, sapp_dpi_scale(), [&]() {
+            if (ImGui::Begin("Debug")) {
+                bool debug_draw = renderer.debugDraw().isEnabled();
+                if (ImGui::Checkbox("Debug Draw (F3)", &debug_draw)) {
+                    renderer.debugDraw().setEnabled(debug_draw);
+                }
+
+                bool shadow_debug = renderer.isShadowMapDebugEnabled();
+                if (ImGui::Checkbox("Shadow Map Debug (F1)", &shadow_debug)) {
+                    renderer.setShadowMapDebugEnabled(shadow_debug);
+                }
+
+                int layer = static_cast<int>(renderer.shadowMapDebugLayer());
+                if (ImGui::SliderInt("Cascade Layer (F2)", &layer, 0, 3)) {
+                    renderer.setShadowMapDebugLayer(static_cast<u32>(layer));
+                }
+            }
+            ImGui::End();
+        });
+    });
 }
 
 // Every one of these owns sokol handles, so they have to go before sg_shutdown().

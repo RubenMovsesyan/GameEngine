@@ -10,6 +10,7 @@
 #include <graphics/skybox.hpp>
 
 #include <array>
+#include <functional>
 #include <vector>
 
 namespace graphics {
@@ -67,13 +68,22 @@ class Renderer {
         // Blit one shadow-map cascade slice to the screen as grayscale depth. Debug bring-up.
         void toggleShadowMapDebug();
         void cycleShadowMapDebugLayer();
+        // Direct get/set pair alongside the toggle/cycle above -- a debug-UI checkbox or
+        // slider wants to set a value directly, not increment-and-wrap.
+        bool isShadowMapDebugEnabled() const { return m_show_shadow_map_debug; }
+        void setShadowMapDebugEnabled(bool enabled) { m_show_shadow_map_debug = enabled; }
+        u32 shadowMapDebugLayer() const { return m_shadow_debug_layer; }
+        void setShadowMapDebugLayer(u32 layer) { m_shadow_debug_layer = layer % kCascadeCount; }
 
         // Immediate-mode debug lines (AABBs, frustums, axes). Off by default; call
         // debugDraw().setEnabled(true) to turn it on. Calls between beginFrame() and
         // endFrame() are drawn as an unlit overlay, unaffected by tonemap/FXAA.
         DebugDraw& debugDraw() { return m_debug_draw; }
 
-        void endFrame();
+        // overlay runs at the tail of the swapchain-writing pass, right after DebugDraw's
+        // own overlay -- an opaque hook so Renderer never has to know what's drawing into
+        // it (a debug UI, or anything else window-level that isn't tied to a render target).
+        void endFrame(const std::function<void()>& overlay = {});
 
     private:
         void rebuildTargets(int width, int height);

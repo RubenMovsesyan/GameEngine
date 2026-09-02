@@ -15,7 +15,6 @@ int main(int argc, char** argv) {
 	engine.addCompileFlag("-std=c++23");
 	engine.addLinkFlag("-std=c++23");
 
-	engine.addInclude(Include<Direct>("external/NVRHI/include"));
 	engine.addInclude(Include<Direct>("external/sokol"));
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
@@ -26,7 +25,6 @@ int main(int argc, char** argv) {
 
 	engine.addLink(Link<Dependency>("vulkan"));
 	engine.addLink(Link<Dependency>("pthread"));
-	engine.addLink(Link<Dependency>("glfw"));
 
 	// sokol_app on Linux: X11 windowing plus dlopen for the Vulkan loader.
 	engine.addLink(Link<Dependency>("X11"));
@@ -59,59 +57,15 @@ int main(int argc, char** argv) {
 	    shader_tasks.emplace(name, task);
 	}
 
-	// NVRHI, built from source: common bookkeeping, validation layer, Vulkan backend.
-	const std::vector<std::string> nvrhi_sources = {
-	    "external/NVRHI/src/common/format-info.cpp",
-	    "external/NVRHI/src/common/misc.cpp",
-	    "external/NVRHI/src/common/state-tracking.cpp",
-	    "external/NVRHI/src/common/utils.cpp",
-	    "external/NVRHI/src/common/aftermath.cpp",
-
-	    "external/NVRHI/src/validation/validation-commandlist.cpp",
-	    "external/NVRHI/src/validation/validation-device.cpp",
-
-	    "external/NVRHI/src/vulkan/vulkan-allocator.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-buffer.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-commandlist.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-compute.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-constants.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-device.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-graphics.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-meshlets.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-queries.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-queue.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-raytracing.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-resource-bindings.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-shader.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-staging-texture.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-state-tracking.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-texture.cpp",
-	    "external/NVRHI/src/vulkan/vulkan-upload.cpp",
-	};
-
 	const std::vector<std::string> engine_sources = {
 	    "src/gpu/sokol.cpp",
-	    "src/gpu/instance.cpp",
-	    "src/gpu/device.cpp",
-	    "src/gpu/swapchain.cpp",
 
-	    "src/graphics/surface.cpp",
-	    "src/graphics/renderer.cpp",
 	    "src/graphics/camera.cpp",
 	    "src/graphics/frustum.cpp",
 	    "src/graphics/shadow.cpp",
-	    "src/graphics/mesh.cpp",
-	    "src/graphics/texture.cpp",
-	    "src/graphics/material.cpp",
 	    "src/graphics/light.cpp",
-	    "src/graphics/light_manager.cpp",
-	    "src/graphics/post_process_chain.cpp",
 
-	    "src/scene/model.cpp",
-	    "src/scene/scene.cpp",
-	    "src/scene/gltf_loader.cpp",
 
-	    "src/app/window.cpp",
 	    "src/app/application.cpp",
 	    "src/app/cli_parser.cpp",
 	    "src/app/input_state.cpp",
@@ -120,9 +74,6 @@ int main(int argc, char** argv) {
 	};
 
 	std::vector<std::reference_wrapper<Task>> objects;
-	for (const auto& source : nvrhi_sources) {
-	    objects.push_back(engine.addTask(Output(Object(source))));
-	}
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
 	    if (source == "src/graphics/renderer.cpp") {

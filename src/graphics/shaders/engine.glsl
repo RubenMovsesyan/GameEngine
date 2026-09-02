@@ -178,16 +178,16 @@ void main() {}
 
 // Every G-buffer read is a 1:1 texel fetch, so a non-filtering sampler is both correct and
 // sidesteps the depth target not being filterable.
-@image_sample_type tex_albedo unfilterable_float
-@image_sample_type tex_normal unfilterable_float
-@image_sample_type tex_depth unfilterable_float
-@image_sample_type tex_material unfilterable_float
+@image_sample_type tex_gbuffer_albedo unfilterable_float
+@image_sample_type tex_gbuffer_normal unfilterable_float
+@image_sample_type tex_gbuffer_depth unfilterable_float
+@image_sample_type tex_gbuffer_material unfilterable_float
 @sampler_type smp_gbuffer nonfiltering
 
-layout(binding=0) uniform texture2D tex_albedo;
-layout(binding=1) uniform texture2D tex_normal;
-layout(binding=2) uniform texture2D tex_depth;
-layout(binding=3) uniform texture2D tex_material;
+layout(binding=0) uniform texture2D tex_gbuffer_albedo;
+layout(binding=1) uniform texture2D tex_gbuffer_normal;
+layout(binding=2) uniform texture2D tex_gbuffer_depth;
+layout(binding=3) uniform texture2D tex_gbuffer_material;
 layout(binding=4) uniform texture2DArray tex_shadow;
 layout(binding=0) uniform sampler smp_gbuffer;
 layout(binding=1) uniform sampler smp_shadow;
@@ -309,11 +309,11 @@ vec3 fresnelSchlick(float vdoth, vec3 f0) {
 }
 
 void main() {
-    vec4 albedo = texture(sampler2D(tex_albedo, smp_gbuffer), v_uv);
-    vec3 normal = octDecode(texture(sampler2D(tex_normal, smp_gbuffer), v_uv).rg);
-    vec3 world_position = reconstructWorldPosition(v_uv, texture(sampler2D(tex_depth, smp_gbuffer), v_uv).r);
+    vec4 albedo = texture(sampler2D(tex_gbuffer_albedo, smp_gbuffer), v_uv);
+    vec3 normal = octDecode(texture(sampler2D(tex_gbuffer_normal, smp_gbuffer), v_uv).rg);
+    vec3 world_position = reconstructWorldPosition(v_uv, texture(sampler2D(tex_gbuffer_depth, smp_gbuffer), v_uv).r);
 
-    vec4 material = texture(sampler2D(tex_material, smp_gbuffer), v_uv);
+    vec4 material = texture(sampler2D(tex_gbuffer_material, smp_gbuffer), v_uv);
     float roughness = clamp(material.g, 0.04, 1.0); // floor avoids a degenerate zero-area highlight
     float metallic = material.b;
 

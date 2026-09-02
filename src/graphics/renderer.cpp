@@ -519,10 +519,10 @@ void Renderer::endFrame() {
         sg_apply_pipeline(m_lighting_pipeline);
 
         sg_bindings bindings = {};
-        bindings.views[VIEW_tex_albedo] = *m_albedo.texture;
-        bindings.views[VIEW_tex_normal] = *m_normal.texture;
-        bindings.views[VIEW_tex_depth] = *m_depth.texture;
-        bindings.views[VIEW_tex_material] = *m_material.texture;
+        bindings.views[VIEW_tex_gbuffer_albedo] = *m_albedo.texture;
+        bindings.views[VIEW_tex_gbuffer_normal] = *m_normal.texture;
+        bindings.views[VIEW_tex_gbuffer_depth] = *m_depth.texture;
+        bindings.views[VIEW_tex_gbuffer_material] = *m_material.texture;
         bindings.views[VIEW_tex_shadow] = *m_shadow_texture;
         bindings.views[VIEW_light_buffer] = m_light_count > 0 ? m_light_view : *m_empty_light_view;
         bindings.samplers[SMP_smp_gbuffer] = *m_gbuffer_sampler;
@@ -588,7 +588,7 @@ void Renderer::endFrame() {
 
         sg_bindings bindings = {};
         bindings.views[VIEW_tex_source] = *m_hdr.texture;
-        bindings.samplers[SMP_smp_source] = *m_gbuffer_sampler;
+        bindings.samplers[SMP_smp_source] = *m_material_sampler;
         sg_apply_bindings(&bindings);
 
         tonemap_params_t params{.exposure = Eigen::Vector4f(m_exposure, 0.0f, 0.0f, 0.0f)};
@@ -610,7 +610,7 @@ void Renderer::endFrame() {
 
         sg_bindings bindings = {};
         bindings.views[VIEW_tex_source] = *m_ldr.texture;
-        bindings.samplers[SMP_smp_source] = *m_gbuffer_sampler;
+        bindings.samplers[SMP_smp_source] = *m_material_sampler;
         sg_apply_bindings(&bindings);
 
         fxaa_params_t params{

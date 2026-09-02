@@ -1,73 +1,98 @@
 #include <graphics/texture.hpp>
-#include "rlog.h"
+
+#include <rlog.h>
+
+#include <mutex>
 #include <thread>
 
 namespace graphics {
 
 namespace {
 
-nvrhi::TextureHandle uploadPixels(const gpu::Device& device, std::span<const u8> pixels, u32 width, u32 height, nvrhi::Format format) {
-    nvrhi::TextureDesc desc{};
-    desc.width = width;
-    desc.height = height;
-    desc.format = format;
-    desc.isShaderResource = true;
-    desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    desc.keepInitialState = true;
-    desc.debugName = "texture";
+gpu::ImageHandle uploadPixels(std::span<const u8> pixels, u32 width, u32 height, sg_pixel_format format) {
+    sg_image_desc desc = {};
+    desc.width = static_cast<int>(width);
+    desc.height = static_cast<int>(height);
+    desc.pixel_format = format;
+    desc.data.mip_levels[0] = sg_range{pixels.data(), pixels.size_bytes()};
+    desc.label = "texture";
 
-    usize row_pitch = static_cast<usize>(width) * nvrhi::getFormatInfo(format).bytesPerBlock;
-    return device.createTexture(desc, pixels.data(), row_pitch);
+    return gpu::makeImage(desc);
 }
+
+// Decoded on a worker thread, uploaded on the sokol_gfx thread by drainUploads().
+struct PendingUpload {
+    std::shared_ptr<void> state; // type-erased Texture::State; cast back in drainUploads
+    DecodedPixels decoded;
+    sg_pixel_format format;
+};
+
+std::mutex g_pending_mutex;
+std::vector<PendingUpload> g_pending;
 
 } // namespace
 
 Texture::Texture() : m_state(std::make_shared<State>()) {}
 
-Texture Texture::create(const gpu::Device& device, std::span<const u8> pixels, u32 width, u32 height, nvrhi::Format format) {
+Texture Texture::create(std::span<const u8> pixels, u32 width, u32 height, sg_pixel_format format) {
     Texture texture;
-    texture.m_state->texture_handle = uploadPixels(device, pixels, width, height, format);
+    texture.m_state->image = uploadPixels(pixels, width, height, format);
     texture.m_state->width = width;
     texture.m_state->height = height;
     texture.m_state->ready = true;
     return texture;
 }
 
-Texture Texture::createPlaceholder(const gpu::Device& device) {
+Texture Texture::createPlaceholder() {
     constexpr u8 kFuchsia[4] = {255, 0, 255, 255};
     constexpr u8 kBlack[4] = {0, 0, 0, 255};
     constexpr u8 kPixels[2 * 2 * 4] = {
-        kFuchsia[0], kFuchsia[1], kFuchsia[2], kFuchsia[3], kBlack[0], kBlack[1], kBlack[2], kBlack[3],
+        kFuchsia[0], kFuchsia[1], kFuchsia[2], kFuchsia[3], kBlack[0],   kBlack[1],   kBlack[2],   kBlack[3],
         kBlack[0],   kBlack[1],   kBlack[2],   kBlack[3],   kFuchsia[0], kFuchsia[1], kFuchsia[2], kFuchsia[3],
     };
-    Texture placeholder = create(device, kPixels, 2, 2, nvrhi::Format::RGBA8_UNORM);
+    Texture placeholder = create(kPixels, 2, 2, SG_PIXELFORMAT_RGBA8);
     placeholder.m_state->ready = false; // it's the debug checkerboard, not the requested texture
     return placeholder;
 }
 
-Texture Texture::loadAsyncThread(const gpu::Device& device, std::function<DecodedPixels()> decode, nvrhi::Format format) {
-    Texture placeholder = createPlaceholder(device);
+Texture Texture::loadAsyncThread(std::function<DecodedPixels()> decode, sg_pixel_format format) {
+    Texture placeholder = createPlaceholder();
     std::shared_ptr<State> state = placeholder.m_state;
     RLOG(LL_DEBUG, "Loading Async Texture");
 
-    std::thread([&device, state, decode = std::move(decode), format]() {
+    std::thread([state, decode = std::move(decode), format]() {
         DecodedPixels decoded = decode();
-        nvrhi::TextureHandle handle = uploadPixels(device, decoded.pixels, decoded.width, decoded.height, format);
-	RLOG(LL_DEBUG, "Async Texture Loaded");
+        RLOG(LL_DEBUG, "Async Texture Decoded");
 
-        std::unique_lock lock(state->mutex);
-        state->texture_handle = handle;
-        state->width = decoded.width;
-        state->height = decoded.height;
-        state->ready = true;
+        std::lock_guard lock(g_pending_mutex);
+        g_pending.push_back(PendingUpload{.state = state, .decoded = std::move(decoded), .format = format});
     }).detach();
 
     return placeholder;
 }
 
-nvrhi::ITexture* Texture::texture() const {
+void Texture::drainUploads() {
+    std::vector<PendingUpload> ready;
+    {
+        std::lock_guard lock(g_pending_mutex);
+        ready.swap(g_pending);
+    }
+
+    for (PendingUpload& upload : ready) {
+        gpu::ImageHandle image = uploadPixels(upload.decoded.pixels, upload.decoded.width, upload.decoded.height, upload.format);
+
+        State& state = *static_cast<State*>(upload.state.get());
+        std::unique_lock lock(state.mutex);
+        state.image = std::move(image);
+        state.width = upload.decoded.width;
+        state.height = upload.decoded.height;
+        state.ready = true;
+    }
+}
+
+sg_image Texture::image() const {
     std::shared_lock lock(m_state->mutex);
-    return m_state->texture_handle;
+    return m_state->image ? *m_state->image : sg_image{};
 }
 
 u32 Texture::width() const {

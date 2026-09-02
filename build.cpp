@@ -59,11 +59,16 @@ int main(int argc, char** argv) {
 
 	const std::vector<std::string> engine_sources = {
 	    "src/gpu/sokol.cpp",
+	    "src/gpu/handle.cpp",
 
 	    "src/graphics/camera.cpp",
 	    "src/graphics/frustum.cpp",
 	    "src/graphics/shadow.cpp",
 	    "src/graphics/light.cpp",
+	    "src/graphics/mesh.cpp",
+	    "src/graphics/texture.cpp",
+	    "src/graphics/material.cpp",
+	    "src/graphics/light_manager.cpp",
 
 
 	    "src/app/application.cpp",

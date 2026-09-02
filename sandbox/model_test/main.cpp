@@ -3,7 +3,12 @@
 
 #include <app/application.hpp>
 #include <app/cli_parser.hpp>
+#include <gpu/handle.hpp>
 #include <graphics/camera.hpp>
+#include <graphics/light_manager.hpp>
+#include <graphics/material.hpp>
+#include <graphics/mesh.hpp>
+#include <graphics/texture.hpp>
 
 #include <sokol_app.h>
 
@@ -11,6 +16,7 @@
 #include <sokol_glue.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -40,8 +46,39 @@ struct Sandbox {
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
 };
 
+// TEMPORARY (phase 3): nothing renders yet, so exercise the ported resource layer here to
+// prove sokol accepts the descs. Deleted once the renderer comes back.
+void smokeTestResources() {
+    const graphics::Texture texture = graphics::Texture::createPlaceholder();
+    const bool texture_ok = sg_query_image_state(texture.image()) == SG_RESOURCESTATE_VALID;
+
+    const std::array<graphics::Vertex, 3> vertices{};
+    const std::array<u32, 3> indices{0, 1, 2};
+    const graphics::StandardMesh mesh = graphics::StandardMesh::create(vertices, indices);
+    const bool mesh_ok = sg_query_buffer_state(mesh.vertexBuffer()) == SG_RESOURCESTATE_VALID &&
+                         sg_query_buffer_state(mesh.indexBuffer()) == SG_RESOURCESTATE_VALID;
+
+    graphics::LightManager lights;
+    const graphics::Light light{
+        .type = graphics::LightType::Directional,
+        .color = {1.0f, 1.0f, 1.0f},
+        .intensity = 1.0f,
+        .direction = {0.0f, -1.0f, 0.0f},
+        .casts_shadows = true,
+    };
+    lights.add(light);
+    lights.build();
+    const bool lights_ok = sg_query_view_state(lights.view()) == SG_RESOURCESTATE_VALID;
+
+    RLOG(LL_INFO, "Resource smoke test -- texture: %d, mesh: %d, light storage buffer: %d", texture_ok, mesh_ok, lights_ok);
+    RLOG(LL_INFO, "Native buffer handle available: %d (0 is expected on the Vulkan backend)",
+         gpu::nativeHandle(mesh.vertexBuffer()).has_value());
+}
+
 void init(app::Application& app, Sandbox& sandbox) {
     RLOG(LL_INFO, "Sokol backend up, model: " + sandbox.model_path.string());
+
+    smokeTestResources();
 
     const f32 aspect = static_cast<f32>(app.width()) / static_cast<f32>(app.height());
     sandbox.camera.emplace(1.0472f, aspect, 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp);

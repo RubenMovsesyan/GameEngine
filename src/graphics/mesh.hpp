@@ -1,6 +1,6 @@
 #pragma once
 
-#include <gpu/device.hpp>
+#include <gpu/handle.hpp>
 
 #include <Eigen/Dense>
 
@@ -32,8 +32,8 @@ struct InstanceData {
 // Anything drawable: a vertex buffer, an index buffer, and how many instances to draw.
 template <typename T>
 concept Mesh = requires(const T& value) {
-    { value.vertexBuffer() } -> std::same_as<nvrhi::IBuffer*>;
-    { value.indexBuffer() } -> std::same_as<nvrhi::IBuffer*>;
+    { value.vertexBuffer() } -> std::same_as<sg_buffer>;
+    { value.indexBuffer() } -> std::same_as<sg_buffer>;
     { value.indexCount() } -> std::same_as<u32>;
     { value.instanceCount() } -> std::same_as<u32>;
 };
@@ -43,20 +43,22 @@ class InstancedMesh;
 // A single non-instanced mesh: a vertex buffer and an index buffer, both GPU-resident.
 class StandardMesh {
     public:
-        static StandardMesh create(const gpu::Device&, std::span<const Vertex> vertices, std::span<const u32> indices);
+        static StandardMesh create(std::span<const Vertex> vertices, std::span<const u32> indices);
         // Shares the source's vertex/index buffers -- lossy, drops its per-instance transforms.
         static StandardMesh fromInstanced(const InstancedMesh&);
 
-        nvrhi::IBuffer* vertexBuffer() const { return m_vertices; }
-        nvrhi::IBuffer* indexBuffer() const { return m_indices; }
+        sg_buffer vertexBuffer() const { return m_vertices ? *m_vertices : sg_buffer{}; }
+        sg_buffer indexBuffer() const { return m_indices ? *m_indices : sg_buffer{}; }
         u32 indexCount() const { return m_index_count; }
         u32 instanceCount() const { return 1; }
 
     private:
+        friend class InstancedMesh;
+
         StandardMesh() = default;
 
-        nvrhi::BufferHandle m_vertices;
-        nvrhi::BufferHandle m_indices;
+        gpu::BufferHandle m_vertices;
+        gpu::BufferHandle m_indices;
         u32 m_index_count = 0;
 };
 
@@ -65,12 +67,12 @@ static_assert(Mesh<StandardMesh>);
 // A mesh drawn many times with per-instance transforms, uploaded to instanceBuffer().
 class InstancedMesh {
     public:
-        static InstancedMesh create(const gpu::Device&, std::span<const Vertex> vertices, std::span<const u32> indices);
+        static InstancedMesh create(std::span<const Vertex> vertices, std::span<const u32> indices);
         // Shares the source's vertex/index buffers, starts with zero instances.
         static InstancedMesh fromStandard(const StandardMesh&);
 
-        nvrhi::IBuffer* vertexBuffer() const { return m_vertices; }
-        nvrhi::IBuffer* indexBuffer() const { return m_indices; }
+        sg_buffer vertexBuffer() const { return m_vertices ? *m_vertices : sg_buffer{}; }
+        sg_buffer indexBuffer() const { return m_indices ? *m_indices : sg_buffer{}; }
         u32 indexCount() const { return m_index_count; }
         u32 instanceCount() const { return static_cast<u32>(m_instances.size()); }
 
@@ -79,18 +81,20 @@ class InstancedMesh {
         // Marks dirty unconditionally -- can't know if the caller actually wrote through the pointer.
         Eigen::Matrix4f* mutableInstance(u32 index);
 
-        nvrhi::IBuffer* instanceBuffer() const { return m_instance_buffer; }
-        void uploadIfDirty(const gpu::Device&);
+        sg_buffer instanceBuffer() const { return m_instance_buffer ? *m_instance_buffer : sg_buffer{}; }
+        void uploadIfDirty();
 
     private:
+        friend class StandardMesh;
+
         InstancedMesh() = default;
 
-        nvrhi::BufferHandle m_vertices;
-        nvrhi::BufferHandle m_indices;
+        gpu::BufferHandle m_vertices;
+        gpu::BufferHandle m_indices;
         u32 m_index_count = 0;
 
         std::vector<InstanceData> m_instances;
-        nvrhi::BufferHandle m_instance_buffer;
+        gpu::BufferHandle m_instance_buffer;
         bool m_dirty = true;
 };
 

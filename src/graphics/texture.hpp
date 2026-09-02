@@ -1,10 +1,9 @@
 #pragma once
 
-#include <gpu/device.hpp>
+#include <gpu/handle.hpp>
 
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <shared_mutex>
 #include <span>
 #include <vector>
@@ -20,15 +19,18 @@ struct DecodedPixels {
 // A GPU-resident 2D texture, cheap to copy/move (backed by a shared_ptr).
 class Texture {
     public:
-        static Texture create(const gpu::Device&, std::span<const u8> pixels, u32 width, u32 height,
-                               nvrhi::Format format = nvrhi::Format::RGBA8_UNORM);
-        static Texture createPlaceholder(const gpu::Device&); // 2x2 fuchsia/black checkerboard, synchronous
+        static Texture create(std::span<const u8> pixels, u32 width, u32 height, sg_pixel_format format = SG_PIXELFORMAT_RGBA8);
+        static Texture createPlaceholder(); // 2x2 fuchsia/black checkerboard, synchronous
 
-        // Returns createPlaceholder() immediately; the real load happens on a detached thread.
-        static Texture loadAsyncThread(const gpu::Device&, std::function<DecodedPixels()> decode,
-                                        nvrhi::Format format = nvrhi::Format::RGBA8_UNORM);
+        // Returns createPlaceholder() immediately and decodes on a detached thread. sokol_gfx
+        // is single-threaded, so the decoded pixels are queued and uploaded by drainUploads().
+        static Texture loadAsyncThread(std::function<DecodedPixels()> decode, sg_pixel_format format = SG_PIXELFORMAT_RGBA8);
 
-        nvrhi::ITexture* texture() const;
+        // Uploads everything decoded since the last call, swapping each placeholder for the
+        // real image. Call once per frame from the thread that owns the sokol_gfx context.
+        static void drainUploads();
+
+        sg_image image() const;
         u32 width() const;
         u32 height() const;
         bool isReady() const; // false while still showing the placeholder
@@ -36,7 +38,7 @@ class Texture {
     private:
         struct State {
             std::shared_mutex mutex;
-            nvrhi::TextureHandle texture_handle;
+            gpu::ImageHandle image;
             u32 width = 0;
             u32 height = 0;
             bool ready = false;

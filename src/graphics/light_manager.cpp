@@ -24,8 +24,6 @@ GpuLight toGpuLight(const Light& light) {
 
 } // namespace
 
-LightManager::LightManager(const gpu::Device& device) : m_device(&device) {}
-
 void LightManager::add(const Light& light) {
     m_lights.push_back(&light);
 }
@@ -42,6 +40,7 @@ const Light* LightManager::directionalLight() const {
 void LightManager::build() {
     if (m_lights.empty()) {
         m_buffer = nullptr;
+        m_view = nullptr;
         return;
     }
 
@@ -51,14 +50,19 @@ void LightManager::build() {
         gpu_lights.push_back(toGpuLight(*light));
     }
 
-    nvrhi::BufferDesc desc{};
-    desc.byteSize = gpu_lights.size() * sizeof(GpuLight);
-    desc.structStride = sizeof(GpuLight);
-    desc.initialState = nvrhi::ResourceStates::ShaderResource;
-    desc.keepInitialState = true;
-    desc.debugName = "light buffer";
+    const usize byte_size = gpu_lights.size() * sizeof(GpuLight);
 
-    m_buffer = m_device->createBuffer(desc, gpu_lights.data(), gpu_lights.size() * sizeof(GpuLight));
+    sg_buffer_desc desc = {};
+    desc.size = byte_size;
+    desc.usage.storage_buffer = true;
+    desc.data = sg_range{gpu_lights.data(), byte_size};
+    desc.label = "light buffer";
+    m_buffer = gpu::makeBuffer(desc);
+
+    sg_view_desc view_desc = {};
+    view_desc.storage_buffer.buffer = *m_buffer;
+    view_desc.label = "light buffer view";
+    m_view = gpu::makeView(view_desc);
 }
 
 } // namespace graphics

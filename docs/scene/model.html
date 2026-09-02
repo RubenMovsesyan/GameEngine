@@ -33,7 +33,6 @@
 
   <h4>scene</h4>
   <a class="here" href="model.html">Model</a>
-  <a href="scene.html">Scene</a>
   <a href="gltf_loader.html">loadGltf</a>
 
   <h4>app</h4>
@@ -50,29 +49,34 @@
 <main>
 
 <h1><code>scene::Model</code></h1>
-<p class="lede">A flat collection of meshes, each with its own local transform and material. Geometry only — no lights.</p>
+<p class="lede">A flat collection of meshes, each with its own local transform and material, plus one world placement for the whole group. Geometry only — no lights, no Camera or Renderer knowledge.</p>
 
 <h2>Role</h2>
 <p>
-  Rendering a model means rendering each part individually: <code>render()</code> loops
-  its parts, frustum-culls each one against
-  <a href="../graphics/frustum.html"><code>camera.frustum()</code></a>, and calls
-  <code>Renderer::renderMesh()</code> once per surviving part, combining the
-  caller-supplied world transform with each part's local transform. No node hierarchy
-  or scene graph — a flat list is all that's needed for what's actually loaded today.
-  Each part can independently be a <code>StandardMesh</code> or an <code>InstancedMesh</code>
-  — see <a href="../graphics/material.html">Material</a>
+  Pure data — <code>Model</code> has no <code>render()</code> method and never mentions
+  <code>Camera</code> or <code>Renderer</code>. Culling and submission are the caller's
+  job: for each part, combine <code>model.world_transform * part.transform</code>, decide
+  visibility against whatever <a href="../graphics/frustum.html"><code>Frustum</code></a>
+  the caller is culling with, and call
+  <a href="../graphics/renderer.html"><code>Renderer::submit()</code></a>. See
+  <code>submitScene()</code> in <code>sandbox/model_test/main.cpp</code> for the reference
+  loop — that function, not <code>Model</code> or <code>Camera</code>, is what ties "a
+  group of models" to "a camera" for one frame. No node hierarchy or scene graph beyond
+  the flat part list — see <a href="gltf_loader.html">loadGltf</a> for how a glTF node
+  tree collapses into it. Each part can independently be a <code>StandardMesh</code> or an
+  <code>InstancedMesh</code> — see <a href="../graphics/material.html">Material</a>
   <a href="../graphics/mesh.html">Mesh</a>.
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
   Depends on <a href="../graphics/mesh.html"><code>graphics::Mesh</code></a> (the concept,
-  <code>StandardMesh</code>, <code>InstancedMesh</code>)/<code>Renderer</code>/<code>Camera</code>/
-  <a href="../graphics/material.html"><code>Material</code></a>.
-  Built by <code>scene::loadGltf</code> (one <code>Model</code> per glTF file, gathering
-  every mesh primitive in the node tree, always as <code>StandardMesh</code>); owned by
-  <code>scene::Scene</code>.
+  <code>StandardMesh</code>, <code>InstancedMesh</code>) and
+  <a href="../graphics/material.html"><code>Material</code></a> only — no
+  <code>Renderer</code>, no <code>Camera</code>. Built by <code>scene::loadGltf</code>,
+  which returns a <code>std::vector&lt;Model&gt;</code> directly (one per glTF scene root
+  node that contributes a mesh); nothing owns a single <code>Model</code> on its
+  behalf — the old <code>scene::Scene</code> wrapper that used to hold one no longer exists.
 </p>
 
 <h2>Public API</h2>
@@ -86,10 +90,16 @@
     void convertToInstanced();   // lossy for the reverse direction -- see graphics::Mesh
 };
 
+// Transform the 8 local corners and re-fit; loose for a rotated box but never smaller than true.
+Eigen::AlignedBox3f worldBounds(const Eigen::Matrix4f& world_matrix, const Eigen::AlignedBox3f& local);
+
 class Model {
+    // Placed on top of every part's own transform by the caller. Identity by default --
+    // a Model with no placement set renders exactly where its parts' transforms already put it.
+    Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
+
     template &lt;graphics::Mesh T&gt;
     void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material, Eigen::AlignedBox3f local_bounds);
-    void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
     u32 partCount() const;
     std::vector&lt;ModelPart&gt;& mutableParts();
@@ -100,9 +110,13 @@ class Model {
   <li>
     <strong>Meshes only, deliberately.</strong> An earlier version of this class also
     held <code>Light</code>s directly, which didn't make sense — a light illuminates a
-    model, it isn't a kind of geometry. <code>scene::Scene</code> exists specifically to
-    hold both <code>Model</code>s and <code>Light</code>s together; <code>Model</code>
-    went back to exactly this shape.
+    model, it isn't a kind of geometry. A later version wrapped <code>Model</code>s and
+    <code>Light</code>s together in a <code>scene::Scene</code>, which turned out to buy
+    nothing either — every load produced exactly one <code>Model</code>, so the wrapper
+    just added a layer around a list that was already the right shape.
+    <a href="gltf_loader.html">loadGltf</a> now returns
+    <code>std::vector&lt;Model&gt;</code> and <code>std::vector&lt;Light&gt;</code>
+    directly.
   </li>
   <li>No static factory — unlike <code>Mesh</code>/<code>Surface</code>, <code>Model</code> doesn't allocate any GPU resource itself, it just aggregates already-created meshes, so ordinary construction + <code>addPart()</code> is enough.</li>
   <li>
@@ -117,33 +131,32 @@ class Model {
     vertex scan when those are absent).
   </li>
   <li>
-    <strong><code>render()</code> frustum-culls per part, but only <code>StandardMesh</code>
-    parts.</strong> For each part it builds a world AABB —
-    <code>worldBounds()</code> transforms the eight local corners by
-    <code>world_transform * part.transform</code> and re-fits an axis-aligned box around
-    them, which is loose for a rotated box but never smaller than the true bounds, so it
-    never culls something visible — and skips the draw if
-    <a href="../graphics/frustum.html"><code>Frustum::intersects()</code></a> returns
-    false. <code>InstancedMesh</code> parts are always submitted: their per-instance
+    <strong>Culling lives in the caller's loop, not on <code>Model</code>.</strong>
+    <code>worldBounds()</code> (a free function, promoted out of a caller's private
+    helper) transforms the eight local corners by
+    <code>model.world_transform * part.transform</code> and re-fits an axis-aligned box
+    around them — loose for a rotated box but never smaller than the true bounds, so it
+    never culls something visible. <code>submitScene()</code> in
+    <code>sandbox/model_test/main.cpp</code> is the reference: it only culls
+    <code>StandardMesh</code> parts against
+    <a href="../graphics/frustum.html"><code>Frustum::intersects()</code></a>;
+    <code>InstancedMesh</code> parts are always submitted, since their per-instance
     transforms live in the instance buffer and aren't culled yet, so one part's AABB
-    can't stand in for the whole grid. The frustum itself is fetched once per
-    <code>render()</code> call from <code>camera.frustum()</code> (cached on the
-    <a href="../graphics/camera.html">Camera</a>).
+    can't stand in for the whole grid.
   </li>
   <li>
-    <strong><code>render()</code> is non-<code>const</code></strong>, and iterates
-    <code>ModelPart&amp;</code> not <code>const ModelPart&amp;</code> — it ultimately calls
-    <code>Renderer::renderMesh(T&amp; mesh, ...)</code>, which needs mutable access so an
-    <code>InstancedMesh</code> can upload its dirty instance buffer and clear the flag during
-    render. This is why <code>scene::Scene::render()</code> is non-<code>const</code> too;
-    <code>StandardMesh</code> pays the same non-<code>const</code> requirement for free even
-    though it never actually mutates.
+    <strong><code>mutableParts()</code> returns <code>ModelPart&amp;</code>, not
+    <code>const</code></strong> — a caller submitting an <code>InstancedMesh</code> part
+    needs mutable access so it can upload a dirty instance buffer and clear the flag
+    (<code>InstancedMesh::uploadIfDirty()</code>) before drawing.
+    <code>StandardMesh</code> parts pay the same non-<code>const</code> requirement for
+    free even though they never actually mutate.
   </li>
   <li>
-    Dispatch to the right <code>renderMesh&lt;T&gt;()</code> instantiation happens via
-    <code>std::visit</code> over <code>ModelPart::mesh</code> with a generic lambda — the compiler
-    picks the right template instantiation per alternative, no manual type switch in
-    <code>Model::render()</code>.
+    Dispatching to the right <code>Renderer::submit&lt;T&gt;()</code> instantiation happens
+    via <code>std::visit</code> over <code>ModelPart::mesh</code> with a generic lambda in
+    the caller's loop — the compiler picks the right template instantiation per
+    alternative, no manual type switch needed.
   </li>
   <li>
     <strong><code>material</code> is always present and rides along, untouched by

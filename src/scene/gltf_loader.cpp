@@ -190,13 +190,13 @@ graphics::LightType toLightType(cgltf_light_type type) {
     __builtin_unreachable(); // RLOG(LL_FATAL, ...) exits the process
 }
 
-void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Scene& scene) {
+void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, std::vector<graphics::Light>& lights) {
     // glTF lights aim down local -Z; inverse-transpose keeps a non-uniformly scaled node pointing true.
     const Eigen::Matrix3f normal_basis = transform.block<3, 3>(0, 0).inverse().transpose();
     const Eigen::Vector3f direction = (normal_basis * Eigen::Vector3f(0.0f, 0.0f, -1.0f)).normalized();
 
     const graphics::LightType type = toLightType(light.type);
-    scene.addLight(graphics::Light{
+    lights.push_back(graphics::Light{
         .type = type,
         .color = Eigen::Vector3f(light.color[0], light.color[1], light.color[2]),
         .intensity = light.intensity,
@@ -210,7 +210,7 @@ void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, Sce
 }
 
 void walkNode(const cgltf_node& node, const Eigen::Matrix4f& parent_transform, const std::filesystem::path& gltf_path,
-              Model& model, Scene& scene) {
+              Model& model, std::vector<graphics::Light>& lights) {
     float local[16];
     cgltf_node_transform_local(&node, local);
     const Eigen::Matrix4f transform = parent_transform * Eigen::Map<const Eigen::Matrix4f>(local);
@@ -221,16 +221,16 @@ void walkNode(const cgltf_node& node, const Eigen::Matrix4f& parent_transform, c
         }
     }
     if (node.light != nullptr) {
-        appendLight(*node.light, transform, scene);
+        appendLight(*node.light, transform, lights);
     }
     for (cgltf_size i = 0; i < node.children_count; i++) {
-        walkNode(*node.children[i], transform, gltf_path, model, scene);
+        walkNode(*node.children[i], transform, gltf_path, model, lights);
     }
 }
 
 } // namespace
 
-Scene loadGltf(const std::filesystem::path& path) {
+LoadedGltf loadGltf(const std::filesystem::path& path) {
     cgltf_options options{};
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
@@ -245,15 +245,19 @@ Scene loadGltf(const std::filesystem::path& path) {
         RLOG(LL_FATAL, "gltf: no default scene in %s", path.c_str());
     }
 
-    Scene scene;
-    Model model;
+    // One Model per root node that actually contributes a mesh -- a root node whose subtree
+    // is lights-only still gets walked (for its lights) but its empty Model is discarded.
+    LoadedGltf result;
     for (cgltf_size i = 0; i < data->scene->nodes_count; i++) {
-        walkNode(*data->scene->nodes[i], Eigen::Matrix4f::Identity(), path, model, scene);
+        Model model;
+        walkNode(*data->scene->nodes[i], Eigen::Matrix4f::Identity(), path, model, result.lights);
+        if (model.partCount() > 0) {
+            result.models.push_back(std::move(model));
+        }
     }
 
     cgltf_free(data);
-    scene.addModel(std::move(model));
-    return scene;
+    return result;
 }
 
 } // namespace scene

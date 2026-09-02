@@ -74,7 +74,6 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderer.cpp",
 
 	    "src/scene/model.cpp",
-	    "src/scene/scene.cpp",
 	    "src/scene/gltf_loader.cpp",
 
 

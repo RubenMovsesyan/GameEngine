@@ -33,7 +33,6 @@
 
   <h4>scene</h4>
   <a href="../scene/model.html">Model</a>
-  <a href="../scene/scene.html">Scene</a>
   <a href="../scene/gltf_loader.html">loadGltf</a>
 
   <h4>app</h4>
@@ -54,8 +53,8 @@
 
 <h2>Role</h2>
 <p>
-  Carried by <a href="../scene/scene.html"><code>Scene</code></a> (one per scene), handed to
-  <a href="renderer.html"><code>Renderer::setSkybox()</code></a> each frame the same way lights are.
+  Handed directly to <a href="renderer.html"><code>Renderer::setSkybox()</code></a> by the
+  render loop (<code>scene::Scene</code>, which used to carry one, no longer exists).
   <code>Skybox</code> itself holds no GPU resources for the gradient case — it's three
   colours and a scalar. The <code>Renderer</code> unpacks it into push constants for a
   dedicated full-screen sky pass that runs after lighting and before post-process.
@@ -64,8 +63,7 @@
 <h2>Depends on / depended on by</h2>
 <p>
   Depends only on <code>Eigen</code> and (for the future <code>CubemapSky</code> slot)
-  <a href="texture.html"><code>Texture</code></a>. Held by <code>scene::Scene</code>;
-  consumed by <code>graphics::Renderer</code>. The render loop
+  <a href="texture.html"><code>Texture</code></a>. Consumed by <code>graphics::Renderer</code>. The render loop
   (<code>sandbox/model_test/main.cpp</code>) constructs one and calls
   <code>renderer.setSkybox(scene.skybox())</code>.
 </p>

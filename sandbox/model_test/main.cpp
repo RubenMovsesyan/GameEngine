@@ -39,13 +39,12 @@ struct Sandbox {
 
         // All constructed in init(), once the GPU and the window size are up.
         std::optional<graphics::Renderer> renderer;
-        std::optional<scene::Scene> scene;
-        std::optional<scene::Scene> standalone_scene;
         std::optional<graphics::LightManager> lights;
         std::optional<graphics::Camera> camera;
 
-        Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
-        Eigen::Matrix4f standalone_transform = Eigen::Matrix4f::Identity();
+        std::vector<scene::Model> models;             // instanced grid group
+        std::vector<scene::Model> standalone_models;   // culling-test group, +10 Y
+        std::vector<graphics::Light> scene_lights;     // owned here for LightManager's pointer lifetime
 
         // F5 snapshots the camera's frustum corners here for debug-draw. Drawing the LIVE
         // camera's own frustum through its own view-projection is degenerate -- it's always
@@ -65,11 +64,13 @@ struct Sandbox {
 void init(app::Application& app, Sandbox& sandbox) {
     sandbox.renderer.emplace();
 
-    sandbox.scene = scene::loadGltf(sandbox.model_path);
-    RLOG(LL_DEBUG, sandbox.scene->display());
+    scene::LoadedGltf loaded = scene::loadGltf(sandbox.model_path);
+    sandbox.models = std::move(loaded.models);
+    sandbox.scene_lights = std::move(loaded.lights);
+    RLOG(LL_DEBUG, "gltf: %zu model(s), %zu light(s)", sandbox.models.size(), sandbox.scene_lights.size());
 
     // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane.
-    for (scene::Model& model : sandbox.scene->mutableModels()) {
+    for (scene::Model& model : sandbox.models) {
         for (scene::ModelPart& part : model.mutableParts()) {
             part.convertToInstanced();
             graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
@@ -87,11 +88,15 @@ void init(app::Application& app, Sandbox& sandbox) {
 
     // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
     // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
-    sandbox.standalone_scene = scene::loadGltf(sandbox.model_path);
-    sandbox.standalone_transform(1, 3) = 10.0f;
+    // Its lights are deliberately unused, same as before this file was flattened out of Scene.
+    scene::LoadedGltf standalone_loaded = scene::loadGltf(sandbox.model_path);
+    sandbox.standalone_models = std::move(standalone_loaded.models);
+    for (scene::Model& model : sandbox.standalone_models) {
+        model.world_transform(1, 3) = 10.0f;
+    }
 
     sandbox.lights.emplace();
-    for (const graphics::Light& light : sandbox.scene->lights()) {
+    for (const graphics::Light& light : sandbox.scene_lights) {
         RLOG(LL_DEBUG, "Added light: " + light.display());
         sandbox.lights->add(light);
     }
@@ -143,13 +148,13 @@ void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
     }
 }
 
-// Culls and submits every part of every model in scene against frustum. This loop -- not
-// Camera or Model -- is what ties "a scene" to "a camera" for one frame; Renderer::submit
+// Culls and submits every part of every model against frustum. This loop -- not Camera or
+// Model -- is what ties "a group of models" to "a camera" for one frame; Renderer::submit
 // has no notion of camera, and Model has no notion of Renderer or Camera at all.
-void submitScene(graphics::Renderer& renderer, scene::Scene& scene, const Eigen::Matrix4f& world_transform, const graphics::Frustum& frustum) {
-    for (scene::Model& model : scene.mutableModels()) {
+void submitScene(graphics::Renderer& renderer, std::vector<scene::Model>& models, const graphics::Frustum& frustum) {
+    for (scene::Model& model : models) {
         for (scene::ModelPart& part : model.mutableParts()) {
-            const Eigen::Matrix4f world_matrix = world_transform * part.transform;
+            const Eigen::Matrix4f world_matrix = model.world_transform * part.transform;
             const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
 
             // Camera-frustum cull only decides G-buffer visibility -- a culled object still casts shadows.
@@ -208,14 +213,14 @@ void frame(app::Application& app, Sandbox& sandbox) {
     renderer.setLights(*sandbox.lights);
 
     const graphics::Frustum& frustum = sandbox.camera->frustum();
-    submitScene(renderer, *sandbox.scene, sandbox.world_transform, frustum);
-    submitScene(renderer, *sandbox.standalone_scene, sandbox.standalone_transform, frustum);
+    submitScene(renderer, sandbox.models, frustum);
+    submitScene(renderer, sandbox.standalone_models, frustum);
 
     // Example calls -- establishes the pattern later features (shadow cascades, light
     // ranges) can copy. No-op unless F3 has turned debug draw on.
-    for (scene::Model& model : sandbox.standalone_scene->mutableModels()) {
+    for (scene::Model& model : sandbox.standalone_models) {
         for (const scene::ModelPart& part : model.mutableParts()) {
-            const Eigen::Matrix4f world_matrix = sandbox.standalone_transform * part.transform;
+            const Eigen::Matrix4f world_matrix = model.world_transform * part.transform;
             const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
             renderer.debugDraw().aabb(world_bounds, Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f));
         }
@@ -251,8 +256,8 @@ void frame(app::Application& app, Sandbox& sandbox) {
 
 // Every one of these owns sokol handles, so they have to go before sg_shutdown().
 void cleanup(Sandbox& sandbox) {
-    sandbox.scene.reset();
-    sandbox.standalone_scene.reset();
+    sandbox.models.clear();
+    sandbox.standalone_models.clear();
     sandbox.lights.reset();
     sandbox.renderer.reset();
     sandbox.camera.reset();

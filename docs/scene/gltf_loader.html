@@ -33,7 +33,6 @@
 
   <h4>scene</h4>
   <a href="model.html">Model</a>
-  <a href="scene.html">Scene</a>
   <a class="here" href="gltf_loader.html">loadGltf</a>
 
   <h4>app</h4>
@@ -50,21 +49,25 @@
 <main>
 
 <h1><code>scene::loadGltf</code></h1>
-<p class="lede">Parses a glTF/glb file with cgltf and returns a populated Scene. The only place in the engine that knows cgltf exists.</p>
+<p class="lede">Parses a glTF/glb file with cgltf and returns its models and lights directly. The only place in the engine that knows cgltf exists.</p>
 
 <h2>Role</h2>
 <p>
-  Parses the file, walks its node tree accumulating world transforms, and for each
-  node builds either mesh parts (added to a working <code>Model</code>) or a
-  <code>Light</code> (added directly to the <code>Scene</code>). One <code>Model</code>
-  per file, covering every mesh primitive found; every <code>KHR_lights_punctual</code>
-  light found goes into the same <code>Scene</code>.
+  Parses the file, then walks each of the glTF scene's root nodes in turn — a glTF scene
+  is a <em>forest</em> of independent root nodes
+  (<code>cgltf_scene.nodes[]</code>), not one tree. Each root node's subtree is walked
+  into its own working <code>Model</code>, accumulating world transforms and collecting
+  mesh parts; any <code>Light</code> found anywhere in that subtree is appended to one
+  flat list shared across the whole file, independent of which root node it was under. A
+  root node whose subtree contains a mesh becomes one entry in the returned model list; a
+  root node with no mesh anywhere under it (a light-only node, in every test asset today)
+  ends up as an empty <code>Model</code> and is dropped rather than returned.
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>gpu::Device</code>, <code>scene::Scene</code>/<code>Model</code>,
-  <code>graphics::StandardMesh</code>/<code>Vertex</code>/<code>Light</code>/
+  Depends on <code>scene::Model</code>, <code>graphics::StandardMesh</code>/
+  <code>Vertex</code>/<code>Light</code>/
   <a href="../graphics/material.html"><code>Material</code></a>/
   <a href="../graphics/texture.html"><code>Texture</code></a>, <code>cgltf</code>
   (vendored, single-header), and <code>stb_image</code> (vendored, single-header, image
@@ -74,7 +77,12 @@
 </p>
 
 <h2>Public API</h2>
-<pre><code>Scene loadGltf(const gpu::Device&, const std::filesystem::path&);</code></pre>
+<pre><code>struct LoadedGltf {
+    std::vector&lt;Model&gt; models;
+    std::vector&lt;graphics::Light&gt; lights;
+};
+
+LoadedGltf loadGltf(const std::filesystem::path&);</code></pre>
 
 <h2>What it does and doesn't support</h2>
 <ul>

@@ -24,6 +24,8 @@ class Camera {
         const Frustum& frustum() const;
         const Eigen::Vector3f& position() const { return m_position; }
         const Eigen::Vector3f& direction() const { return m_direction; }
+        f32 nearPlane() const { return m_near_plane; }
+        f32 farPlane() const { return m_far_plane; }
 
         // Both unconditionally mark the cached matrices dirty.
         Eigen::Vector3f* mutablePosition() {

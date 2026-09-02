@@ -1,9 +1,7 @@
 #pragma once
 
-#include <graphics/camera.hpp>
 #include <graphics/material.hpp>
 #include <graphics/mesh.hpp>
-#include <graphics/renderer.hpp>
 
 #include <Eigen/Dense>
 
@@ -24,12 +22,15 @@ struct ModelPart {
     void convertToInstanced();
 };
 
-// A flat collection of meshes, each with its own local transform.
+// Transform the 8 local corners and re-fit; loose for a rotated box but never smaller than true.
+Eigen::AlignedBox3f worldBounds(const Eigen::Matrix4f& world_matrix, const Eigen::AlignedBox3f& local);
+
+// A flat collection of meshes, each with its own local transform. Pure data -- no Camera or
+// Renderer dependency; culling and submission are the caller's job (see sandbox/model_test).
 class Model {
     public:
         template <graphics::Mesh T>
         void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material, Eigen::AlignedBox3f local_bounds);
-        void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
 
         u32 partCount() const { return static_cast<u32>(m_parts.size()); }
         std::vector<ModelPart>& mutableParts() { return m_parts; }

@@ -133,6 +133,27 @@ void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
     }
 }
 
+// Culls and submits every part of every model in scene against frustum. This loop -- not
+// Camera or Model -- is what ties "a scene" to "a camera" for one frame; Renderer::submit
+// has no notion of camera, and Model has no notion of Renderer or Camera at all.
+void submitScene(graphics::Renderer& renderer, scene::Scene& scene, const Eigen::Matrix4f& world_transform, const graphics::Frustum& frustum) {
+    for (scene::Model& model : scene.mutableModels()) {
+        for (scene::ModelPart& part : model.mutableParts()) {
+            const Eigen::Matrix4f world_matrix = world_transform * part.transform;
+            const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
+
+            // Camera-frustum cull only decides G-buffer visibility -- a culled object still casts shadows.
+            // Instanced parts carry per-instance transforms we don't cull yet, so treat them as visible.
+            const bool camera_visible =
+                !std::holds_alternative<graphics::StandardMesh>(part.mesh) || frustum.intersects(world_bounds);
+
+            std::visit(
+                [&](auto& mesh) { renderer.submit(mesh, part.material, world_matrix, world_bounds, camera_visible); }, part.mesh
+            );
+        }
+    }
+}
+
 void frame(app::Application& app, Sandbox& sandbox) {
     const auto now = std::chrono::steady_clock::now();
     const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
@@ -160,21 +181,19 @@ void frame(app::Application& app, Sandbox& sandbox) {
     flyCamera(app, sandbox, dt);
 
     graphics::Renderer& renderer = *sandbox.renderer;
-    renderer.beginFrame();
+    renderer.beginFrame(*sandbox.camera);
     renderer.setLights(*sandbox.lights);
-    sandbox.scene->render(renderer, sandbox.world_transform, *sandbox.camera);
-    sandbox.standalone_scene->render(renderer, sandbox.standalone_transform, *sandbox.camera);
+
+    const graphics::Frustum& frustum = sandbox.camera->frustum();
+    submitScene(renderer, *sandbox.scene, sandbox.world_transform, frustum);
+    submitScene(renderer, *sandbox.standalone_scene, sandbox.standalone_transform, frustum);
 
     // Example calls -- establishes the pattern later features (shadow cascades, light
     // ranges) can copy. No-op unless F3 has turned debug draw on.
     for (scene::Model& model : sandbox.standalone_scene->mutableModels()) {
         for (const scene::ModelPart& part : model.mutableParts()) {
             const Eigen::Matrix4f world_matrix = sandbox.standalone_transform * part.transform;
-            Eigen::AlignedBox3f world_bounds;
-            for (int i = 0; i < 8; i++) {
-                const Eigen::Vector3f corner = part.local_bounds.corner(static_cast<Eigen::AlignedBox3f::CornerType>(i));
-                world_bounds.extend((world_matrix * corner.homogeneous()).head<3>());
-            }
+            const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
             renderer.debugDraw().aabb(world_bounds, Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f));
         }
     }
@@ -182,7 +201,7 @@ void frame(app::Application& app, Sandbox& sandbox) {
     // separate shape. A detached debug vantage needs a second Camera; not worth it just
     // to exercise this call. Confirms the API and wiring; roadmap-nice-debug-draw can
     // upgrade this once something else (e.g. a light) wants a real off-camera frustum.
-    renderer.debugDraw().frustum(sandbox.camera->frustum().corners(), Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
+    renderer.debugDraw().frustum(frustum.corners(), Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
 
     renderer.endFrame();
 }

@@ -313,7 +313,7 @@ void Renderer::rebuildTargets(int width, int height) {
     m_ldr = makeColorTarget(width, height, kLdrFormat, "tonemapped colour");
 }
 
-void Renderer::beginFrame() {
+void Renderer::beginFrame(const Camera& camera) {
     // Textures decoded on worker threads can only be uploaded from here, on the sokol thread.
     Texture::drainUploads();
 
@@ -323,6 +323,15 @@ void Renderer::beginFrame() {
 
     m_draw_list.clear();
     m_has_shadow_light = false;
+
+    m_view_projection = camera.viewProjectionMatrix();
+    m_inverse_view_projection = camera.inverseViewProjectionMatrix();
+    m_view = camera.transformationMatrix();
+    m_view_position = camera.position();
+
+    // Cascades are fitted in endFrame(), not here: they need m_sun_direction, which
+    // setLights() -- called after beginFrame(), per its own contract -- is what sets it.
+    m_pending_camera = &camera;
 }
 
 void Renderer::setLights(const LightManager& lights) {
@@ -375,24 +384,9 @@ void Renderer::cycleShadowMapDebugLayer() {
 }
 
 template <Mesh T>
-void Renderer::renderMesh(
-    T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible,
-    const Camera& camera
+void Renderer::submit(
+    T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible
 ) {
-    // The camera is the same for every draw in a frame, so the first one settles it -- and it is
-    // also what the cascades are fitted against.
-    if (m_draw_list.empty()) {
-        m_view_projection = camera.viewProjectionMatrix();
-        m_inverse_view_projection = camera.inverseViewProjectionMatrix();
-        m_view = camera.transformationMatrix();
-        m_view_position = camera.position();
-
-        const CascadeSetup cascades =
-            computeCascades(camera, m_sun_direction, m_shadow_distance, m_cascade_split_lambda, static_cast<f32>(kShadowMapResolution));
-        m_cascade_view_proj = cascades.view_proj;
-        m_cascade_split_depth = cascades.split_view_depth;
-    }
-
     DrawItem item;
     item.vertex = mesh.vertexBuffer();
     item.index = mesh.indexBuffer();
@@ -410,12 +404,8 @@ void Renderer::renderMesh(
     m_draw_list.push_back(item);
 }
 
-template void Renderer::renderMesh<StandardMesh>(
-    StandardMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool, const Camera&
-);
-template void Renderer::renderMesh<InstancedMesh>(
-    InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool, const Camera&
-);
+template void Renderer::submit<StandardMesh>(StandardMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void Renderer::submit<InstancedMesh>(InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
 
 void Renderer::recordShadowPass() {
     for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
@@ -521,6 +511,15 @@ void Renderer::recordGBufferPass() {
 }
 
 void Renderer::endFrame() {
+    // Fitted here, not in beginFrame(): needs m_sun_direction, which setLights() -- called
+    // after beginFrame() by contract -- is what sets. m_pending_camera is non-owning and
+    // only valid for this frame; beginFrame() must have run first to set it.
+    const CascadeSetup cascades = computeCascades(
+        *m_pending_camera, m_sun_direction, m_shadow_distance, m_cascade_split_lambda, static_cast<f32>(kShadowMapResolution)
+    );
+    m_cascade_view_proj = cascades.view_proj;
+    m_cascade_split_depth = cascades.split_view_depth;
+
     recordShadowPass();
     recordGBufferPass();
 

@@ -26,12 +26,6 @@ void Scene::addLight(graphics::Light light) {
     m_lights.push_back(std::move(light));
 }
 
-void Scene::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_transform, const graphics::Camera& camera) {
-    for (Model& model : m_models) {
-        model.render(renderer, world_transform, camera);
-    }
-}
-
 std::string Scene::display() const {
     std::string out = "Scene: " + std::to_string(m_models.size()) + " model(s), " + std::to_string(m_lights.size()) + " light(s)\n";
 

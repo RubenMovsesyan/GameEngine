@@ -30,14 +30,18 @@ class Renderer {
     public:
         Renderer();
 
-        void beginFrame();
+        // Seeds view/inverse-view-projection and fits the shadow cascades against this
+        // camera. Called once, unconditionally, at the start of the frame -- not inferred
+        // from whichever submit() happens to run first.
+        void beginFrame(const Camera&);
 
         // camera_visible only gates the G-buffer pass; shadow casters render regardless (an off-screen
-        // object can still cast a shadow into view).
+        // object can still cast a shadow into view). Caller decides visibility (e.g. against
+        // Camera::frustum()) -- submit() itself has no notion of "camera".
         template <Mesh T>
-        void renderMesh(
+        void submit(
             T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds,
-            bool camera_visible, const Camera&
+            bool camera_visible
         );
 
         // Call between beginFrame() and endFrame().
@@ -96,7 +100,7 @@ class Renderer {
             bool camera_visible = true; // false => shadow-cast only, skipped by the G-buffer pass
         };
 
-        // Filled by renderMesh() during the frame; replayed by the record*Pass() methods in endFrame().
+        // Filled by submit() during the frame; replayed by the record*Pass() methods in endFrame().
         std::vector<DrawItem> m_draw_list;
 
         int m_width = 0;
@@ -158,7 +162,12 @@ class Renderer {
         bool m_show_shadow_map_debug = false;
         u32 m_shadow_debug_layer = 0;
 
-        // Stashed each frame by renderMesh, consumed by endFrame.
+        // Non-owning; valid only for the frame that queued it (same lifetime contract as
+        // DrawItem::material). endFrame() reads it to fit the shadow cascades, once
+        // setLights() has had a chance to set m_sun_direction.
+        const Camera* m_pending_camera = nullptr;
+
+        // Stashed once by beginFrame(camera), consumed by endFrame.
         Eigen::Vector3f m_view_position{0.0f, 0.0f, 0.0f};
         Eigen::Matrix4f m_view_projection = Eigen::Matrix4f::Identity();
         Eigen::Matrix4f m_inverse_view_projection = Eigen::Matrix4f::Identity();

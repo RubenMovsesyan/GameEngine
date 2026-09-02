@@ -1,8 +1,6 @@
 #pragma once
 
-#include <graphics/camera.hpp>
 #include <graphics/light.hpp>
-#include <graphics/renderer.hpp>
 #include <graphics/skybox.hpp>
 #include <scene/model.hpp>
 #include <utils/display.hpp>
@@ -19,7 +17,6 @@ class Scene {
         void addModel(Model model);
         void addLight(graphics::Light light);
 
-        void render(graphics::Renderer&, const Eigen::Matrix4f& world_transform, const graphics::Camera&);
         const std::vector<graphics::Light>& lights() const { return m_lights; }
         std::vector<Model>& mutableModels() { return m_models; }
 

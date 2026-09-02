@@ -4,9 +4,6 @@
 
 namespace scene {
 
-namespace {
-
-// Transform the 8 local corners and re-fit; loose for a rotated box but never smaller than true.
 Eigen::AlignedBox3f worldBounds(const Eigen::Matrix4f& world_matrix, const Eigen::AlignedBox3f& local) {
     Eigen::AlignedBox3f out;
     for (int i = 0; i < 8; i++) {
@@ -16,8 +13,6 @@ Eigen::AlignedBox3f worldBounds(const Eigen::Matrix4f& world_matrix, const Eigen
     }
     return out;
 }
-
-} // namespace
 
 void ModelPart::convertToStandard() {
     if (std::holds_alternative<graphics::StandardMesh>(mesh)) {
@@ -42,22 +37,5 @@ void Model::addPart(T mesh, Eigen::Matrix4f transform, graphics::Material materi
 
 template void Model::addPart<graphics::StandardMesh>(graphics::StandardMesh, Eigen::Matrix4f, graphics::Material, Eigen::AlignedBox3f);
 template void Model::addPart<graphics::InstancedMesh>(graphics::InstancedMesh, Eigen::Matrix4f, graphics::Material, Eigen::AlignedBox3f);
-
-void Model::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_transform, const graphics::Camera& camera) {
-    const graphics::Frustum& frustum = camera.frustum();
-    for (ModelPart& part : m_parts) {
-        const Eigen::Matrix4f world_matrix = world_transform * part.transform;
-        const Eigen::AlignedBox3f world_bounds = worldBounds(world_matrix, part.local_bounds);
-
-        // Camera-frustum cull only decides G-buffer visibility -- a culled object still casts shadows.
-        // Instanced parts carry per-instance transforms we don't cull yet, so treat them as visible.
-        const bool camera_visible =
-            !std::holds_alternative<graphics::StandardMesh>(part.mesh) || frustum.intersects(world_bounds);
-
-        std::visit(
-            [&](auto& mesh) { renderer.renderMesh(mesh, part.material, world_matrix, world_bounds, camera_visible, camera); }, part.mesh
-        );
-    }
-}
 
 } // namespace scene

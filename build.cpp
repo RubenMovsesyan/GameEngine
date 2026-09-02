@@ -32,7 +32,7 @@ int main(int argc, char** argv) {
 	// headers below get tracked as depending on them and rebuild when a shader changes.
 	const std::vector<std::string> shader_names = {
 	    "gbuffer.vert", "gbuffer_instanced.vert", "gbuffer.frag", "fullscreen_triangle.vert", "lighting.frag", "tonemap.frag",
-	    "sky.frag", "fxaa.frag"};
+	    "sky.frag", "fxaa.frag", "shadow_depth.vert", "shadow_depth_instanced.vert", "shadow_depth.frag", "shadow_debug.frag"};
 
 	// A Command Output is always considered stale (see Output::isStale), so guard the
 	// glslc invocation ourselves: only add the Task when the .h is missing or older than
@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderer.cpp",
 	    "src/graphics/camera.cpp",
 	    "src/graphics/frustum.cpp",
+	    "src/graphics/shadow.cpp",
 	    "src/graphics/mesh.cpp",
 	    "src/graphics/texture.cpp",
 	    "src/graphics/material.cpp",

@@ -47,14 +47,16 @@ void Model::render(graphics::Renderer& renderer, const Eigen::Matrix4f& world_tr
     const graphics::Frustum& frustum = camera.frustum();
     for (ModelPart& part : m_parts) {
         const Eigen::Matrix4f world_matrix = world_transform * part.transform;
+        const Eigen::AlignedBox3f world_bounds = worldBounds(world_matrix, part.local_bounds);
 
-        // Instanced parts carry per-instance transforms we don't cull yet -- always submit those.
-        if (std::holds_alternative<graphics::StandardMesh>(part.mesh) &&
-            !frustum.intersects(worldBounds(world_matrix, part.local_bounds))) {
-            continue;
-        }
+        // Camera-frustum cull only decides G-buffer visibility -- a culled object still casts shadows.
+        // Instanced parts carry per-instance transforms we don't cull yet, so treat them as visible.
+        const bool camera_visible =
+            !std::holds_alternative<graphics::StandardMesh>(part.mesh) || frustum.intersects(world_bounds);
 
-        std::visit([&](auto& mesh) { renderer.renderMesh(mesh, part.material, world_matrix, camera); }, part.mesh);
+        std::visit(
+            [&](auto& mesh) { renderer.renderMesh(mesh, part.material, world_matrix, world_bounds, camera_visible, camera); }, part.mesh
+        );
     }
 }
 

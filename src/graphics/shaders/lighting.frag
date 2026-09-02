@@ -8,6 +8,8 @@ layout(binding = 1) uniform texture2D tNormal;
 layout(binding = 2) uniform sampler sLinear;
 layout(binding = 4) uniform texture2D tDepth;
 layout(binding = 5) uniform texture2D tMaterial;
+layout(binding = 6) uniform texture2DArray tShadow;
+layout(binding = 7) uniform samplerShadow sShadowCmp;
 
 struct Light {
     vec4 color_intensity;  // xyz = color, w = intensity
@@ -20,12 +22,18 @@ layout(std430, binding = 3) readonly buffer LightBuffer {
     Light lights[];
 };
 
-layout(push_constant) uniform PushConstants {
+const int kCascadeCount = 4;
+
+layout(set = 1, binding = 0) uniform LightingUniforms {
     mat4 inverse_view_projection; // see reconstructWorldPosition()
+    mat4 view;                    // world -> view; for cascade selection by depth
+    mat4 cascade_view_proj[kCascadeCount];
     vec4 view_position;
     vec4 ambient;                 // rgb = flat ambient irradiance (pre-tonemap), a unused
+    vec4 cascade_split_depth;     // x..w = view-space far edge of each cascade
+    vec4 shadow_params;           // x = depth bias, y = normal offset (world units)
     uint light_count;
-} pc;
+} u;
 
 const float kPi = 3.14159265359;
 const vec3 kDielectricF0 = vec3(0.04); // glTF's fixed non-metal reflectance
@@ -41,8 +49,56 @@ vec3 octDecode(vec2 f) {
 
 vec3 reconstructWorldPosition(vec2 uv, float depth) {
     vec4 ndc = vec4(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0); // Y negated -- see docs (NVRHI viewport flip)
-    vec4 world = pc.inverse_view_projection * ndc;
+    vec4 world = u.inverse_view_projection * ndc;
     return world.xyz / world.w;
+}
+
+// 3x3 PCF against one cascade slice. Returns 1.0 = fully lit, 0.0 = fully shadowed.
+float sampleCascade(int cascade, vec3 world_pos, vec3 N) {
+    vec4 lp = u.cascade_view_proj[cascade] * vec4(world_pos + N * u.shadow_params.y, 1.0);
+    lp.xyz /= lp.w;
+
+    vec2 uv = lp.xy * 0.5 + 0.5;
+    uv.y = 1.0 - uv.y; // undo the NVRHI viewport Y-flip (matches reconstructWorldPosition)
+
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || lp.z > 1.0) {
+        return 1.0;
+    }
+
+    float ref = lp.z - u.shadow_params.x;
+    vec2 texel = 1.0 / vec2(textureSize(sampler2DArrayShadow(tShadow, sShadowCmp), 0).xy);
+
+    float sum = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            sum += texture(sampler2DArrayShadow(tShadow, sShadowCmp), vec4(uv + vec2(x, y) * texel, float(cascade), ref));
+        }
+    }
+    return sum / 9.0;
+}
+
+float sampleShadow(vec3 world_pos, vec3 N) {
+    float view_depth = -(u.view * vec4(world_pos, 1.0)).z;
+
+    int cascade = kCascadeCount - 1;
+    for (int c = 0; c < kCascadeCount; c++) {
+        if (view_depth < u.cascade_split_depth[c]) {
+            cascade = c;
+            break;
+        }
+    }
+
+    float visibility = sampleCascade(cascade, world_pos, N);
+
+    // Blend into the next cascade over the last 15% of this one's range to hide the seam.
+    float split = u.cascade_split_depth[cascade];
+    float prev = cascade == 0 ? 0.0 : u.cascade_split_depth[cascade - 1];
+    float band = 0.15 * (split - prev);
+    if (cascade < kCascadeCount - 1 && view_depth > split - band) {
+        float t = (view_depth - (split - band)) / band;
+        visibility = mix(visibility, sampleCascade(cascade + 1, world_pos, N), clamp(t, 0.0, 1.0));
+    }
+    return visibility;
 }
 
 // KHR_lights_punctual point-light falloff; range <= 0 means infinite range.
@@ -83,21 +139,23 @@ void main() {
     float roughness = clamp(material.g, 0.04, 1.0); // floor avoids a degenerate zero-area highlight
     float metallic = material.b;
 
-    vec3 view_dir = normalize(pc.view_position.xyz - world_position);
+    vec3 view_dir = normalize(u.view_position.xyz - world_position);
     vec3 f0 = mix(kDielectricF0, albedo.rgb, metallic);
     vec3 diffuse_color = albedo.rgb * (1.0 - metallic); // metals have no diffuse lobe
     float ndotv = max(dot(normal, view_dir), 1e-4);
 
     vec3 accumulated = vec3(0.0);
-    for (uint i = 0u; i < pc.light_count; i++) {
+    for (uint i = 0u; i < u.light_count; i++) {
         Light light = lights[i];
         int type = int(round(light.direction_type.w));
 
         vec3 to_light;
         float attenuation = 1.0;
+        float shadow = 1.0;
 
         if (type == 0) { // Directional -- direction is where light travels, so negate for N.L
             to_light = normalize(-light.direction_type.xyz);
+            shadow = sampleShadow(world_position, normal);
         } else if (type == 1) { // Point
             vec3 delta = light.position_range.xyz - world_position;
             float dist = length(delta);
@@ -122,8 +180,8 @@ void main() {
         vec3 kd = (vec3(1.0) - fresnel) * (1.0 - metallic); // energy left over for diffuse
 
         vec3 radiance = light.color_intensity.rgb * light.color_intensity.a * attenuation;
-        accumulated += (kd * diffuse_color / kPi + specular) * radiance * ndotl;
+        accumulated += (kd * diffuse_color / kPi + specular) * radiance * ndotl * shadow;
     }
 
-    outColor = vec4(diffuse_color * pc.ambient.rgb + accumulated, albedo.a);
+    outColor = vec4(diffuse_color * u.ambient.rgb + accumulated, albedo.a);
 }

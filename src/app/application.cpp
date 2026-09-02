@@ -8,8 +8,8 @@
 
 namespace app {
 
-Application::Application(Config config, Callback init, Callback frame)
-    : m_config(config), m_init(std::move(init)), m_frame(std::move(frame)) {}
+Application::Application(Config config, Callback init, Callback frame, Callback cleanup)
+    : m_config(config), m_init(std::move(init)), m_frame(std::move(frame)), m_cleanup(std::move(cleanup)) {}
 
 Application::~Application() {
     for (auto& worker : m_workers) {
@@ -69,7 +69,13 @@ void Application::eventCallback(const sapp_event* event, void* user_data) {
     }
 }
 
-void Application::cleanupCallback(void*) {
+void Application::cleanupCallback(void* user_data) {
+    Application& app = *static_cast<Application*>(user_data);
+
+    // Release GPU-owning state while sokol is still up; sg_destroy_* asserts after shutdown.
+    if (app.m_cleanup) {
+        app.m_cleanup(app);
+    }
     sg_shutdown();
 }
 

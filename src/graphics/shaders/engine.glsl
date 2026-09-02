@@ -153,8 +153,10 @@ layout(binding=0) uniform shadow_vs_params {
     mat4 shadow_model;
 };
 
+// Attribute slots must be contiguous, so the transform starts at 1 here -- the shadow pass
+// has no normal or uv attribute to leave room for, unlike the G-buffer pass.
 layout(location=0) in vec3 position;
-layout(location=3) in mat4 inst_transform;
+layout(location=1) in mat4 inst_transform;
 
 void main() {
     gl_Position = light_view_proj * shadow_model * inst_transform * vec4(position, 1.0);
@@ -222,7 +224,7 @@ const float kPi = 3.14159265359;
 const vec3 kDielectricF0 = vec3(0.04); // glTF's fixed non-metal reflectance
 
 vec3 reconstructWorldPosition(vec2 uv, float depth) {
-    vec4 ndc = vec4(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0);
+    vec4 ndc = vec4(uv.x * 2.0 - 1.0, uv.y * 2.0 - 1.0, depth, 1.0);
     vec4 world = inverse_view_projection * ndc;
     return world.xyz / world.w;
 }
@@ -233,7 +235,6 @@ float sampleCascade(int cascade, vec3 world_pos, vec3 N) {
     lp.xyz /= lp.w;
 
     vec2 uv = lp.xy * 0.5 + 0.5;
-    uv.y = 1.0 - uv.y;
 
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || lp.z > 1.0) {
         return 1.0;
@@ -396,7 +397,7 @@ void main() {
         discard;
     }
 
-    vec4 ndc = vec4(v_uv.x * 2.0 - 1.0, -(v_uv.y * 2.0 - 1.0), 1.0, 1.0);
+    vec4 ndc = vec4(v_uv.x * 2.0 - 1.0, v_uv.y * 2.0 - 1.0, 1.0, 1.0);
     vec4 world = sky_inverse_view_projection * ndc;
     vec3 dir = normalize(world.xyz / world.w - sky_view_position.xyz);
 

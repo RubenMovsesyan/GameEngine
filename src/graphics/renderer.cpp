@@ -85,6 +85,15 @@ void setMeshLayout(sg_vertex_layout_state& layout) {
     layout.attrs[ATTR_gbuffer_texcoord].buffer_index = 0;
 }
 
+// The shadow pass reads the same interleaved vertex buffer but only consumes position;
+// declaring the unused attributes makes Vulkan complain that they go unread.
+void setShadowMeshLayout(sg_vertex_layout_state& layout) {
+    layout.buffers[0].stride = sizeof(Vertex);
+    layout.attrs[ATTR_shadow_depth_position].format = SG_VERTEXFORMAT_FLOAT3;
+    layout.attrs[ATTR_shadow_depth_position].offset = offsetof(Vertex, position);
+    layout.attrs[ATTR_shadow_depth_position].buffer_index = 0;
+}
+
 // Per-instance InstanceData at buffer 1: a mat4 is four consecutive FLOAT4 attributes.
 void setInstanceLayout(sg_vertex_layout_state& layout, int first_location, bool include_normal_matrix) {
     layout.buffers[1].stride = sizeof(InstanceData);
@@ -214,7 +223,9 @@ void Renderer::buildPipelines() {
     setMeshLayout(gbuffer.layout);
     gbuffer.index_type = SG_INDEXTYPE_UINT32;
     gbuffer.cull_mode = SG_CULLMODE_BACK;
-    gbuffer.face_winding = SG_FACEWINDING_CCW;
+    // The projection negates Y (Vulkan NDC is Y-down), which reverses screen-space winding --
+    // so a glTF counter-clockwise front face rasterises clockwise here.
+    gbuffer.face_winding = SG_FACEWINDING_CW;
     gbuffer.depth.pixel_format = kDepthFormat;
     gbuffer.depth.compare = SG_COMPAREFUNC_LESS;
     gbuffer.depth.write_enabled = true;
@@ -234,13 +245,16 @@ void Renderer::buildPipelines() {
     // --- Shadow: depth only. Front-face culling pushes acne to surfaces facing away from the light.
     sg_pipeline_desc shadow = {};
     shadow.shader = sg_make_shader(shadow_depth_shader_desc(sg_query_backend()));
-    setMeshLayout(shadow.layout);
+    setShadowMeshLayout(shadow.layout);
     shadow.index_type = SG_INDEXTYPE_UINT32;
     shadow.cull_mode = SG_CULLMODE_FRONT;
-    shadow.face_winding = SG_FACEWINDING_CCW;
+    shadow.face_winding = SG_FACEWINDING_CW; // same Y-flip reasoning as the G-buffer pipeline
     shadow.depth.pixel_format = kDepthFormat;
     shadow.depth.compare = SG_COMPAREFUNC_LESS;
     shadow.depth.write_enabled = true;
+    // sokol only treats a pipeline as depth-only when colors[0] is explicitly NONE; a zeroed
+    // desc defaults to one colour attachment instead.
+    shadow.colors[0].pixel_format = SG_PIXELFORMAT_NONE;
     shadow.color_count = 0;
     shadow.label = "shadow pipeline";
     m_shadow_pipeline = sg_make_pipeline(&shadow);
@@ -410,6 +424,9 @@ void Renderer::recordShadowPass() {
         sg_pass pass = {};
         pass.action.depth.load_action = SG_LOADACTION_CLEAR;
         pass.action.depth.clear_value = 1.0f;
+        // Depth defaults to DONTCARE, which also means sokol never transitions the image into
+        // texture access -- and the lighting pass samples this.
+        pass.action.depth.store_action = SG_STOREACTION_STORE;
         pass.action.stencil.load_action = SG_LOADACTION_DONTCARE;
         pass.attachments.depth_stencil = *m_shadow_attachments[cascade];
         pass.label = "shadow pass";
@@ -452,6 +469,8 @@ void Renderer::recordGBufferPass() {
     }
     pass.action.depth.load_action = SG_LOADACTION_CLEAR;
     pass.action.depth.clear_value = 1.0f;
+    // Sampled by the lighting and sky passes, so it has to be stored -- see recordShadowPass.
+    pass.action.depth.store_action = SG_STOREACTION_STORE;
     pass.action.stencil.load_action = SG_LOADACTION_DONTCARE;
     pass.attachments.colors[0] = *m_albedo.attachment;
     pass.attachments.colors[1] = *m_normal.attachment;

@@ -157,6 +157,15 @@ void frame(app::Application& app, Sandbox& sandbox) {
     renderer.endFrame();
 }
 
+// Every one of these owns sokol handles, so they have to go before sg_shutdown().
+void cleanup(Sandbox& sandbox) {
+    sandbox.scene.reset();
+    sandbox.standalone_scene.reset();
+    sandbox.lights.reset();
+    sandbox.renderer.reset();
+    sandbox.camera.reset();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -182,6 +191,7 @@ int main(int argc, char** argv) {
         app::Application::Config{},
         [&sandbox](app::Application& app) { init(app, sandbox); },
         [&sandbox](app::Application& app) { frame(app, sandbox); },
+        [&sandbox](app::Application&) { cleanup(sandbox); },
     };
     app.run();
 

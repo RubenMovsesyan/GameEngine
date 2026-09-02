@@ -25,8 +25,10 @@ class Application {
 
         using Callback = std::function<void(Application&)>;
 
-        // init runs once, after the GPU is up; frame runs once per presented frame.
-        Application(Config, Callback init, Callback frame);
+        // init runs once, after the GPU is up; frame runs once per presented frame; cleanup runs
+        // once before the GPU is torn down. Anything holding GPU handles must release them in
+        // cleanup -- destroying them after sg_shutdown() asserts.
+        Application(Config, Callback init, Callback frame, Callback cleanup = {});
         ~Application();
 
         Application(Application&&) = delete;
@@ -69,6 +71,7 @@ class Application {
         Config m_config;
         Callback m_init;
         Callback m_frame;
+        Callback m_cleanup;
         InputState m_input;
 
         std::vector<std::unique_ptr<WorkerBase>> m_workers;

@@ -24,14 +24,14 @@ Eigen::Matrix4f lookAtRH(const Eigen::Vector3f& eye, const Eigen::Vector3f& targ
     return view;
 }
 
-// Vulkan clip: x,y in [-1,1], z in [0,1]. No Y-flip (pairs with frontCounterClockwise=true).
+// Vulkan clip: x,y in [-1,1], z in [0,1], +Y down -- row 1 is negated to match Camera.
 Eigen::Matrix4f orthographic(f32 l, f32 r, f32 b, f32 t, f32 n, f32 f) {
     Eigen::Matrix4f m = Eigen::Matrix4f::Zero();
     m(0, 0) = 2.0f / (r - l);
-    m(1, 1) = 2.0f / (t - b);
+    m(1, 1) = -2.0f / (t - b);
     m(2, 2) = -1.0f / (f - n);
     m(0, 3) = -(r + l) / (r - l);
-    m(1, 3) = -(t + b) / (t - b);
+    m(1, 3) = (t + b) / (t - b);
     m(2, 3) = -n / (f - n);
     m(3, 3) = 1.0f;
     return m;

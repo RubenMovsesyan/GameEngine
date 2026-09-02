@@ -20,3 +20,6 @@
 #include <sokol_gfx.h>
 #include <sokol_glue.h>
 #include <sokol_log.h>
+
+#define SOKOL_GL_IMPL
+#include <sokol_gl.h>

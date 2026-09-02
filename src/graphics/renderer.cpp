@@ -653,6 +653,10 @@ void Renderer::endFrame() {
             sg_draw(0, kFullscreenTriangleVertexCount, 1);
         }
 
+        // Unlit overlay, no depth test -- see graphics::DebugDraw. No-op while disabled.
+        m_debug_draw.begin(m_view_projection);
+        m_debug_draw.render();
+
         sg_end_pass();
     }
 

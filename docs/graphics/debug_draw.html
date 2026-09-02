@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::DebugDraw — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol_gfx · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/debug_draw.html">DebugDraw</a>
+  <a href="../graphics/frustum.html">Frustum</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/material.html">Material</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/skybox.html">Skybox</a>
+  <a href="../graphics/texture.html">Texture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::DebugDraw</code></h1>
+<p class="lede">Immediate-mode debug lines — AABBs, frustums, axes — drawn as an unlit overlay on top of the finished frame.</p>
+
+<h2>Role</h2>
+<p>
+  A thin wrapper over <a href="https://github.com/floooh/sokol/blob/master/util/sokol_gl.h"><code>sokol_gl.h</code></a>
+  (vendored at <code>external/sokol/util/sokol_gl.h</code>), which does the actual immediate-mode
+  vertex batching and drawing. <code>DebugDraw</code> only adds the world-space, engine-typed API
+  (<code>Eigen</code> vectors, <code>graphics::Frustum</code> corners) on top of it.
+</p>
+<p>
+  <code>Renderer</code> owns one instance and flushes it as the last thing in the frame — inside the
+  same pass FXAA renders into, after FXAA's own draw and the optional shadow-map debug blit, right
+  before <code>sg_end_pass()</code>. That makes debug lines crisp: they are drawn straight to the
+  swapchain, never tonemapped or antialiased, and they render <strong>with no depth test</strong>, so
+  a line is visible even when it's behind solid geometry. There is currently no depth-tested variant —
+  see <a href="#future">below</a>.
+</p>
+
+<h2>Off by default, and a true no-op when off</h2>
+<p>
+  <code>setEnabled(false)</code> is the constructed state. Every recording method —
+  <code>line()</code>, <code>aabb()</code>, <code>frustum()</code>, <code>axes()</code>, and
+  <code>begin()</code> — starts with <code>if (!m_enabled) return;</code>, so calling them while
+  disabled costs exactly one branch: no <code>sgl_*</code> call happens, nothing is batched, nothing
+  is drawn. <code>render()</code> guards the same way, so <code>Renderer::endFrame()</code> can call
+  <code>begin()</code>/<code>render()</code> unconditionally every frame without its own check, and
+  callers (game code, later engine features) never need an <code>if (debugDrawEnabled)</code> around
+  their own <code>line()</code>/<code>aabb()</code> calls either.
+</p>
+<p>
+  In the sandbox, F3 toggles it: <code>sandbox/model_test/main.cpp</code> calls
+  <code>renderer.debugDraw().setEnabled(!isEnabled())</code>, the same pattern F1/F2 already use for
+  the shadow-map debug blit.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class DebugDraw {
+    DebugDraw();
+    ~DebugDraw();
+
+    void setEnabled(bool);
+    bool isEnabled() const;
+
+    void line(const Eigen::Vector3f&amp; a, const Eigen::Vector3f&amp; b, const Eigen::Vector4f&amp; color);
+    void aabb(const Eigen::AlignedBox3f&amp;, const Eigen::Vector4f&amp; color);
+    void frustum(const std::array&lt;Eigen::Vector3f, 8&gt;&amp; corners, const Eigen::Vector4f&amp; color);
+    void axes(const Eigen::Matrix4f&amp; transform, f32 scale = 1.0f);
+
+    void begin(const Eigen::Matrix4f&amp; view_projection); // once per frame, before the calls above
+    void render();                                        // once per frame, inside an active sg pass
+};</code></pre>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on the vendored <code>sokol_gl.h</code> — no dependency on <code>gpu::handle.hpp</code>
+  or any other engine GPU wrapper; <code>sgl_context</code> is its own resource type, created and
+  destroyed by <code>sgl_make_context</code>/<code>sgl_destroy_context</code> rather than
+  <code>gpu::makeBuffer</code>/<code>makeImage</code>/etc. <code>graphics::Renderer</code> owns one
+  instance and is the only caller of <code>begin()</code>/<code>render()</code>; anything with a
+  <code>Renderer&amp;</code> can reach it through <code>Renderer::debugDraw()</code> and call the
+  recording methods between <code>beginFrame()</code> and <code>endFrame()</code>.
+</p>
+
+<h2>Coordinate spaces</h2>
+<p>
+  <code>begin(view_projection)</code> sets that matrix as <code>sokol_gl</code>'s projection matrix
+  and loads an identity modelview — so every coordinate passed to <code>line()</code>/<code>aabb()</code>/etc.
+  is plain world space, not local space. <code>Eigen::Matrix4f</code> is column-major by default, which
+  is exactly the layout <code>sgl_load_matrix(const float m[16])</code> expects, so
+  <code>view_projection.data()</code> is passed straight through with no repacking.
+</p>
+
+<h2>Corner ordering</h2>
+<p>
+  <code>aabb()</code> takes an <code>Eigen::AlignedBox3f</code> and enumerates its 8 corners itself.
+  <code>frustum()</code> instead takes 8 corners directly, in the exact order
+  <code>graphics::Frustum::corners()</code> already produces them: near face
+  {bottom-left, bottom-right, top-left, top-right} at indices 0–3, then the far face in the same
+  bottom-left/bottom-right/top-left/top-right order at indices 4–7. Both build the same 12 line
+  segments — 4 edges around the near/bottom face, 4 around the far/top face, 4 connecting the two —
+  just indexed differently to match each shape's natural corner order.
+</p>
+
+<h2 id="future">What isn't here yet</h2>
+<ul>
+  <li>
+    <strong>Depth-tested lines.</strong> A shape occluded by geometry still draws fully visible today.
+    A depth-tested variant needs its own <code>sgl_context</code> built against the HDR target's
+    format (<code>RGBA16F</code> color, <code>D32</code> depth) and its own pass between the sky pass
+    and tonemap, reading <code>m_depth</code> as a real depth attachment rather than a sampled texture.
+  </li>
+  <li>
+    <strong>Wireframe mesh rendering.</strong> A separate feature from this one — rendering the
+    <em>actual loaded scene geometry</em> as wireframe triangles has no direct sokol_gfx support
+    (unlike NVRHI's old <code>fillMode = Wireframe</code> raster state); it would need either a
+    barycentric-coordinate discard trick in the G-buffer fragment shader, or a dedicated line-list
+    expansion pass. <code>DebugDraw</code> only draws explicit debug lines, not mesh outlines.
+  </li>
+  <li>
+    <strong>Sphere / capsule primitives.</strong> Only <code>line()</code>/<code>aabb()</code>/<code>frustum()</code>/<code>axes()</code>
+    exist. A light's range sphere currently has to be approximated with lines by the caller, or added
+    as a new method when a caller actually needs it.
+  </li>
+</ul>
+
+</main>
+</div>
+</body>
+</html>

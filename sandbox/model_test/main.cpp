@@ -4,6 +4,7 @@
 #include <app/application.hpp>
 #include <app/cli_parser.hpp>
 #include <graphics/camera.hpp>
+#include <graphics/debug_draw.hpp>
 #include <graphics/light_manager.hpp>
 #include <graphics/renderer.hpp>
 #include <scene/gltf_loader.hpp>
@@ -151,6 +152,10 @@ void frame(app::Application& app, Sandbox& sandbox) {
     if (app.input().isKeyPressed(SAPP_KEYCODE_F2)) {
         sandbox.renderer->cycleShadowMapDebugLayer();
     }
+    if (app.input().isKeyPressed(SAPP_KEYCODE_F3)) {
+        graphics::DebugDraw& debug_draw = sandbox.renderer->debugDraw();
+        debug_draw.setEnabled(!debug_draw.isEnabled());
+    }
 
     flyCamera(app, sandbox, dt);
 
@@ -159,6 +164,26 @@ void frame(app::Application& app, Sandbox& sandbox) {
     renderer.setLights(*sandbox.lights);
     sandbox.scene->render(renderer, sandbox.world_transform, *sandbox.camera);
     sandbox.standalone_scene->render(renderer, sandbox.standalone_transform, *sandbox.camera);
+
+    // Example calls -- establishes the pattern later features (shadow cascades, light
+    // ranges) can copy. No-op unless F3 has turned debug draw on.
+    for (scene::Model& model : sandbox.standalone_scene->mutableModels()) {
+        for (const scene::ModelPart& part : model.mutableParts()) {
+            const Eigen::Matrix4f world_matrix = sandbox.standalone_transform * part.transform;
+            Eigen::AlignedBox3f world_bounds;
+            for (int i = 0; i < 8; i++) {
+                const Eigen::Vector3f corner = part.local_bounds.corner(static_cast<Eigen::AlignedBox3f::CornerType>(i));
+                world_bounds.extend((world_matrix * corner.homogeneous()).head<3>());
+            }
+            renderer.debugDraw().aabb(world_bounds, Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f));
+        }
+    }
+    // Traces the live camera's own frustum -- so it draws along the screen edges, not a
+    // separate shape. A detached debug vantage needs a second Camera; not worth it just
+    // to exercise this call. Confirms the API and wiring; roadmap-nice-debug-draw can
+    // upgrade this once something else (e.g. a light) wants a real off-camera frustum.
+    renderer.debugDraw().frustum(sandbox.camera->frustum().corners(), Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
+
     renderer.endFrame();
 }
 

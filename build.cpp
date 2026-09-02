@@ -16,6 +16,7 @@ int main(int argc, char** argv) {
 	engine.addLinkFlag("-std=c++23");
 
 	engine.addInclude(Include<Direct>("external/sokol"));
+	engine.addInclude(Include<Direct>("external/sokol/util"));
 	engine.addInclude(Include<Direct>("external/devtools"));
 	engine.addInclude(Include<Direct>("external/Eigen"));
 	engine.addInclude(Include<Direct>("external/cgltf"));
@@ -63,6 +64,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/texture.cpp",
 	    "src/graphics/material.cpp",
 	    "src/graphics/light_manager.cpp",
+	    "src/graphics/debug_draw.cpp",
 	    "src/graphics/renderer.cpp",
 
 	    "src/scene/model.cpp",

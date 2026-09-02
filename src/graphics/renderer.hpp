@@ -2,6 +2,7 @@
 
 #include <gpu/handle.hpp>
 #include <graphics/camera.hpp>
+#include <graphics/debug_draw.hpp>
 #include <graphics/light_manager.hpp>
 #include <graphics/material.hpp>
 #include <graphics/mesh.hpp>
@@ -62,6 +63,11 @@ class Renderer {
         // Blit one shadow-map cascade slice to the screen as grayscale depth. Debug bring-up.
         void toggleShadowMapDebug();
         void cycleShadowMapDebugLayer();
+
+        // Immediate-mode debug lines (AABBs, frustums, axes). Off by default; call
+        // debugDraw().setEnabled(true) to turn it on. Calls between beginFrame() and
+        // endFrame() are drawn as an unlit overlay, unaffected by tonemap/FXAA.
+        DebugDraw& debugDraw() { return m_debug_draw; }
 
         void endFrame();
 
@@ -162,6 +168,8 @@ class Renderer {
         Eigen::Vector3f m_ambient{300.0f, 300.0f, 300.0f};
         f32 m_exposure = 0.003f;
         bool m_fxaa_enabled = true;
+
+        DebugDraw m_debug_draw;
 };
 
 } // namespace graphics

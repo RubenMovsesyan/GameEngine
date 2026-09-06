@@ -548,3 +548,59 @@ void main() {
 @end
 
 @program shadow_debug fullscreen_vs shadow_debug_fs
+
+//------------------------------------------------------------------------------
+// Emissive points: instanced, view-space billboards, additive, no lighting. Used by
+// graphics::renderers::PointRenderer for stars / sparks / particles.
+//------------------------------------------------------------------------------
+
+@vs points_vs
+layout(binding=0) uniform points_params {
+    mat4 view;
+    mat4 projection;
+};
+
+// Per-instance, one PointInstance (see graphics/primitives/scene/point.hpp).
+layout(location=0) in vec3 inst_position;
+layout(location=1) in float inst_size;
+layout(location=2) in vec4 inst_color;
+
+out vec2 v_offset; // quad corner in [-1, 1]
+out vec4 v_color;
+
+// Two triangles forming a unit quad, indexed by gl_VertexIndex 0..5.
+const vec2 kCorners[6] = vec2[6](
+    vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0),
+    vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0)
+);
+
+void main() {
+    vec2 corner = kCorners[gl_VertexIndex];
+
+    // Expand in view space so the quad always faces the camera, regardless of orientation.
+    vec4 view_pos = view * vec4(inst_position, 1.0);
+    view_pos.xy += corner * inst_size;
+
+    gl_Position = projection * view_pos;
+    v_offset = corner;
+    v_color = inst_color;
+}
+@end
+
+@fs points_fs
+in vec2 v_offset;
+in vec4 v_color;
+out vec4 out_color;
+
+void main() {
+    // Soft round disc: 1 at the centre, 0 by the quad edge.
+    float falloff = clamp(1.0 - length(v_offset), 0.0, 1.0);
+    falloff *= falloff;
+
+    // Additive blend (ONE/ONE) in the pipeline: emit radiance premultiplied by the disc.
+    // color.a is a plain intensity multiplier.
+    out_color = vec4(v_color.rgb * v_color.a * falloff, 1.0);
+}
+@end
+
+@program points points_vs points_fs

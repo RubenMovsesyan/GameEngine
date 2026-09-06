@@ -95,7 +95,7 @@
     (<code>isCursorCaptured()</code>/<code>toggleCursorCapture()</code>, both thin
     forwards to <code>Window</code>) — deciding <em>when</em> to toggle (e.g. on
     Escape) is left to whoever drives the game loop
-    (<code>sandbox/model_test/main.cpp</code>'s <code>renderLoop</code>), since that's
+    (<code>sandbox/model_test/model_test.cpp</code>'s <code>renderLoop</code>), since that's
     also the thing calling <code>InputState::beginFrame()</code> and can use the
     snapshot-based <code>isKeyPressed()</code> correctly. <code>run()</code>'s own poll
     loop doesn't touch input policy at all.

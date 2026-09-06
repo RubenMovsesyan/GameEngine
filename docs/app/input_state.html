@@ -65,7 +65,7 @@
   Depends only on Eigen and the standard library (<code>&lt;shared_mutex&gt;</code>).
   Owned by <code>app::Application</code>; written to by <code>app::Window</code>'s GLFW
   callback trampolines; read by whatever worker drives the game loop (currently
-  <code>sandbox/model_test/main.cpp</code>'s <code>renderLoop</code>, which also uses it
+  <code>sandbox/model_test/model_test.cpp</code>'s <code>renderLoop</code>, which also uses it
   for the Escape/cursor-capture toggle via <code>app::Application::toggleCursorCapture()</code>).
 </p>
 

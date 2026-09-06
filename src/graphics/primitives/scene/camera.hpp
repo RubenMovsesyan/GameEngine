@@ -20,6 +20,8 @@ class Camera {
         // The combined view-projection matrix -- projection * transformationMatrix().
         const Eigen::Matrix4f& viewProjectionMatrix() const;
         const Eigen::Matrix4f& inverseViewProjectionMatrix() const;
+        // The projection alone (camera space -> clip). Rebuilt on setAspectRatio(), always valid.
+        const Eigen::Matrix4f& projectionMatrix() const { return m_projection; }
         // World-space view frustum, cached alongside the matrices.
         const Frustum& frustum() const;
         const Eigen::Vector3f& position() const { return m_position; }

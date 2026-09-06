@@ -78,6 +78,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/primitives/pass/post.cpp",
 
 	    "src/graphics/renderers/deferred_renderer.cpp",
+	    "src/graphics/renderers/point_renderer.cpp",
 
 	    "src/graphics/presenter.cpp",
 
@@ -89,26 +90,38 @@ int main(int argc, char** argv) {
 	    "src/app/cli_parser.cpp",
 	    "src/app/input_state.cpp",
 	    "src/app/debug_ui.cpp",
-
-	    "sandbox/model_test/main.cpp",
 	};
 
-	std::vector<std::reference_wrapper<Task>> objects;
+	// One binary per sandbox: the shared engine objects + that sandbox's own entry point.
+	// Each entry file is named after its directory (not a shared "main.cpp") so the build
+	// system's stem-keyed dependency map keeps the two binaries' objects separate.
+	const std::vector<std::string> sandbox_mains = {
+	    "sandbox/model_test/model_test.cpp",
+	    "sandbox/point_test/point_test.cpp",
+	};
+
+	std::vector<std::reference_wrapper<Task>> engine_objects;
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
 	    // Every TU that includes the generated engine.glsl.h must rebuild when a shader changes.
 	    const bool includes_shader_header = source == "src/graphics/renderers/deferred_renderer.cpp" ||
+	                                        source == "src/graphics/renderers/point_renderer.cpp" ||
 	                                        source == "src/graphics/primitives/pass/post.cpp" ||
 	                                        source == "src/graphics/presenter.cpp";
 	    if (includes_shader_header && shader_task != nullptr) {
 	        task.depends_on(*shader_task);
 	    }
-	    objects.push_back(task);
+	    engine_objects.push_back(task);
 	}
 
-	Task& exe = engine.addTask(Output(Binary("sandbox/model_test")));
-	for (Task& object : objects) {
-	    exe.depends_on(object);
+	for (const auto& main_source : sandbox_mains) {
+	    Task& main_object = engine.addTask(Output(Object(main_source)));
+	    const std::filesystem::path binary_name = std::filesystem::path(main_source).parent_path();
+	    Task& exe = engine.addTask(Output(Binary(binary_name)));
+	    for (Task& object : engine_objects) {
+	        exe.depends_on(object);
+	    }
+	    exe.depends_on(main_object);
 	}
 
 	build.build();

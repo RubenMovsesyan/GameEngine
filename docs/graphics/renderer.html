@@ -22,6 +22,7 @@
   <a href="light_manager.html">LightManager</a>
   <a href="material.html">Material</a>
   <a href="mesh.html">Mesh</a>
+  <a href="point_renderer.html">PointRenderer</a>
   <a href="post.html">post (Tonemap/Fxaa)</a>
   <a href="presenter.html">Presenter</a>
   <a href="render_target.html">RenderTarget</a>
@@ -46,8 +47,8 @@
 
 <main>
 
-<h1><code>graphics::Renderer</code> &amp; <code>graphics::renderers::DeferredRenderer</code></h1>
-<p class="lede">A one-method concept that any renderer satisfies, and the deferred renderer that is the first implementation of it.</p>
+<h1><code>graphics::Renderer</code> &amp; the built-in renderers</h1>
+<p class="lede">A one-method concept that any renderer satisfies, and the implementations that ship with the engine: <a href="#deferred">DeferredRenderer</a> and <a href="#points">PointRenderer</a>.</p>
 
 <h2>The concept</h2>
 <p>
@@ -71,6 +72,14 @@ concept Renderer = requires(T&amp; renderer, int width, int height) {
   <li><code>render()</code> must <strong>not</strong> call <code>sg_commit()</code> &mdash; the <a href="presenter.html">Presenter</a> owns the frame boundary.</li>
   <li>the returned <code>sg_view</code> must stay valid until the next <code>render()</code> call.</li>
 </ul>
+<p>
+  A renderer also exposes its own setup calls &mdash; a <code>beginFrame(Camera)</code>,
+  setters, and a <code>submit()</code> whose parameters are shaped for that renderer
+  (meshes for <code>DeferredRenderer</code>, a <code>std::span</code> of points for
+  <code>PointRenderer</code>). A concept cannot require &ldquo;a <code>submit()</code>
+  with some signature,&rdquo; so that stays a convention the app relies on directly, not
+  part of <code>Renderer</code>.
+</p>
 
 <h2 id="deferred"><code>DeferredRenderer</code> &mdash; the deferred implementation</h2>
 <p>
@@ -79,6 +88,16 @@ concept Renderer = requires(T&amp; renderer, int width, int height) {
   output is left in an LDR <a href="render_target.html">RenderTarget</a> for the
   <a href="presenter.html">Presenter</a> to blit. It owns every pipeline and target
   involved.
+</p>
+
+<h2 id="points"><code>PointRenderer</code> &mdash; the emissive point implementation</h2>
+<p>
+  Self-luminous points only &mdash; no G-buffer, no lighting, no shadows. Its
+  <code>submit()</code> takes a <code>std::span&lt;const PointInstance&gt;</code>; each
+  point becomes an instanced view-space billboard, additively blended into an HDR
+  target, then tonemapped to LDR. The first dependency of the galaxy simulator; see
+  <a href="point_renderer.html"><code>PointRenderer</code></a> for the full page and the
+  list of what is deliberately still stubbed.
 </p>
 
 <h2>Depends on / depended on by</h2>
@@ -94,7 +113,7 @@ concept Renderer = requires(T&amp; renderer, int width, int height) {
   <a href="debug_draw.html"><code>DebugDraw</code></a>, and
   <code>graphics::computeCascades</code> (<code>shadow.hpp</code>). Driven by the
   application layer and handed to a <a href="presenter.html"><code>Presenter</code></a>
-  &mdash; see <code>sandbox/model_test/main.cpp</code>.
+  &mdash; see <code>sandbox/model_test/model_test.cpp</code>.
 </p>
 
 <h2>Public API</h2>

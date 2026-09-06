@@ -59,7 +59,7 @@
   visibility against whatever <a href="../graphics/frustum.html"><code>Frustum</code></a>
   the caller is culling with, and call
   <a href="../graphics/renderer.html"><code>Renderer::submit()</code></a>. See
-  <code>submitScene()</code> in <code>sandbox/model_test/main.cpp</code> for the reference
+  <code>submitScene()</code> in <code>sandbox/model_test/model_test.cpp</code> for the reference
   loop — that function, not <code>Model</code> or <code>Camera</code>, is what ties "a
   group of models" to "a camera" for one frame. No node hierarchy or scene graph beyond
   the flat part list — see <a href="gltf_loader.html">loadGltf</a> for how a glTF node
@@ -137,7 +137,7 @@ class Model {
     <code>model.world_transform * part.transform</code> and re-fits an axis-aligned box
     around them — loose for a rotated box but never smaller than the true bounds, so it
     never culls something visible. <code>submitScene()</code> in
-    <code>sandbox/model_test/main.cpp</code> is the reference: it only culls
+    <code>sandbox/model_test/model_test.cpp</code> is the reference: it only culls
     <code>StandardMesh</code> parts against
     <a href="../graphics/frustum.html"><code>Frustum::intersects()</code></a>;
     <code>InstancedMesh</code> parts are always submitted, since their per-instance

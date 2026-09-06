@@ -18,6 +18,11 @@ namespace graphics {
 // Contract that the concept cannot express, but every implementation must honour:
 //   - render() must NOT call sg_commit() -- the Presenter owns the frame boundary.
 //   - the returned sg_view must stay valid until the next render() call.
+//
+// A renderer also exposes whatever setup calls it needs -- a beginFrame(Camera), setters,
+// and a submit() taking input shaped for that renderer (meshes for DeferredRenderer, a span
+// of points for PointRenderer). C++ concepts can't require "a submit() with some signature",
+// so that stays a convention the app relies on directly, not part of Renderer.
 template <typename T>
 concept Renderer = requires(T& renderer, int width, int height) {
     { renderer.render(width, height) } -> std::same_as<sg_view>;

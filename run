@@ -7,4 +7,12 @@ if [ "$1" = clean ]; then
 fi
 [ -x ./build ] || clang++ -std=c++23 build.cpp -o build
 ./build -j $(nproc)
-exec .build/bin/sandbox/model_test "$@"
+
+# Optional first arg picks the sandbox (a dir under sandbox/); default is model_test.
+# Anything starting with '-' is a flag for the default sandbox, not a name.
+SANDBOX=model_test
+case "$1" in
+	-* | "") ;;
+	*) SANDBOX=$1; shift ;;
+esac
+exec ".build/bin/sandbox/$SANDBOX" "$@"

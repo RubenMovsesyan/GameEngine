@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::FullscreenPass — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="debug_draw.html">DebugDraw</a>
+  <a href="frustum.html">Frustum</a>
+  <a class="here" href="fullscreen_pass.html">FullscreenPass</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post.html">post (Tonemap/Fxaa)</a>
+  <a href="presenter.html">Presenter</a>
+  <a href="render_target.html">RenderTarget</a>
+  <a href="renderer.html">Renderer (concept)</a>
+  <a href="skybox.html">Skybox</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::FullscreenPass</code></h1>
+<p class="lede">The pipeline for one fullscreen-triangle fragment shader, plus a one-line <code>draw()</code>.</p>
+
+<h2>Role</h2>
+<p>
+  Screen-space passes &mdash; deferred lighting, the sky, tonemap, FXAA, the shadow-map
+  debug blit, the <a href="presenter.html">Presenter</a>'s swapchain blit &mdash; all
+  have the same pipeline shape: no vertex buffer, no depth, one colour attachment, and a
+  three-vertex draw of the shared <code>fullscreen_vs</code> triangle.
+  <code>FullscreenPass</code> is that shape. <code>create()</code> makes the pipeline
+  from a generated shader desc; <code>draw()</code> binds it, applies your bindings, runs
+  an optional uniform callback, and issues <code>sg_draw(0, 3, 1)</code>.
+</p>
+<p>
+  It deliberately does <strong>not</strong> own the <code>sg</code> pass. A pass often
+  holds more than one draw &mdash; the deferred renderer's final pass runs FXAA, then the
+  shadow-map debug blit, then the debug-line overlay, in one pass &mdash; so the caller
+  opens and closes the pass and calls <code>draw()</code> as many times as it needs.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on nothing but <code>&lt;sokol_gfx.h&gt;</code>. Used by
+  <a href="renderer.html"><code>DeferredRenderer</code></a> (its five screen-space
+  passes), by <a href="post.html"><code>TonemapPass</code> / <code>FxaaPass</code></a>
+  (each wraps one), and by <a href="presenter.html"><code>Presenter</code></a> (the blit).
+</p>
+
+<h2>Public API</h2>
+<pre><code>// output_format left kSwapchainColorFormat (== 0) is resolved against the swapchain
+// at pipeline creation; pass an explicit format for an offscreen attachment.
+inline constexpr sg_pixel_format kSwapchainColorFormat = static_cast&lt;sg_pixel_format&gt;(0);
+
+class FullscreenPass {
+    static FullscreenPass create(const sg_shader_desc* shader_desc,
+                                 sg_pixel_format output_format, const char* label);
+
+    // An sg pass must already be open.
+    void draw(const sg_bindings&amp;, const std::function&lt;void()&gt;&amp; apply_uniforms = {}) const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>Two formats, not one.</strong> <code>create()</code> sets
+    <code>colors[0].pixel_format = output_format</code>, and it sets
+    <code>depth.pixel_format = SG_PIXELFORMAT_NONE</code> <em>only</em> when
+    <code>output_format != kSwapchainColorFormat</code>. An offscreen target has no depth
+    attachment, so its pipeline must declare depth NONE; a swapchain-resolved pipeline
+    must leave depth unset so sokol fills in the swapchain's real depth format. Getting
+    this wrong trips <code>VALIDATE_APIP_SWAPCHAIN_DEPTH_FORMAT</code>.
+  </li>
+  <li>
+    <code>kSwapchainColorFormat</code> is <code>(sg_pixel_format)0</code> &mdash; sokol's
+    "resolve me" sentinel &mdash; which is a different value from
+    <code>SG_PIXELFORMAT_NONE</code> (that means "no attachment at all").
+  </li>
+  <li>
+    <code>draw()</code> takes the uniform-packing as a <code>std::function</code>
+    callback. That is one indirect call (and possibly one small heap allocation) per
+    invocation, on the render path &mdash; acceptable at the &le;6 fullscreen draws a
+    frame has, but not a pattern to copy into a hot inner loop.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/fullscreen_pass.hpp</code>, <code>src/graphics/fullscreen_pass.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

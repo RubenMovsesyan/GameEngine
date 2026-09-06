@@ -504,6 +504,26 @@ void main() {
 @program fxaa fullscreen_vs fxaa_fs
 
 //------------------------------------------------------------------------------
+// Present: straight copy of a finished image onto the target. graphics::Presenter
+// uses it to blit a renderer's output view to the swapchain -- no tonemap, no gamma,
+// no filtering intent beyond whatever sampler the caller binds.
+//------------------------------------------------------------------------------
+
+@fs present_fs
+layout(binding=0) uniform texture2D tex_source;
+layout(binding=0) uniform sampler smp_source;
+
+in vec2 v_uv;
+out vec4 out_color;
+
+void main() {
+    out_color = texture(sampler2D(tex_source, smp_source), v_uv);
+}
+@end
+
+@program present fullscreen_vs present_fs
+
+//------------------------------------------------------------------------------
 // Shadow-map debug blit
 //------------------------------------------------------------------------------
 

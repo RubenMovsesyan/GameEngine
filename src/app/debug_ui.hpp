@@ -31,8 +31,8 @@ class DebugUI {
         bool handleEvent(const sapp_event&);
 
         // No-op while hidden. Call inside an active sg pass targeting the swapchain (see
-        // Renderer::endFrame's overlay parameter). `panels` is where the caller's own
-        // ImGui::Begin/.../End calls live -- it runs between ImGui's new-frame and render.
+        // graphics::Presenter::present's overlay parameter). `panels` is where the caller's
+        // own ImGui::Begin/.../End calls live -- it runs between ImGui's new-frame and render.
         void draw(int width, int height, double delta_time, float dpi_scale, const std::function<void()>& panels);
 
     private:

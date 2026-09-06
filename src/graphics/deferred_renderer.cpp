@@ -1,12 +1,9 @@
-#include <graphics/renderer.hpp>
+#include <graphics/deferred_renderer.hpp>
 
 #include <graphics/frustum.hpp>
 #include <graphics/texture.hpp>
 
-#include <sokol_app.h>
-
 #include <sokol_gfx.h>
-#include <sokol_glue.h>
 
 #include "engine.glsl.h"
 
@@ -20,56 +17,6 @@ constexpr sg_pixel_format kMaterialFormat = SG_PIXELFORMAT_RGBA8;
 constexpr sg_pixel_format kDepthFormat = SG_PIXELFORMAT_DEPTH;
 constexpr sg_pixel_format kHdrFormat = SG_PIXELFORMAT_RGBA16F;
 constexpr sg_pixel_format kLdrFormat = SG_PIXELFORMAT_RGBA8;
-
-constexpr int kFullscreenTriangleVertexCount = 3;
-
-RenderTarget makeColorTarget(int width, int height, sg_pixel_format format, const char* label) {
-    sg_image_desc image_desc = {};
-    image_desc.usage.color_attachment = true;
-    image_desc.width = width;
-    image_desc.height = height;
-    image_desc.pixel_format = format;
-    image_desc.label = label;
-
-    RenderTarget target;
-    target.image = gpu::makeImage(image_desc);
-
-    sg_view_desc attachment_desc = {};
-    attachment_desc.color_attachment.image = *target.image;
-    attachment_desc.label = label;
-    target.attachment = gpu::makeView(attachment_desc);
-
-    sg_view_desc texture_desc = {};
-    texture_desc.texture.image = *target.image;
-    texture_desc.label = label;
-    target.texture = gpu::makeView(texture_desc);
-
-    return target;
-}
-
-RenderTarget makeDepthTarget(int width, int height, const char* label) {
-    sg_image_desc image_desc = {};
-    image_desc.usage.depth_stencil_attachment = true;
-    image_desc.width = width;
-    image_desc.height = height;
-    image_desc.pixel_format = kDepthFormat;
-    image_desc.label = label;
-
-    RenderTarget target;
-    target.image = gpu::makeImage(image_desc);
-
-    sg_view_desc attachment_desc = {};
-    attachment_desc.depth_stencil_attachment.image = *target.image;
-    attachment_desc.label = label;
-    target.attachment = gpu::makeView(attachment_desc);
-
-    sg_view_desc texture_desc = {};
-    texture_desc.texture.image = *target.image;
-    texture_desc.label = label;
-    target.texture = gpu::makeView(texture_desc);
-
-    return target;
-}
 
 // Vertex layout shared by the G-buffer and shadow passes: interleaved Vertex at buffer 0.
 void setMeshLayout(sg_vertex_layout_state& layout) {
@@ -130,7 +77,7 @@ void applyUniforms(int slot, const T& value) {
 
 } // namespace
 
-Renderer::Renderer() {
+DeferredRenderer::DeferredRenderer() {
     const Skybox defaults{};
     setSkybox(defaults);
 
@@ -188,10 +135,11 @@ Renderer::Renderer() {
 
     buildShadowResources();
     buildPipelines();
-    rebuildTargets(sapp_width(), sapp_height());
+    // Screen-sized targets are built lazily on the first render(w, h) -- the window size is
+    // something the caller passes in, not something this class reaches out to sokol_app for.
 }
 
-void Renderer::buildShadowResources() {
+void DeferredRenderer::buildShadowResources() {
     sg_image_desc desc = {};
     desc.usage.depth_stencil_attachment = true;
     desc.type = SG_IMAGETYPE_ARRAY;
@@ -216,7 +164,7 @@ void Renderer::buildShadowResources() {
     m_shadow_texture = gpu::makeView(texture);
 }
 
-void Renderer::buildPipelines() {
+void DeferredRenderer::buildPipelines() {
     // --- G-buffer: three colour attachments plus depth.
     sg_pipeline_desc gbuffer = {};
     gbuffer.shader = sg_make_shader(gbuffer_shader_desc(sg_query_backend()));
@@ -263,41 +211,18 @@ void Renderer::buildPipelines() {
     shadow_instanced.label = "shadow instanced pipeline";
     m_shadow_instanced_pipeline = sg_make_pipeline(&shadow_instanced);
 
-    // --- Fullscreen passes: no vertex buffer, no depth.
-    sg_pipeline_desc lighting = {};
-    lighting.shader = sg_make_shader(lighting_shader_desc(sg_query_backend()));
-    lighting.color_count = 1;
-    lighting.colors[0].pixel_format = kHdrFormat;
-    lighting.depth.pixel_format = SG_PIXELFORMAT_NONE;
-    lighting.label = "lighting pipeline";
-    m_lighting_pipeline = sg_make_pipeline(&lighting);
-
-    sg_pipeline_desc sky = lighting;
-    sky.shader = sg_make_shader(sky_shader_desc(sg_query_backend()));
-    sky.label = "sky pipeline";
-    m_sky_pipeline = sg_make_pipeline(&sky);
-
-    sg_pipeline_desc tonemap = {};
-    tonemap.shader = sg_make_shader(tonemap_shader_desc(sg_query_backend()));
-    tonemap.color_count = 1;
-    tonemap.colors[0].pixel_format = kLdrFormat;
-    tonemap.depth.pixel_format = SG_PIXELFORMAT_NONE;
-    tonemap.label = "tonemap pipeline";
-    m_tonemap_pipeline = sg_make_pipeline(&tonemap);
-
-    // FXAA and the debug blit render straight to the swapchain, so they take its formats.
-    sg_pipeline_desc fxaa = {};
-    fxaa.shader = sg_make_shader(fxaa_shader_desc(sg_query_backend()));
-    fxaa.label = "fxaa pipeline";
-    m_fxaa_pipeline = sg_make_pipeline(&fxaa);
-
-    sg_pipeline_desc shadow_debug = {};
-    shadow_debug.shader = sg_make_shader(shadow_debug_shader_desc(sg_query_backend()));
-    shadow_debug.label = "shadow debug pipeline";
-    m_shadow_debug_pipeline = sg_make_pipeline(&shadow_debug);
+    // --- Fullscreen passes: no vertex buffer, no depth. Lighting and sky write HDR; tonemap,
+    // FXAA and the shadow-map debug blit all write the LDR target -- the Presenter, not this
+    // renderer, is what blits to the swapchain.
+    m_lighting_pass = FullscreenPass::create(lighting_shader_desc(sg_query_backend()), kHdrFormat, "lighting pipeline");
+    m_sky_pass = FullscreenPass::create(sky_shader_desc(sg_query_backend()), kHdrFormat, "sky pipeline");
+    m_tonemap.emplace(kLdrFormat);
+    m_fxaa.emplace(kLdrFormat);
+    m_shadow_debug_pass =
+        FullscreenPass::create(shadow_debug_shader_desc(sg_query_backend()), kLdrFormat, "shadow debug pipeline");
 }
 
-void Renderer::rebuildTargets(int width, int height) {
+void DeferredRenderer::rebuildTargets(int width, int height) {
     if (width <= 0 || height <= 0) {
         return;
     }
@@ -310,17 +235,11 @@ void Renderer::rebuildTargets(int width, int height) {
     m_material = makeColorTarget(width, height, kMaterialFormat, "gbuffer material");
     m_depth = makeDepthTarget(width, height, "gbuffer depth");
     m_hdr = makeColorTarget(width, height, kHdrFormat, "hdr colour");
-    m_ldr = makeColorTarget(width, height, kLdrFormat, "tonemapped colour");
+    m_tonemapped = makeColorTarget(width, height, kLdrFormat, "tonemapped colour");
+    m_ldr = makeColorTarget(width, height, kLdrFormat, "final colour");
 }
 
-void Renderer::beginFrame(const Camera& camera) {
-    // Textures decoded on worker threads can only be uploaded from here, on the sokol thread.
-    Texture::drainUploads();
-
-    if (sapp_width() != m_width || sapp_height() != m_height) {
-        rebuildTargets(sapp_width(), sapp_height());
-    }
-
+void DeferredRenderer::beginFrame(const Camera& camera) {
     m_draw_list.clear();
     m_has_shadow_light = false;
 
@@ -329,12 +248,12 @@ void Renderer::beginFrame(const Camera& camera) {
     m_view = camera.transformationMatrix();
     m_view_position = camera.position();
 
-    // Cascades are fitted in endFrame(), not here: they need m_sun_direction, which
+    // Cascades are fitted in render(), not here: they need m_sun_direction, which
     // setLights() -- called after beginFrame(), per its own contract -- is what sets it.
     m_pending_camera = &camera;
 }
 
-void Renderer::setLights(const LightManager& lights) {
+void DeferredRenderer::setLights(const LightManager& lights) {
     m_light_view = lights.view();
     m_light_count = lights.count();
 
@@ -344,7 +263,7 @@ void Renderer::setLights(const LightManager& lights) {
     }
 }
 
-void Renderer::setSkybox(const Skybox& skybox) {
+void DeferredRenderer::setSkybox(const Skybox& skybox) {
     if (const GradientSky* gradient = std::get_if<GradientSky>(&skybox.source); gradient != nullptr) {
         m_sky_zenith = gradient->zenith;
         m_sky_ground = gradient->ground;
@@ -355,36 +274,36 @@ void Renderer::setSkybox(const Skybox& skybox) {
     m_sky_intensity = skybox.intensity;
 }
 
-void Renderer::setExposure(f32 exposure) {
+void DeferredRenderer::setExposure(f32 exposure) {
     m_exposure = exposure;
 }
 
-void Renderer::setAmbient(const Eigen::Vector3f& ambient) {
+void DeferredRenderer::setAmbient(const Eigen::Vector3f& ambient) {
     m_ambient = ambient;
 }
 
-void Renderer::setFxaaEnabled(bool enabled) {
+void DeferredRenderer::setFxaaEnabled(bool enabled) {
     m_fxaa_enabled = enabled;
 }
 
-void Renderer::setShadowDistance(f32 distance) {
+void DeferredRenderer::setShadowDistance(f32 distance) {
     m_shadow_distance = distance;
 }
 
-void Renderer::setCascadeSplitLambda(f32 lambda) {
+void DeferredRenderer::setCascadeSplitLambda(f32 lambda) {
     m_cascade_split_lambda = lambda;
 }
 
-void Renderer::toggleShadowMapDebug() {
+void DeferredRenderer::toggleShadowMapDebug() {
     m_show_shadow_map_debug = !m_show_shadow_map_debug;
 }
 
-void Renderer::cycleShadowMapDebugLayer() {
+void DeferredRenderer::cycleShadowMapDebugLayer() {
     m_shadow_debug_layer = (m_shadow_debug_layer + 1) % kCascadeCount;
 }
 
 template <Mesh T>
-void Renderer::submit(
+void DeferredRenderer::submit(
     T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible
 ) {
     DrawItem item;
@@ -404,10 +323,10 @@ void Renderer::submit(
     m_draw_list.push_back(item);
 }
 
-template void Renderer::submit<StandardMesh>(StandardMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
-template void Renderer::submit<InstancedMesh>(InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void DeferredRenderer::submit<StandardMesh>(StandardMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void DeferredRenderer::submit<InstancedMesh>(InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
 
-void Renderer::recordShadowPass() {
+void DeferredRenderer::recordShadowPass() {
     for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
         sg_pass pass = {};
         pass.action.depth.load_action = SG_LOADACTION_CLEAR;
@@ -449,7 +368,7 @@ void Renderer::recordShadowPass() {
     }
 }
 
-void Renderer::recordGBufferPass() {
+void DeferredRenderer::recordGBufferPass() {
     sg_pass pass = {};
     for (int i = 0; i < 3; i++) {
         pass.action.colors[i].load_action = SG_LOADACTION_CLEAR;
@@ -510,7 +429,19 @@ void Renderer::recordGBufferPass() {
     sg_end_pass();
 }
 
-void Renderer::endFrame(const std::function<void()>& overlay) {
+sg_view DeferredRenderer::render(int width, int height) {
+    // Nothing to draw into yet -- minimised window, or a frame before the first real size.
+    // Returning an invalid view tells the Presenter to skip its blit for this frame.
+    if (width <= 0 || height <= 0) {
+        return sg_view{};
+    }
+
+    // The target size is an input, not something to pull from sokol_app: (re)build the
+    // screen-sized targets here the first time and whenever the window changes size.
+    if (width != m_width || height != m_height) {
+        rebuildTargets(width, height);
+    }
+
     // Fitted here, not in beginFrame(): needs m_sun_direction, which setLights() -- called
     // after beginFrame() by contract -- is what sets. m_pending_camera is non-owning and
     // only valid for this frame; beginFrame() must have run first to set it.
@@ -532,8 +463,6 @@ void Renderer::endFrame(const std::function<void()>& overlay) {
         pass.label = "lighting pass";
         sg_begin_pass(&pass);
 
-        sg_apply_pipeline(m_lighting_pipeline);
-
         sg_bindings bindings = {};
         bindings.views[VIEW_tex_gbuffer_albedo] = *m_albedo.texture;
         bindings.views[VIEW_tex_gbuffer_normal] = *m_normal.texture;
@@ -543,24 +472,24 @@ void Renderer::endFrame(const std::function<void()>& overlay) {
         bindings.views[VIEW_light_buffer] = m_light_count > 0 ? m_light_view : *m_empty_light_view;
         bindings.samplers[SMP_smp_gbuffer] = *m_gbuffer_sampler;
         bindings.samplers[SMP_smp_shadow] = *m_shadow_sampler;
-        sg_apply_bindings(&bindings);
 
-        lighting_params_t params{};
-        params.inverse_view_projection = m_inverse_view_projection;
-        params.view = m_view;
-        for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
-            params.cascade_view_proj[cascade] = m_cascade_view_proj[cascade];
-        }
-        params.view_position = toVec4(m_view_position, 1.0f);
-        params.ambient = toVec4(m_ambient, 0.0f);
-        params.cascade_split_depth = Eigen::Vector4f(
-            m_cascade_split_depth[0], m_cascade_split_depth[1], m_cascade_split_depth[2], m_cascade_split_depth[3]
-        );
-        params.shadow_params = Eigen::Vector4f(m_shadow_depth_bias, m_shadow_normal_offset, m_has_shadow_light ? 1.0f : 0.0f, 0.0f);
-        params.light_count = static_cast<int>(m_light_count);
-        applyUniforms(UB_lighting_params, params);
-
-        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        m_lighting_pass.draw(bindings, [&]() {
+            lighting_params_t params{};
+            params.inverse_view_projection = m_inverse_view_projection;
+            params.view = m_view;
+            for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
+                params.cascade_view_proj[cascade] = m_cascade_view_proj[cascade];
+            }
+            params.view_position = toVec4(m_view_position, 1.0f);
+            params.ambient = toVec4(m_ambient, 0.0f);
+            params.cascade_split_depth = Eigen::Vector4f(
+                m_cascade_split_depth[0], m_cascade_split_depth[1], m_cascade_split_depth[2], m_cascade_split_depth[3]
+            );
+            params.shadow_params =
+                Eigen::Vector4f(m_shadow_depth_bias, m_shadow_normal_offset, m_has_shadow_light ? 1.0f : 0.0f, 0.0f);
+            params.light_count = static_cast<int>(m_light_count);
+            applyUniforms(UB_lighting_params, params);
+        });
         sg_end_pass();
     }
 
@@ -572,23 +501,20 @@ void Renderer::endFrame(const std::function<void()>& overlay) {
         pass.label = "sky pass";
         sg_begin_pass(&pass);
 
-        sg_apply_pipeline(m_sky_pipeline);
-
         sg_bindings bindings = {};
         bindings.views[VIEW_tex_sky_depth] = *m_depth.texture;
         bindings.samplers[SMP_smp_sky] = *m_gbuffer_sampler;
-        sg_apply_bindings(&bindings);
 
-        sky_params_t params{
-            .sky_inverse_view_projection = m_inverse_view_projection,
-            .sky_view_position = toVec4(m_view_position, 1.0f),
-            .zenith_intensity = toVec4(m_sky_zenith, m_sky_intensity),
-            .ground = toVec4(m_sky_ground, 0.0f),
-            .sky_kind = Eigen::Vector4f(m_sky_kind, 0.0f, 0.0f, 0.0f),
-        };
-        applyUniforms(UB_sky_params, params);
-
-        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        m_sky_pass.draw(bindings, [&]() {
+            sky_params_t params{
+                .sky_inverse_view_projection = m_inverse_view_projection,
+                .sky_view_position = toVec4(m_view_position, 1.0f),
+                .zenith_intensity = toVec4(m_sky_zenith, m_sky_intensity),
+                .ground = toVec4(m_sky_ground, 0.0f),
+                .sky_kind = Eigen::Vector4f(m_sky_kind, 0.0f, 0.0f, 0.0f),
+            };
+            applyUniforms(UB_sky_params, params);
+        });
         sg_end_pass();
     }
 
@@ -596,75 +522,46 @@ void Renderer::endFrame(const std::function<void()>& overlay) {
     {
         sg_pass pass = {};
         pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
-        pass.attachments.colors[0] = *m_ldr.attachment;
+        pass.attachments.colors[0] = *m_tonemapped.attachment;
         pass.label = "tonemap pass";
         sg_begin_pass(&pass);
 
-        sg_apply_pipeline(m_tonemap_pipeline);
-
-        sg_bindings bindings = {};
-        bindings.views[VIEW_tex_source] = *m_hdr.texture;
-        bindings.samplers[SMP_smp_source] = *m_material_sampler;
-        sg_apply_bindings(&bindings);
-
-        tonemap_params_t params{.exposure = Eigen::Vector4f(m_exposure, 0.0f, 0.0f, 0.0f)};
-        applyUniforms(UB_tonemap_params, params);
-
-        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        m_tonemap->draw(*m_hdr.texture, *m_material_sampler, m_exposure);
         sg_end_pass();
     }
 
-    // --- FXAA straight to the swapchain, then the optional shadow-map blit over the top.
+    // --- FXAA into the final LDR target, then the optional shadow-map blit and the debug
+    // line overlay over the top. The Presenter blits this target to the swapchain.
     {
         sg_pass pass = {};
         pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
-        pass.swapchain = sglue_swapchain();
+        pass.attachments.colors[0] = *m_ldr.attachment;
         pass.label = "fxaa pass";
         sg_begin_pass(&pass);
 
-        sg_apply_pipeline(m_fxaa_pipeline);
-
-        sg_bindings bindings = {};
-        bindings.views[VIEW_tex_source] = *m_ldr.texture;
-        bindings.samplers[SMP_smp_source] = *m_material_sampler;
-        sg_apply_bindings(&bindings);
-
-        fxaa_params_t params{
-            .rcp_frame = Eigen::Vector4f(
-                1.0f / static_cast<f32>(m_width), 1.0f / static_cast<f32>(m_height), m_fxaa_enabled ? 1.0f : 0.0f, 0.0f
-            ),
-        };
-        applyUniforms(UB_fxaa_params, params);
-
-        sg_draw(0, kFullscreenTriangleVertexCount, 1);
+        m_fxaa->draw(*m_tonemapped.texture, *m_material_sampler, m_width, m_height, m_fxaa_enabled);
 
         if (m_show_shadow_map_debug) {
-            sg_apply_pipeline(m_shadow_debug_pipeline);
-
             sg_bindings debug_bindings = {};
             debug_bindings.views[VIEW_tex_shadow_debug] = *m_shadow_texture;
             debug_bindings.samplers[SMP_smp_shadow_debug] = *m_gbuffer_sampler;
-            sg_apply_bindings(&debug_bindings);
 
-            shadow_debug_params_t debug_params{.layer = Eigen::Vector4f(static_cast<f32>(m_shadow_debug_layer), 0.0f, 0.0f, 0.0f)};
-            applyUniforms(UB_shadow_debug_params, debug_params);
-
-            sg_draw(0, kFullscreenTriangleVertexCount, 1);
+            m_shadow_debug_pass.draw(debug_bindings, [&]() {
+                shadow_debug_params_t debug_params{
+                    .layer = Eigen::Vector4f(static_cast<f32>(m_shadow_debug_layer), 0.0f, 0.0f, 0.0f)
+                };
+                applyUniforms(UB_shadow_debug_params, debug_params);
+            });
         }
 
         // Unlit overlay, no depth test -- see graphics::DebugDraw. No-op while disabled.
         m_debug_draw.begin(m_view_projection);
         m_debug_draw.render();
 
-        // Opaque hook (see endFrame's declaration) -- Renderer never knows this is a debug UI.
-        if (overlay) {
-            overlay();
-        }
-
         sg_end_pass();
     }
 
-    sg_commit();
+    return *m_ldr.texture;
 }
 
 } // namespace graphics

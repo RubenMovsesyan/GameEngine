@@ -430,6 +430,12 @@ void DeferredRenderer::recordGBufferPass() {
 }
 
 sg_view DeferredRenderer::render(int width, int height) {
+    // Nothing to draw into yet -- minimised window, or a frame before the first real size.
+    // Returning an invalid view tells the Presenter to skip its blit for this frame.
+    if (width <= 0 || height <= 0) {
+        return sg_view{};
+    }
+
     // The target size is an input, not something to pull from sokol_app: (re)build the
     // screen-sized targets here the first time and whenever the window changes size.
     if (width != m_width || height != m_height) {

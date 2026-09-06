@@ -46,10 +46,14 @@ void Presenter::blitAndFinish(sg_view image, const std::function<void()>& overla
     pass.label = "present pass";
     sg_begin_pass(&pass);
 
-    sg_bindings bindings = {};
-    bindings.views[VIEW_tex_source] = image;
-    bindings.samplers[SMP_smp_source] = *m_sampler;
-    m_blit.draw(bindings);
+    // An invalid view means the renderer had nothing to draw this frame (0x0 target); the
+    // pass still opens so the overlay and commit run, but the blit is skipped.
+    if (image.id != SG_INVALID_ID) {
+        sg_bindings bindings = {};
+        bindings.views[VIEW_tex_source] = image;
+        bindings.samplers[SMP_smp_source] = *m_sampler;
+        m_blit.draw(bindings);
+    }
 
     // Window-level overlay (ImGui, etc.), composited on top inside the swapchain pass.
     if (overlay) {

@@ -14,7 +14,6 @@
 #include <graphics/skybox.hpp>
 
 #include <array>
-#include <functional>
 #include <optional>
 #include <vector>
 

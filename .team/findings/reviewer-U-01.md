@@ -92,4 +92,4 @@ no
   `depends_on` to both. Verified the edge works: an incremental build after
   touching `engine.glsl` reran `sokol-shdc` before recompiling `post.cpp`.
 
-status: handled — pass. All 4 issues are low. Deferred per lite; #1 (applyUniforms dup) and #3 (kFullscreenTriangleVertexCount literal) folded into U-02 which rewrites these files anyway. #2 (std::function per-call) and #4 (format<->depth coupling in FullscreenPass::create) deferred: lite — reported, not re-verified; neither is hit by a current caller.
+status: deferred: lite — reported, not re-verified. All 4 issues are low: #1 applyUniforms 6-line dup across post.cpp/renderer.cpp, #2 std::function per-draw callback (<=5 calls/frame, may not even allocate), #3 bare literal 3 vs the dropped kFullscreenTriangleVertexCount, #4 FullscreenPass::create couples non-swapchain-format with no-depth-attachment (correct for every current caller). None affect behaviour; none blocking.

@@ -112,5 +112,4 @@ of AC-4/AC-6b/AC-7 are `cannot determine`, not `met`.
   `docs/index.html` has `href`s to all four new pages; in `AGENTS.md` the "No
   virtual functions" bullet names the `graphics::Renderer` concept and
   `Presenter` as the extension seam, and the "Deferred shading" line still lists
-  the shadow → G-buffer → lighting → sky → tonemap → FXAA chain. — status:
-  unverified
+  the shadow → G-buffer → lighting → sky → tonemap → FXAA chain. — status: verified

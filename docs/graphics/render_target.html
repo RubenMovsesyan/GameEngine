@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::RenderTarget — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="debug_draw.html">DebugDraw</a>
+  <a href="frustum.html">Frustum</a>
+  <a href="fullscreen_pass.html">FullscreenPass</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post.html">post (Tonemap/Fxaa)</a>
+  <a href="presenter.html">Presenter</a>
+  <a class="here" href="render_target.html">RenderTarget</a>
+  <a href="renderer.html">Renderer (concept)</a>
+  <a href="skybox.html">Skybox</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::RenderTarget</code></h1>
+<p class="lede">An offscreen image plus the two views onto it: one to render through, one to sample afterwards.</p>
+
+<h2>Role</h2>
+<p>
+  Every offscreen buffer a renderer writes and then reads back &mdash; the G-buffer
+  attachments, the HDR lighting buffer, the tonemapped and final LDR buffers &mdash; is
+  a <code>RenderTarget</code>. It bundles the <code>sg_image</code> with an
+  <em>attachment</em> view (bound as <code>sg_pass.attachments.colors[n]</code> or
+  <code>.depth_stencil</code>) and a <em>texture</em> view (bound into
+  <code>sg_bindings.views[]</code> for a later pass to sample). The two free functions
+  build the common cases so no renderer repeats the three-descriptor dance.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends only on <code>gpu::makeImage</code> / <code>gpu::makeView</code>
+  (<code>src/gpu/handle.hpp</code>) &mdash; the shared-ownership handles that destroy the
+  sokol resource when the last holder drops. Used by
+  <a href="renderer.html"><code>DeferredRenderer</code></a> for all its G-buffer, HDR
+  and LDR targets, and available to any future renderer.
+</p>
+
+<h2>Public API</h2>
+<pre><code>struct RenderTarget {
+    gpu::ImageHandle image;
+    gpu::ViewHandle  attachment; // render through this
+    gpu::ViewHandle  texture;    // sample through this afterwards
+};
+
+RenderTarget makeColorTarget(int width, int height, sg_pixel_format format, const char* label);
+RenderTarget makeDepthTarget(int width, int height, const char* label); // always SG_PIXELFORMAT_DEPTH</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <code>makeDepthTarget</code> creates the depth image with
+    <code>usage.depth_stencil_attachment</code> <em>and</em> a plain texture view, so the
+    deferred lighting and sky passes can sample raw depth back. The pixel format is fixed
+    to <code>SG_PIXELFORMAT_DEPTH</code> &mdash; there is no parameter for it because
+    nothing in the engine wants a different depth format.
+  </li>
+  <li>
+    These lived as file-local statics in the old monolithic renderer. They moved out so
+    that <a href="renderer.html">any renderer</a>, not just the deferred one, can spin up
+    its own targets without copying the boilerplate.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/render_target.hpp</code>, <code>src/graphics/render_target.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

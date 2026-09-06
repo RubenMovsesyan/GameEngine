@@ -23,8 +23,16 @@ sandbox/    test executables
 subclass, no singleton, no `shared_ptr` graph beyond the resource handles themselves.
 `src/graphics/` drives it and calls into it; `src/gpu/` never calls back.
 
-- **No virtual functions in `gpu/` or `graphics/`.** The extension point is that you
-  record whatever passes you want against `sg_*` directly.
+- **No virtual functions in `gpu/` or `graphics/`.** A whole rendering strategy is a
+  *plugin*: any type satisfying the `graphics::Renderer` concept (one requirement —
+  `sg_view render(int, int)`, recording every pass for the frame and returning the final
+  image) is a renderer. `graphics::DeferredRenderer` is the first one;
+  `graphics::Presenter` takes a renderer's output and blits it to the swapchain, and is
+  the only thing that touches the swapchain or calls `sg_commit()`. Shared building
+  blocks (`RenderTarget`, `FullscreenPass`, `TonemapPass`/`FxaaPass`) are plain
+  `graphics/` primitives a renderer composes. To add a strategy (emissive points, a
+  compute raymarcher) write a new type with a `render()` and hand it to a `Presenter` —
+  no base class, no change to anything existing.
 - **`src/gpu/sokol.cpp` is the only translation unit that defines `SOKOL_IMPL`.** It also
   picks the backend (`SOKOL_VULKAN`) and sets `SOKOL_NO_ENTRY` so we keep our own `main`.
   Note the include order inside it: `sokol_app.h` must come first, because it is the header
@@ -81,8 +89,10 @@ Resources sharing a name across programs must share a binding. Use the generated
 - sokol_gfx for rendering, sokol_app for windowing and input. Vulkan backend on Linux;
   the same code targets Metal, D3D11, GL and WebGPU without changes.
 - Eigen for math. Column-major, matching GLSL.
-- Deferred shading: G-buffer → lighting → sky → tonemap → FXAA, with a directional
-  cascaded shadow-map pass ahead of the G-buffer.
+- Deferred shading (`graphics::DeferredRenderer`, one implementation of the
+  `graphics::Renderer` concept): G-buffer → lighting → sky → tonemap → FXAA, with a
+  directional cascaded shadow-map pass ahead of the G-buffer. Its output is an LDR
+  target that `graphics::Presenter` blits to the swapchain.
 
 ## Gotchas
 

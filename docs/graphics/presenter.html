@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Presenter — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="debug_draw.html">DebugDraw</a>
+  <a href="frustum.html">Frustum</a>
+  <a href="fullscreen_pass.html">FullscreenPass</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="post.html">post (Tonemap/Fxaa)</a>
+  <a class="here" href="presenter.html">Presenter</a>
+  <a href="render_target.html">RenderTarget</a>
+  <a href="renderer.html">Renderer (concept)</a>
+  <a href="skybox.html">Skybox</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Presenter</code></h1>
+<p class="lede">Takes whatever a <a href="renderer.html">Renderer</a> produced this frame and puts it on screen &mdash; nothing more.</p>
+
+<h2>Role</h2>
+<p>
+  The whole "graphics engine" side of the frame loop that is <em>not</em> a renderer.
+  <code>present()</code> drains pending texture uploads, asks the renderer for this
+  frame's finished image at the current window size, opens the swapchain pass, blits
+  that image across it with the <code>present</code> shader (a plain copy &mdash; no
+  tonemap, no gamma), runs the app's overlay callback on top inside the same pass, and
+  commits. Swap the renderer for a different implementation of the
+  <a href="renderer.html"><code>Renderer</code></a> concept and this class does not
+  change.
+</p>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Depends on the <a href="renderer.html"><code>Renderer</code></a> concept (its
+  <code>present</code> is constrained by it), on
+  <a href="fullscreen_pass.html"><code>FullscreenPass</code></a> for the blit, on
+  <a href="texture.html"><code>Texture</code></a> for <code>drainUploads()</code>, and
+  on <code>sokol_app</code>/<code>sokol_glue</code> for the window size and swapchain.
+  Constructed and driven by the application layer &mdash; see
+  <code>sandbox/model_test/main.cpp</code>, which calls
+  <code>presenter.present(renderer, overlayLambda)</code> once per frame.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class Presenter {
+    Presenter();
+
+    template &lt;Renderer R&gt;
+    void present(R&amp; renderer, const std::function&lt;void()&gt;&amp; overlay = {});
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>
+    <strong>It owns the frame boundary.</strong> <code>Texture::drainUploads()</code>,
+    <code>sglue_swapchain()</code> and <code>sg_commit()</code> are called here and
+    nowhere else. A renderer's <code>render()</code> must not commit; if you ever run a
+    renderer without a Presenter you have to drain uploads yourself.
+  </li>
+  <li>
+    <strong>One extra fullscreen blit per frame.</strong> The renderer writes an LDR
+    target and the Presenter copies it to the swapchain, rather than the renderer writing
+    the swapchain directly. That is the price of decoupling: the renderer never needs to
+    know the swapchain exists, and the overlay (ImGui) composites cleanly on top.
+  </li>
+  <li>
+    <code>present()</code> is a template so the concept can constrain it, but the
+    non-template guts (<code>beginFrame</code>, <code>blitAndFinish</code>, the size
+    accessors) live in <code>presenter.cpp</code> &mdash; so the generated
+    <code>engine.glsl.h</code> stays out of the header and out of every translation unit
+    that merely includes <code>presenter.hpp</code>.
+  </li>
+  <li>
+    Rule of zero: <code>m_sampler</code> is a handle that frees itself; the blit
+    pipeline is a raw <code>sg_pipeline</code> left to <code>sg_shutdown()</code>, the
+    same as the deferred renderer's pipelines. The sandbox still resets the Presenter
+    before the renderer and both before the GPU tears down.
+  </li>
+</ul>
+
+<footer>Source: <code>src/graphics/presenter.hpp</code>, <code>src/graphics/presenter.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

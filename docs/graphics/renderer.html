@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>graphics::Renderer — GameEngine</title>
+<title>graphics::Renderer + DeferredRenderer — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -11,24 +11,22 @@
 
 <nav>
   <a class="brand" href="../index.html">Game<span>Engine</span></a>
-  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
-
-  <h4>gpu</h4>
-  <a href="../gpu/instance.html">Instance</a>
-  <a href="../gpu/device.html">Device</a>
-  <a href="../gpu/swapchain.html">Swapchain</a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
 
   <h4>graphics</h4>
   <a href="camera.html">Camera</a>
+  <a href="debug_draw.html">DebugDraw</a>
   <a href="frustum.html">Frustum</a>
+  <a href="fullscreen_pass.html">FullscreenPass</a>
   <a href="light.html">Light</a>
   <a href="light_manager.html">LightManager</a>
   <a href="material.html">Material</a>
   <a href="mesh.html">Mesh</a>
-  <a href="post_process_chain.html">PostProcessChain</a>
-  <a class="here" href="renderer.html">Renderer</a>
+  <a href="post.html">post (Tonemap/Fxaa)</a>
+  <a href="presenter.html">Presenter</a>
+  <a href="render_target.html">RenderTarget</a>
+  <a class="here" href="renderer.html">Renderer (concept)</a>
   <a href="skybox.html">Skybox</a>
-  <a href="surface.html">Surface</a>
   <a href="texture.html">Texture</a>
 
   <h4>scene</h4>
@@ -38,8 +36,8 @@
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
   <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
   <a href="../app/input_state.html">InputState</a>
-  <a href="../app/window.html">Window</a>
   <a href="../app/worker.html">Worker</a>
 
   <h4>utils</h4>
@@ -48,341 +46,184 @@
 
 <main>
 
-<h1><code>graphics::Renderer</code></h1>
-<p class="lede">A deferred renderer driving its own swapchain-present loop, meant to run off a worker thread.</p>
+<h1><code>graphics::Renderer</code> &amp; <code>graphics::DeferredRenderer</code></h1>
+<p class="lede">A one-method concept that any renderer satisfies, and the deferred renderer that is the first implementation of it.</p>
 
-<h2>Role</h2>
+<h2>The concept</h2>
 <p>
-  Per frame: a geometry (G-buffer) pass per mesh, one full-screen lighting pass, a
-  full-screen sky pass that fills the pixels no geometry covered, then a post-process
-  chain that narrows HDR down to the display. Owns every GPU pipeline/texture involved;
-  callers only ever call the handful of methods below.
+  <code>graphics::Renderer</code> (<code>src/graphics/renderer.hpp</code>) is the entire
+  contract between a renderer and the <a href="presenter.html">Presenter</a>:
+</p>
+<pre><code>template &lt;typename T&gt;
+concept Renderer = requires(T&amp; renderer, int width, int height) {
+    { renderer.render(width, height) } -&gt; std::same_as&lt;sg_view&gt;;
+};</code></pre>
+<p>
+  A renderer, given a target size, records every GPU pass for one frame and returns a
+  texture view of the finished, presentable image. It owns everything else &mdash; its
+  render targets, pipelines, tonemap, post, debug overlays, resize handling. A deferred
+  renderer, an emissive point renderer for a starfield, a compute raymarcher: all are
+  just different implementations of this one concept, and the Presenter never reaches
+  inside any of them. Two rules the concept itself cannot express but every
+  implementation must honour:
+</p>
+<ul>
+  <li><code>render()</code> must <strong>not</strong> call <code>sg_commit()</code> &mdash; the <a href="presenter.html">Presenter</a> owns the frame boundary.</li>
+  <li>the returned <code>sg_view</code> must stay valid until the next <code>render()</code> call.</li>
+</ul>
+
+<h2><code>DeferredRenderer</code> &mdash; the deferred implementation</h2>
+<p>
+  Deferred shading: a directional cascaded shadow pass, then a G-buffer pass per
+  submitted mesh, then fullscreen lighting, sky, tonemap and FXAA passes. Its output is
+  left in an LDR <a href="render_target.html">RenderTarget</a> for the
+  <a href="presenter.html">Presenter</a> to blit. It owns every pipeline and target
+  involved.
 </p>
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>gpu::Device</code>/<code>gpu::Swapchain</code>, and on
-  <a href="mesh.html"><code>Mesh</code></a>, <a href="material.html"><code>Material</code></a>,
-  <a href="texture.html"><code>Texture</code></a>, <a href="skybox.html"><code>Skybox</code></a>,
-  <code>Camera</code>, <code>LightManager</code>, <code>PostProcessChain</code>,
-  <code>Surface</code>. Driven directly by whatever code
-  owns the render loop (currently <code>sandbox/model_test/main.cpp</code>, via a
-  worker thread started by <code>app::Application</code>).
+  Depends on <a href="render_target.html"><code>RenderTarget</code></a>,
+  <a href="fullscreen_pass.html"><code>FullscreenPass</code></a>,
+  <a href="post.html"><code>TonemapPass</code>/<code>FxaaPass</code></a>,
+  <a href="mesh.html"><code>Mesh</code></a>,
+  <a href="material.html"><code>Material</code></a>,
+  <a href="camera.html"><code>Camera</code></a>,
+  <a href="light_manager.html"><code>LightManager</code></a>,
+  <a href="skybox.html"><code>Skybox</code></a>,
+  <a href="debug_draw.html"><code>DebugDraw</code></a>, and
+  <code>graphics::computeCascades</code> (<code>shadow.hpp</code>). Driven by the
+  application layer and handed to a <a href="presenter.html"><code>Presenter</code></a>
+  &mdash; see <code>sandbox/model_test/main.cpp</code>.
 </p>
 
 <h2>Public API</h2>
-<pre><code>class Renderer {
-    Renderer(const gpu::Device&, gpu::Swapchain&);
+<pre><code>class DeferredRenderer {
+    DeferredRenderer();
 
-    void beginFrame();
+    void beginFrame(const Camera&amp;);        // stash view/VP, mark cascades for a refit
 
     template &lt;Mesh T&gt;
-    void renderMesh(T& mesh, const Material& material, const Eigen::Matrix4f& model, const Camera&);
+    void submit(T&amp; mesh, const Material&amp;, const Eigen::Matrix4f&amp; model,
+                const Eigen::AlignedBox3f&amp; world_bounds, bool camera_visible);
 
-    void setLights(const LightManager&);   // call between beginFrame() and endFrame()
-    void setSkybox(const Skybox&);         // gradient colours + intensity for the sky pass
-    void setExposure(f32);                 // brightness multiplier before the tonemap curve
-    void setAmbient(const Eigen::Vector3f&); // flat ambient irradiance added to every lit surface
-    void setFxaaEnabled(bool);             // FXAA post-pass; on by default
-    void endFrame();
-};</code></pre>
+    void setLights(const LightManager&amp;);   // call between beginFrame() and render()
+    void setSkybox(const Skybox&amp;);
+    void setExposure(f32);
+    void setAmbient(const Eigen::Vector3f&amp;);
+    void setFxaaEnabled(bool);
+    void setShadowDistance(f32);
+    void setCascadeSplitLambda(f32);
+
+    // shadow-map debug blit controls
+    void toggleShadowMapDebug();
+    void cycleShadowMapDebugLayer();
+    bool isShadowMapDebugEnabled() const;
+    void setShadowMapDebugEnabled(bool);
+    u32  shadowMapDebugLayer() const;
+    void setShadowMapDebugLayer(u32);
+
+    DebugDraw&amp; debugDraw();
+
+    // Records shadow -> G-buffer -> lighting -> sky -> tonemap -> FXAA at width x height
+    // and returns a view of the final LDR image. Does not commit. (the concept's render())
+    sg_view render(int width, int height);
+};
+
+static_assert(Renderer&lt;DeferredRenderer&gt;);</code></pre>
 
 <h2>One frame</h2>
-
 <div class="diagram">
-<svg viewBox="0 0 900 200" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, monospace" font-size="12">
+<svg viewBox="0 0 940 150" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, monospace" font-size="12">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#7aa2f7"/>
     </marker>
   </defs>
-  <rect x="10" y="45" width="160" height="90" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
-  <text x="90" y="70" fill="#d8dae0" text-anchor="middle" font-weight="600">G-buffer pass</text>
-  <text x="90" y="90" fill="#8b90a0" text-anchor="middle">per renderMesh()</text>
-  <text x="90" y="107" fill="#8b90a0" text-anchor="middle">writes albedo, normal,</text>
-  <text x="90" y="122" fill="#8b90a0" text-anchor="middle">material, depth</text>
+  <rect x="8" y="40" width="120" height="60" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="68" y="66" fill="#d8dae0" text-anchor="middle" font-weight="600">shadow</text>
+  <text x="68" y="84" fill="#8b90a0" text-anchor="middle">4 cascades</text>
+  <line x1="128" y1="70" x2="158" y2="70" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <line x1="170" y1="90" x2="220" y2="90" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="158" y="40" width="120" height="60" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="218" y="66" fill="#d8dae0" text-anchor="middle" font-weight="600">G-buffer</text>
+  <text x="218" y="84" fill="#8b90a0" text-anchor="middle">per submit()</text>
+  <line x1="278" y1="70" x2="308" y2="70" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <rect x="220" y="20" width="180" height="150" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
-  <text x="310" y="42" fill="#d8dae0" text-anchor="middle" font-weight="600">Lighting pass</text>
-  <text x="310" y="62" fill="#8b90a0" text-anchor="middle">reads albedo, normal,</text>
-  <text x="310" y="77" fill="#8b90a0" text-anchor="middle">material, depth, lights</text>
-  <text x="310" y="97" fill="#8b90a0" text-anchor="middle">reconstructs world pos,</text>
-  <text x="310" y="112" fill="#8b90a0" text-anchor="middle">shades Cook-Torrance</text>
-  <text x="310" y="127" fill="#8b90a0" text-anchor="middle">GGX per light + ambient</text>
-  <text x="310" y="150" fill="#7fd88f" text-anchor="middle">writes HDR color</text>
+  <rect x="308" y="40" width="120" height="60" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="368" y="66" fill="#d8dae0" text-anchor="middle" font-weight="600">lighting</text>
+  <text x="368" y="84" fill="#7fd88f" text-anchor="middle">HDR</text>
+  <line x1="428" y1="70" x2="458" y2="70" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <line x1="400" y1="95" x2="450" y2="95" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="458" y="40" width="110" height="60" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="513" y="66" fill="#d8dae0" text-anchor="middle" font-weight="600">sky</text>
+  <text x="513" y="84" fill="#8b90a0" text-anchor="middle">into HDR</text>
+  <line x1="568" y1="70" x2="598" y2="70" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <rect x="450" y="45" width="150" height="90" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
-  <text x="525" y="68" fill="#d8dae0" text-anchor="middle" font-weight="600">Sky pass</text>
-  <text x="525" y="87" fill="#8b90a0" text-anchor="middle">discards where depth</text>
-  <text x="525" y="102" fill="#8b90a0" text-anchor="middle">&lt; 1.0; gradient into</text>
-  <text x="525" y="117" fill="#8b90a0" text-anchor="middle">the same HDR color</text>
+  <rect x="598" y="40" width="120" height="60" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="658" y="66" fill="#d8dae0" text-anchor="middle" font-weight="600">tonemap</text>
+  <text x="658" y="84" fill="#8b90a0" text-anchor="middle">HDR &rarr; LDR</text>
+  <line x1="718" y1="70" x2="748" y2="70" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
 
-  <line x1="600" y1="90" x2="650" y2="90" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
-
-  <rect x="650" y="35" width="170" height="115" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
-  <text x="735" y="58" fill="#d8dae0" text-anchor="middle" font-weight="600">PostProcessChain</text>
-  <text x="735" y="78" fill="#8b90a0" text-anchor="middle">pass 0: tonemap</text>
-  <text x="735" y="93" fill="#8b90a0" text-anchor="middle">pass 1: FXAA</text>
-  <text x="735" y="113" fill="#8b90a0" text-anchor="middle">(+ any registered</text>
-  <text x="735" y="128" fill="#8b90a0" text-anchor="middle">custom passes)</text>
-
-  <line x1="820" y1="90" x2="870" y2="90" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
-  <text x="850" y="65" fill="#8b90a0" text-anchor="middle">swapchain</text>
+  <rect x="748" y="30" width="130" height="82" rx="8" fill="#1b1e26" stroke="#2b2f3a"/>
+  <text x="813" y="54" fill="#d8dae0" text-anchor="middle" font-weight="600">FXAA</text>
+  <text x="813" y="72" fill="#8b90a0" text-anchor="middle">+ debug blit</text>
+  <text x="813" y="88" fill="#8b90a0" text-anchor="middle">+ debug lines</text>
+  <text x="813" y="104" fill="#7fd88f" text-anchor="middle">final LDR</text>
+  <line x1="878" y1="70" x2="912" y2="70" stroke="#7aa2f7" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="920" y="60" fill="#8b90a0" text-anchor="middle">to</text>
+  <text x="912" y="88" fill="#8b90a0" text-anchor="middle">Presenter</text>
 </svg>
 </div>
 
 <h2>Worth knowing</h2>
 <ul>
   <li>
-    <strong>The sky is a dedicated full-screen pass, not a branch in
-    <code>lighting.frag</code>.</strong> It runs in <code>endFrame()</code> right after
-    the lighting draw, into the same <code>m_hdr_color</code> target, reading only the
-    G-buffer depth: <code>sky.frag</code> does <code>if (depth &lt; 1.0) discard;</code>
-    so it only touches the far-plane pixels the lighting pass left as background. Its
-    push constants carry the reconstructed view ray inputs
-    (<code>inverse_view_projection</code>, <code>view_position</code> — same values the
-    lighting pass already computed), the gradient's zenith/ground colours + intensity,
-    and a <code>kind</code> selector (<code>0</code> = gradient, <code>1</code> = cubemap,
-    stubbed). Keeping it separate means a future cubemap adds a <code>samplerCube</code>
-    to <code>m_sky_binding_layout</code> alone — the 6-slot lighting layout and
-    <code>lighting.frag</code> are untouched. See <a href="skybox.html">Skybox</a>.
+    <strong>The window size is an argument, not a reach-around.</strong>
+    <code>render(width, height)</code> (re)builds the screen-sized targets on the first
+    call and whenever the size changes; the renderer never calls
+    <code>sapp_width()</code>/<code>sapp_height()</code> itself. Simulation time never
+    enters the renderer at all &mdash; it renders exactly what was submitted.
   </li>
   <li>
-    <strong>Ambient is a per-frame uniform now, not a shader constant.</strong>
-    <code>lighting.frag</code> used to add a hard-coded <code>kAmbient = 0.1</code>; it now
-    reads <code>pc.ambient.rgb</code> from the lighting push constants, set via
-    <code>setAmbient()</code> (default <code>(300, 300, 300)</code>). It's a flat
-    stand-in for sky bounce until IBL exists — scaled to that magnitude for the same
-    <code>~0.003</code> exposure reason the <a href="skybox.html">Skybox</a> intensity
-    is, and meant to be tuned together with it.
+    <strong>Cascades are fitted in <code>render()</code>, not <code>beginFrame()</code>.</strong>
+    The fit needs the sun direction, which <code>setLights()</code> supplies, and
+    <code>setLights()</code> is called after <code>beginFrame()</code> by contract.
+    <code>beginFrame()</code> just stashes the camera; <code>render()</code> reads it
+    back once <code>setLights()</code> has had its turn.
   </li>
   <li>
-    <strong>FXAA is the second registered <a href="post_process_chain.html">PostProcessChain</a>
-    pass</strong> (<code>fxaa.frag</code>, after <code>tonemap.frag</code>), on by
-    default. <code>setFxaaEnabled(false)</code> doesn't remove the pass — the shader
-    still runs but takes a <code>pc.enabled &lt; 0.5</code> passthrough branch, so
-    toggling it costs nothing structural. Its push constants (reciprocal frame size +
-    the enable flag) are re-seeded on every <code>rebuildPostProcessTargets()</code>
-    because the frame size changes on resize.
+    <strong>Three LDR targets, to avoid read-after-write.</strong> Tonemap writes
+    <code>m_tonemapped</code>; FXAA reads that and writes <code>m_ldr</code>; the
+    shadow-map debug blit and the <a href="debug_draw.html">DebugDraw</a> line overlay
+    also draw into <code>m_ldr</code>; <code>render()</code> returns
+    <code>m_ldr.texture</code>. FXAA no longer targets the swapchain &mdash; the
+    <a href="presenter.html">Presenter</a> does that blit, and composites the app's
+    ImGui overlay on top of it.
   </li>
   <li>
-    <strong>Every post pass after <code>tonemap.frag</code> has to cancel the NVRHI
-    viewport Y-flip by hand.</strong> The Vulkan viewport is Y-flipped for every draw;
-    the first post pass (tonemap) samples with that flip and so un-flips the HDR target,
-    but each later pass would re-flip it. <code>fxaa.frag</code> samples with
-    <code>vec2(vUv.x, 1.0 - vUv.y)</code> to compensate — any new pass added after the
-    first one needs the same inversion.
+    <strong>All five fullscreen passes go through
+    <a href="fullscreen_pass.html">FullscreenPass</a></strong> (tonemap and FXAA via
+    <a href="post.html">TonemapPass/FxaaPass</a>). The shader programs, formats, bindings
+    and pass order are unchanged from the pre-plugin renderer &mdash; only the C++
+    wrapping moved.
   </li>
   <li>
-    <strong>Lighting no longer writes the swapchain directly.</strong> It writes an
-    <code>RGBA16_FLOAT</code> offscreen target (<code>m_hdr_color</code>) so light
-    values can exceed <code>1.0</code> without hard-clipping — real Blender-exported
-    intensities are physically large (see <a href="light.html">Light</a>), and an 8-bit
-    LDR target clips anything over 1.0 straight to white. <code>PostProcessChain</code>'s
-    last pass is what actually narrows HDR to the display.
+    <strong><code>submit()</code> has no notion of "camera".</strong> The caller decides
+    per mesh whether it is camera-visible (typically <code>Camera::frustum()</code>
+    intersect its world bounds); <code>camera_visible == false</code> still records the
+    mesh into the shadow pass (an off-screen object casts a shadow into view) but skips
+    it in the G-buffer pass.
   </li>
   <li>
-    <strong>Point-light shading needs per-fragment world position</strong>, which the
-    lighting pass doesn't have directly. Rather than adding a 4th G-buffer target for
-    it, the lighting shader reconstructs it from the existing depth buffer: sample
-    depth, build NDC, multiply by the inverse view-projection matrix, divide by w. That
-    matrix comes straight from <a href="camera.html">Camera</a>'s own cache
-    (<code>inverseViewProjectionMatrix()</code>) — <code>Renderer</code> doesn't compute
-    any matrix inverse itself. This keeps the geometry pass writing exactly what it
-    always did.
-  </li>
-  <li>
-    <strong>NDC.y is negated in <code>reconstructWorldPosition</code></strong>
-    (<code>lighting.frag</code>): <code>-(uv.y * 2.0 - 1.0)</code>, not the plain
-    <code>uv.y * 2.0 - 1.0</code> every other NDC component uses. NVRHI's Vulkan backend
-    flips Y at the viewport level for every draw (<code>VKViewportWithDXCoords</code> in
-    <code>vulkan-graphics.cpp</code>, the standard negative-height viewport trick),
-    completely separate from anything the projection matrix does. Rasterizing and
-    sampling the G-buffer both go through that same viewport convention automatically,
-    so they stay self-consistent without anyone thinking about it — but
-    <code>reconstructWorldPosition</code> is pure math bypassing the viewport entirely,
-    so it has to undo that flip by hand. Symptom when this was missing: point-light
-    shading on a perfectly static object visibly shifted as the <em>camera</em> moved
-    vertically (light appeared to move opposite the camera on Y only, since the
-    viewport's flip is Y-only) — a real bug, not a hypothetical one.
-  </li>
-  <li>
-    <code>renderMesh()</code>/<code>setLights()</code> stash camera/light state for
-    <code>endFrame()</code> to read later — correct only when called once per frame with
-    one camera, which is the only way this engine calls them today.
-  </li>
-  <li>
-    NVRHI's Vulkan backend offsets sampler bindings by 128 by default; every binding
-    layout here zeroes it explicitly (<code>VulkanBindingOffsets().setSamplerOffset(0)</code>)
-    so shader source can use plain <code>binding = N</code> numbers.
-  </li>
-  <li>
-    <code>gbuffer_state.rasterState.setFrontCounterClockwise(true)</code> matches
-    <code>Camera</code>'s projection having no Y-flip — see
-    <a href="camera.html">Camera</a>'s note on why these two settings are a matched pair.
-  </li>
-  <li>
-    <strong>Backface culling is on by default</strong> — <code>gbuffer_state</code> only sets
-    <code>frontCounterClockwise</code>; <code>RasterState::cullMode</code> is never touched, so it
-    stays at NVRHI's own default of <code>RasterCullMode::Back</code>. Both G-buffer pipelines
-    share <code>gbuffer_state</code>, so this applies equally to instanced and non-instanced
-    draws. It's the rasterizer's screen-space winding-order test, not a per-triangle
-    <code>dot(normal, view_dir)</code> check in the shader — same visibility result for a closed
-    mesh, done before rasterization instead of in the fragment shader.
-  </li>
-  <li>
-    <strong>Two G-buffer pipelines, chosen per call via <code>if constexpr</code>.</strong>
-    <code>renderMesh&lt;T&gt;()</code> checks <code>requires { mesh.instanceBuffer(); }</code> —
-    true only for <a href="mesh.html"><code>InstancedMesh</code></a> — to pick between
-    <code>m_gbuffer_pipeline</code>/<code>gbuffer.vert</code> (one vertex buffer, slot 0) and
-    <code>m_gbuffer_instanced_pipeline</code>/<code>gbuffer_instanced.vert</code> (adds two
-    per-instance <code>mat4</code>s at buffer slot 1, <code>isInstanced = true</code>, stride
-    <code>sizeof(InstanceData)</code>: <code>INSTANCE_TRANSFORM</code> and
-    <code>INSTANCE_NORMAL_MATRIX</code>, each <code>setArraySize(4)</code> on an
-    <code>RGBA32_FLOAT</code> attribute, which NVRHI's Vulkan backend expands into locations 3–6
-    and 7–10 right after position/normal/uv). The shader multiplies
-    <code>pc.model * inInstanceTransform</code> for the world matrix and
-    <code>mat3(pc.normal_matrix) * mat3(inInstanceNormalMatrix)</code> for the normal basis
-    (the normal matrix of a product is the product of the normal matrices). Detecting the
-    mesh kind via a <code>requires</code>-expression rather than checking a concrete type name
-    means a third <code>Mesh</code>-satisfying type with its own <code>instanceBuffer()</code>
-    would automatically take the instanced path too.
-  </li>
-  <li>
-    <strong>The first instance-buffer upload must happen before the render loop starts.</strong>
-    <code>renderMesh&lt;T&gt;()</code> calls <code>mesh.uploadIfDirty()</code> automatically (via
-    the same <code>if constexpr (requires {...})</code> trick) so future per-frame instance edits
-    stay synced — but <code>gpu::Device::createBuffer()</code> opens its own immediate command
-    list, and that can't happen while <code>Renderer</code>'s own command list is already open
-    between <code>beginFrame()</code>/<code>endFrame()</code> (the same "two immediate command
-    lists open at once" crash this engine hit before with <code>LightManager</code>'s lazy build).
-    Concretely: <code>sandbox/model_test/main.cpp</code> populates a grid of instances right after
-    loading, then calls <code>uploadIfDirty()</code> once, explicitly, before entering the frame
-    loop — mirroring <code>LightManager::build()</code>'s explicit, once, outside-any-frame
-    pattern. Skipping that call and letting the first upload happen inside the first
-    <code>renderMesh()</code> reproduces the crash.
-  </li>
-  <li>
-    <strong>The G-buffer's per-draw binding set carries a whole
-    <a href="material.html"><code>Material</code></a> now, sampled in <code>gbuffer.frag</code>.</strong>
-    <code>renderMesh&lt;T&gt;()</code> takes a <code>const Material&amp;</code> and builds
-    one <code>nvrhi::BindingSetHandle</code> per call from
-    <code>m_gbuffer_texture_binding_layout</code>: <code>Texture_SRV(0)</code> base
-    color, <code>Texture_SRV(1)</code> metallic-roughness, <code>Sampler(2)</code> one
-    shared <code>m_gbuffer_sampler</code> for both (no per-texture wrap/filter settings
-    from the glTF sampler yet), <code>StructuredBuffer_SRV(3)</code> the material's
-    factors buffer. Either texture slot falls back to <code>m_white_texture</code> (a
-    1×1 white pixel built once in the constructor) when a <code>Material</code>'s
-    texture is absent — same "a null handle isn't valid there" reasoning as
-    <code>m_empty_light_buffer</code>, and correct per spec: sampling white reads
-    <code>1.0</code>, so the shader's factor multiply alone produces the right value.
-    This set is no longer rebuilt per draw: <code>renderMesh()</code> asks the
-    <a href="material.html"><code>Material</code></a> for it via
-    <code>gbufferBindingSet()</code>, which caches it and only rebuilds when a texture
-    handle actually changes (the async placeholder&nbsp;&rarr;&nbsp;real swap). The
-    lighting and sky passes' own sets are cached the same way, as
-    <code>m_lighting_binding_set</code>/<code>m_sky_binding_set</code> members rebuilt
-    only on resize — and <code>m_lighting_binding_set</code> also on
-    <code>setLights()</code>, but only when the incoming light buffer is a different
-    handle than last frame's (that buffer is the one moving resource in the set).
-  </li>
-  <li>
-    <strong><code>m_material</code> went from declared-but-dead to a real G-buffer
-    target.</strong> It existed from the start of texture support but was never
-    attached to <code>m_gbuffer_framebuffer</code> or written by <code>gbuffer.frag</code>.
-    Wiring it in touched three spots: <code>gbuffer_fb_info</code> gained a third
-    <code>addColorFormat(RGBA8_UNORM)</code>, <code>rebuildGBuffer()</code>'s framebuffer
-    gained a third <code>addColorAttachment(m_material)</code>, and
-    <code>beginFrame()</code>'s per-frame clears gained a third call — all three had to
-    move together, or the framebuffer/format counts stop matching what the pipeline
-    was created with.
-  </li>
-  <li>
-    <strong>Lighting reads <code>m_material</code> at a new <code>Texture_SRV(5)</code>
-    and shades Cook-Torrance GGX</strong> instead of Lambertian-only — packed as
-    G = roughness, B = metallic (R reserved for occlusion later, unused). No new push
-    constant needed: <code>view_position</code> was already uploaded every frame from
-    <code>camera.position()</code>, sitting unused since the HDR/point-light work,
-    comment said "reserved for specular" from the start. The diffuse term picked up the
-    <code>1/π</code> Lambertian normalization it didn't have before (needed for
-    energy-consistency with the new specular term), which makes diffuse ~3.14× dimmer at
-    the same light intensity — <code>kDefaultExposure</code> moved from
-    <code>0.001f</code> to <code>0.003f</code> to compensate. See
-    <a href="material.html">Material</a> for what's actually in the G/B channels.
-  </li>
-  <li>
-    <strong>Descriptor set index is assigned by <code>addBindingLayout()</code> call
-    order, not declaration order in the shader.</strong> GLSL bindings with no explicit
-    <code>set=</code> qualifier (all shaders in this engine) default to <code>set 0</code>.
-    The G-buffer pipelines originally added the push-constant layout first and the
-    texture/sampler layout second, putting <em>push constants</em> at set 0 — the
-    validation layer immediately flagged <code>tAlbedo</code>/<code>sLinear</code> as
-    "not declared in pSetLayouts[0]". Fixed by adding
-    <code>m_gbuffer_texture_binding_layout</code> first (matching the lighting pass,
-    which already got this order right: <code>m_lighting_binding_layout</code> before
-    <code>m_lighting_push_constant_layout</code>) — and <code>state.bindings</code>'s
-    element order in <code>renderMesh()</code> has to match: texture binding set first,
-    push-constant binding set second.
-  </li>
-  <li>
-    <strong>The world normal is octahedral-encoded into an <code>RG16_FLOAT</code>
-    target.</strong> The G-buffer normal attachment used to be <code>RGBA32_FLOAT</code>
-    (16 bytes/pixel storing a unit vector plus a dead <code>.w</code>).
-    <code>gbuffer.frag</code> now calls <code>octEncode()</code> — fold the unit sphere
-    onto an octahedron, unwrap to a 2-channel <code>[-1,1]</code> square — and
-    <code>lighting.frag</code> does the inverse <code>octDecode()</code> on read. Half the
-    bandwidth for that attachment, and a deferred renderer is bandwidth-bound on the
-    G-buffer. The encode/decode helpers are inlined in both shaders (no shared
-    <code>.glsl</code> include mechanism here); if a third pass ever needs the normal it
-    copies <code>octDecode()</code> too.
-  </li>
-  <li>
-    <strong><code>view_projection</code> is a per-frame constant buffer, not part of the
-    G-buffer push constant.</strong> <code>GBufferPushConstants</code> is
-    <code>{model, normal_matrix}</code> — two <code>mat4</code>s, exactly the 128-byte
-    guaranteed push-constant minimum, no room for a third. So the camera's
-    <code>view_projection</code> moved to <code>m_camera_buffer</code>, a constant buffer
-    at <code>set = 1, binding = 1</code> in the vertex stage, written once per frame on
-    the first <code>renderMesh()</code> call (it's identical for every mesh that frame).
-    NVRHI's Vulkan backend offsets constant-buffer registers by 256 by default; the
-    binding layout zeroes that so the GLSL <code>binding = 1</code> matches, the same way
-    every layout here zeroes the 128 sampler offset. The buffer is
-    <code>isVolatile</code> with <code>maxVersions = kFramesInFlight + 2</code>: NVRHI
-    auto-versions each <code>writeBuffer</code> so an in-flight frame keeps reading the
-    version it was recorded with.
-  </li>
-  <li>
-    <strong>Point lights outside their range skip the BRDF entirely.</strong>
-    <code>lighting.frag</code>'s point branch does
-    <code>if (range &gt; 0.0 &amp;&amp; dist &gt;= range) continue;</code> before any
-    Cook-Torrance math — <code>pointAttenuation()</code> is already <code>0</code> past
-    the range, so the shading was wasted work. A finite range is per-light in
-    <code>position_range.w</code>; <code>range == 0</code> still means infinite.
-  </li>
-  <li>
-    <strong>Frames in flight, paced by an event-query ring instead of
-    <code>vkDeviceWaitIdle</code>.</strong> <code>endFrame()</code> used to drain the
-    whole GPU after every submit — zero CPU/GPU overlap. Now <code>kFramesInFlight = 2</code>
-    <code>nvrhi::EventQueryHandle</code>s (<code>m_frame_done</code>) form a ring:
-    <code>endFrame()</code> resets and sets slot <code>frame_counter % kFramesInFlight</code>
-    on the graphics queue after submit; <code>beginFrame()</code> waits on that slot's
-    query <em>only</em> once <code>frame_counter &ge; kFramesInFlight</code>, i.e. only
-    when the CPU is a full two frames ahead. NVRHI recycles its own command-list buffers
-    and emits the cross-submit barriers, so the single command list and single G-buffer
-    don't need N-buffering — only the volatile camera buffer does (above). The acquire
-    semaphore is still per-swapchain-image; the constructor asserts
-    <code>imageCount &gt; kFramesInFlight</code> so a semaphore can't be re-waited while
-    its submit is still pending. The resize and present-failure paths deliberately keep a
-    full <code>vkDeviceWaitIdle</code> — they're rare and need every prior frame done
-    before textures are recreated.
+    <strong>Ambient is a flat per-frame uniform</strong> (default
+    <code>(300, 300, 300)</code>), a stand-in for sky bounce until image-based lighting
+    exists &mdash; scaled to survive the <code>~0.003</code> tonemap exposure and meant
+    to be tuned alongside the <a href="skybox.html">Skybox</a> intensity.
   </li>
 </ul>
 
-<footer>Source: <code>src/graphics/renderer.hpp</code>, <code>src/graphics/renderer.cpp</code>, <code>src/graphics/shaders/</code></footer>
+<footer>Source: <code>src/graphics/renderer.hpp</code> (concept), <code>src/graphics/deferred_renderer.hpp</code>, <code>src/graphics/deferred_renderer.cpp</code></footer>
 
 </main>
 </div>

@@ -10,7 +10,7 @@ buildcpp/   git submodule, the build system (build.hpp)
 build.cpp   the build script, C++23
 external/   third-party dependencies, one submodule per directory (see external/AGENTS.md)
 docs/       system overview + the stylesheet every module's docs share
-notes/      working notes on in-flight or recently finished work
+roadmap/    scratch backlog of planned work, pre project-management-system
 src/gpu/    the sokol_gfx context, resource handles, and the native-handle seam
 src/graphics/  the graphics engine: renderer, meshes, materials, lights, shaders
 src/scene/  glTF loading and the scene/model tree
@@ -100,6 +100,6 @@ Resources sharing a name across programs must share a binding. Use the generated
   range first, or use the `applyUniforms` helper in `renderer.cpp`.
 - sokol's native-handle accessors (`sg_gl_query_buffer_info` and friends) exist for every
   backend **except** Vulkan. `gpu::nativeHandle()` returns `std::nullopt` there. See
-  `notes/sokol-migration.md` before wiring CUDA/SYCL interop.
+  `roadmap/compute-ray-tracer.md` before wiring CUDA/SYCL interop.
 - A build step's output must not share a name with a top-level source directory. Object
   files mirror source paths into `.build/`.

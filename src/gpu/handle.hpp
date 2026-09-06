@@ -26,11 +26,17 @@ ViewHandle makeView(const sg_view_desc&);
 struct NativeHandle {
         const void* object = nullptr; // ID3D11Buffer* / id<MTLBuffer> / WGPUBuffer / ...
         u32 gl_name = 0;              // GL object name; only set on the GL backends
+        // Vulkan: raw handles as u64 (VkBuffer/VkDeviceMemory are non-dispatchable). Only
+        // vk_buffer is set for images. vk_memory_size is the allocation size, >= the
+        // resource size. Reachable only because of the gameengine/vk-interop sokol fork
+        // (sg_vk_query_buffer_info); see roadmap/compute-ray-tracer.md.
+        u64 vk_buffer = 0;
+        u64 vk_memory = 0;
+        u64 vk_memory_size = 0;
 };
 
-// std::nullopt on the Vulkan backend -- sokol exposes no VkBuffer/VkImage accessor and no
-// way to inject one, so there is nothing to hand out. See notes/sokol-migration.md for the
-// two ways out when interop actually needs wiring.
+// Backend-native GPU handle for a resource, or std::nullopt on SG_BACKEND_DUMMY. On Vulkan
+// this depends on the forked sokol's sg_vk_query_* accessors.
 std::optional<NativeHandle> nativeHandle(sg_buffer);
 std::optional<NativeHandle> nativeHandle(sg_image);
 

@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <span>
+#include <utility>
 
 namespace graphics::renderers {
 
@@ -37,6 +38,15 @@ class PointRenderer {
         // shaped for meshes -- the Renderer concept only fixes render(). The span just has
         // to outlive the call; its contents are uploaded here.
         void submit(std::span<const primitives::scene::PointInstance> points);
+
+        // Draw an externally-owned instance buffer as-is: no upload, no ownership. The
+        // buffer must hold `count` tightly-packed PointInstance records and stay alive
+        // until the next render(). Interop test hook for the CUDA-written shared buffer
+        // (see sandbox/cuda_points_test) -- not the roadmap-1 first-class GPU-resident path.
+        void adoptInstances(gpu::BufferHandle buffer, u32 count) {
+            m_instances = std::move(buffer);
+            m_point_count = count;
+        }
 
         // Brightness multiplier applied before the ACES tonemap curve. Default 1.
         void setExposure(f32 exposure) { m_exposure = exposure; }

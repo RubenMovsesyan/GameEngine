@@ -15,7 +15,12 @@
 	url = https://github.com/nothings/stb.git
 [submodule "external/sokol"]
 	path = external/sokol
+	# FORK: carries the gameengine/vk-interop branch (Vulkan external-memory export +
+	# sg_vk_* accessors) over floooh/sokol master. Push that branch to a fork you own and
+	# change this url to it -- a fresh clone can't resolve the pinned SHA on upstream.
+	# Drop the fork once upstream sokol has first-class external-memory support.
 	url = https://github.com/floooh/sokol.git
+	branch = gameengine/vk-interop
 [submodule "external/sokol-tools-bin"]
 	path = external/sokol-tools-bin
 	url = https://github.com/floooh/sokol-tools-bin.git

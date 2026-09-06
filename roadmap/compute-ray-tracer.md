@@ -9,17 +9,29 @@ A ray tracer as a compute pass, exposed as another `graphics::Renderer` plugin
 - Share the kernel/tracing logic across both where feasible; only the dispatch +
   buffer-interop glue differs.
 
-## The interop problem (main blocker)
-The kernel needs to read/write GPU buffers that sokol owns, or hand its own buffer
-to sokol for display.
-- **Vulkan backend: blocked.** sokol exposes no `VkBuffer` accessor and no injection
-  field, and never sets `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD`. `gpu::nativeHandle()`
-  returns `nullopt` there. Options: (a) patch the vendored sokol Vulkan header
-  (~60 lines, upstreamable, a fork to maintain), or (b) run the CUDA build on sokol's
-  GL backend, where `sg_gl_query_buffer_info` gives a `GLuint` that
-  `cudaGraphicsGLRegisterBuffer` accepts (GL 4.3+ for the storage buffers).
+## The interop problem — SOLVED for Vulkan buffers (CPU never in the loop)
+
+Landed: a sokol fork (`external/sokol` @ `gameengine/vk-interop`) + a `gpu/` interop layer.
+`sandbox/cuda_points_test` runs a CUDA compute thread integrating a point cloud in place,
+faster than vsync, while the render thread draws the *same* `VkBuffer` — no copy.
+
+- **`src/gpu/external_buffer.*`** — `sg_buffer` with exportable dedicated `VkDeviceMemory`
+  (fork's `sg_buffer_desc.vk_external_memory`), opaque FD via `vkGetMemoryFdKHR`.
+- **`src/gpu/cross_semaphore.*`** — exportable Vulkan timeline semaphore; queue-side
+  wait/signal done as empty `vkQueueSubmit`s that bracket sokol's own frame submit (so the
+  fork does **not** touch `_sg_vk_submit_frame_command_buffers`).
+- **`src/gpu/cuda_interop.*`** — CUDA Driver API: match device by UUID, primary context,
+  `cuImportExternalMemory` → mapped `CUdeviceptr`, `cuImportExternalSemaphore`.
+- **`src/gpu/shared_instance_buffer.*`** — orchestrator, two modes: `Semaphore` (one
+  buffer, strict alternation, sim rate > frame rate via sub-steps) and `DoubleBuffer`
+  (compute unthrottled, ~1 frame latency, 2× VRAM).
+
+Still open for the ray tracer proper:
+- **Images**, not just buffers — `gpu::nativeHandle(sg_image)` on Vulkan is still
+  `nullopt`; a compute raymarcher writing an output image needs the same export path for
+  `VkImage`/`VkDeviceMemory` (+ layout handling, unlike buffers).
 - **Metal backend: fine.** `sg_mtl_query_*` accessors exist; a CUDA/Metal buffer and an
-  `id<MTLBuffer>` can be bridged directly.
+  `id<MTLBuffer>` can be bridged directly (roadmap item 2).
 
 ## Notes
 - sokol_gfx also has its own compute (`sg_dispatch`) — a pure in-sokol compute

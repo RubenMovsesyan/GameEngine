@@ -1,5 +1,7 @@
 #include "buildcpp/build.hpp"
 
+#include <cstdlib>
+
 const std::string BUILD_DIR = ".build";
 
 int main(int argc, char** argv) {
@@ -35,6 +37,45 @@ int main(int argc, char** argv) {
 	engine.addLink(Link<Dependency>("dl"));
 	engine.addLink(Link<Dependency>("m"));
 
+	// Optional CUDA: only the Driver API (libcuda, always present with the NVIDIA driver) --
+	// no nvcc, no libcudart in the engine. Enables src/gpu/cuda_interop.* and the
+	// cuda_points_test sandbox. Probe CUDA_PATH, then /opt/cuda, then nvcc's parent.
+	std::string cuda_dir;
+	{
+	    const char* env_cuda_path = std::getenv("CUDA_PATH");
+	    const std::vector<std::string> candidates = {env_cuda_path ? env_cuda_path : "", "/opt/cuda", "/usr/local/cuda"};
+	    for (const std::string& candidate : candidates) {
+	        if (!candidate.empty() && std::filesystem::exists(std::filesystem::path(candidate) / "include" / "cuda.h")) {
+	            cuda_dir = candidate;
+	            break;
+	        }
+	    }
+	}
+	const bool cuda = !cuda_dir.empty();
+	if (cuda) {
+	    RLOG(LL_INFO, "CUDA found at " + cuda_dir + " -- building the interop path");
+	    engine.addCompileFlag("-DGAMEENGINE_CUDA");
+	    engine.addInclude(Include<Direct>(cuda_dir + "/include"));
+	    engine.addLink(Link<Dependency>("cuda"));
+	}
+
+	// The CUDA sandbox's kernel: nvcc compiles it to PTX that the sandbox JIT-loads at
+	// runtime with cuModuleLoad -- keeps nvcc out of the C++ link entirely. Guarded like the
+	// shader task since a Command Output is always considered stale.
+	Task* cuda_ptx_task = nullptr;
+	if (cuda) {
+	    Command mkdir_cuda({"mkdir", "-p", ".build/cuda"});
+	    mkdir_cuda.exec();
+	    const std::string cuda_src = "sandbox/cuda_points_test/integrate.cu";
+	    const std::string cuda_ptx = ".build/cuda/integrate.ptx";
+	    const bool cuda_stale = !std::filesystem::exists(cuda_ptx) ||
+	                            std::filesystem::last_write_time(cuda_src) > std::filesystem::last_write_time(cuda_ptx);
+	    if (cuda_stale) {
+	        cuda_ptx_task = &engine.addTask(Output(Command(
+	            {cuda_dir + "/bin/nvcc", "--ptx", "-arch=sm_89", "-O3", cuda_src, "-o", cuda_ptx})));
+	    }
+	}
+
 	// Shaders -> a single sokol-shdc generated header carrying the SPIR-V for every program,
 	// so the binary keeps shipping its own bytecode. A real Task (not a raw exec()'d Command),
 	// so every TU that includes the generated header (see includes_shader_header below) is
@@ -57,6 +98,10 @@ int main(int argc, char** argv) {
 	const std::vector<std::string> engine_sources = {
 	    "src/gpu/sokol.cpp",
 	    "src/gpu/handle.cpp",
+	    "src/gpu/external_buffer.cpp",
+	    "src/gpu/cross_semaphore.cpp",
+	    "src/gpu/cuda_interop.cpp",         // fully #ifdef GAMEENGINE_CUDA -- compiles to nothing without it
+	    "src/gpu/shared_instance_buffer.cpp",
 
 	    "external/imgui/imgui.cpp",
 	    "external/imgui/imgui_draw.cpp",
@@ -95,10 +140,13 @@ int main(int argc, char** argv) {
 	// One binary per sandbox: the shared engine objects + that sandbox's own entry point.
 	// Each entry file is named after its directory (not a shared "main.cpp") so the build
 	// system's stem-keyed dependency map keeps the two binaries' objects separate.
-	const std::vector<std::string> sandbox_mains = {
+	std::vector<std::string> sandbox_mains = {
 	    "sandbox/model_test/model_test.cpp",
 	    "sandbox/point_test/point_test.cpp",
 	};
+	if (cuda) {
+	    sandbox_mains.push_back("sandbox/cuda_points_test/cuda_points_test.cpp");
+	}
 
 	std::vector<std::reference_wrapper<Task>> engine_objects;
 	for (const auto& source : engine_sources) {
@@ -117,6 +165,11 @@ int main(int argc, char** argv) {
 	for (const auto& main_source : sandbox_mains) {
 	    Task& main_object = engine.addTask(Output(Object(main_source)));
 	    const std::filesystem::path binary_name = std::filesystem::path(main_source).parent_path();
+	    // The CUDA sandbox includes the generated PTX path indirectly; order its compile
+	    // after nvcc has produced it.
+	    if (main_source == "sandbox/cuda_points_test/cuda_points_test.cpp" && cuda_ptx_task != nullptr) {
+	        main_object.depends_on(*cuda_ptx_task);
+	    }
 	    Task& exe = engine.addTask(Output(Binary(binary_name)));
 	    for (Task& object : engine_objects) {
 	        exe.depends_on(object);

@@ -53,7 +53,11 @@ std::optional<NativeHandle> nativeHandle(sg_buffer buffer) {
         }
         case SG_BACKEND_WGPU:
             return NativeHandle{.object = sg_wgpu_query_buffer_info(buffer).buf};
-        case SG_BACKEND_VULKAN:
+        case SG_BACKEND_VULKAN: {
+            const sg_vk_buffer_info info = sg_vk_query_buffer_info(buffer);
+            return NativeHandle{
+                .vk_buffer = info.buffer, .vk_memory = info.memory, .vk_memory_size = info.memory_size};
+        }
         case SG_BACKEND_DUMMY:
             return std::nullopt;
     }
@@ -78,6 +82,8 @@ std::optional<NativeHandle> nativeHandle(sg_image image) {
         case SG_BACKEND_WGPU:
             return NativeHandle{.object = sg_wgpu_query_image_info(image).tex};
         case SG_BACKEND_VULKAN:
+            // Image interop isn't wired yet -- only buffers need it (CUDA point sim).
+            return std::nullopt;
         case SG_BACKEND_DUMMY:
             return std::nullopt;
     }

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu CUDA interop — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>gpu</h4>
+  <a class="here" href="interop.html">CUDA interop</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/renderer.html">Renderer (concept)</a>
+  <a href="../graphics/presenter.html">Presenter</a>
+  <a href="../graphics/point_renderer.html">PointRenderer</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>gpu</code> &mdash; zero-copy CUDA &harr; Vulkan buffer sharing</h1>
+<p class="lede">A CUDA compute thread integrates a GPU buffer in place, on its own clock, while the render thread draws the <em>same</em> bytes &mdash; no copy, no CPU in the loop. Built for the galaxy sim; see <code>sandbox/cuda_points_test</code> (<code>./run cuda_points_test</code>).</p>
+
+<h2>Why a sokol fork</h2>
+<p>
+  Upstream <code>floooh/sokol</code>'s Vulkan backend exposes no <code>VkBuffer</code>
+  accessor and no way to make a buffer's memory exportable. <code>external/sokol</code> is a
+  fork (branch <code>gameengine/vk-interop</code>, every hunk marked <code>GameEngine
+  fork</code>) that adds the minimum:
+</p>
+<ul>
+  <li><code>sg_buffer_desc.vk_external_memory</code> &mdash; that buffer gets a
+    <strong>dedicated, exportable</strong> (<code>OPAQUE_FD</code>) <code>VkDeviceMemory</code>.</li>
+  <li><code>sg_vk_query_buffer_info()</code> / <code>sg_vk_query_device_info()</code> &mdash;
+    the <code>VkBuffer</code>/<code>VkDeviceMemory</code> and the
+    <code>VkInstance/PhysicalDevice/Device/Queue</code> sokol holds.</li>
+  <li><code>sokol_app.h</code>: request <code>VK_KHR_external_memory_fd</code> +
+    <code>VK_KHR_external_semaphore_fd</code>, enable the <code>timelineSemaphore</code> feature.</li>
+</ul>
+<p>
+  It deliberately does <strong>not</strong> touch sokol's per-frame
+  <code>vkQueueSubmit</code>. Sync is done with empty <code>vkQueueSubmit</code>s that
+  bracket sokol's submit on the same queue. <strong>Pivot away from the fork once upstream
+  sokol grows first-class external-memory support.</strong>
+</p>
+
+<h2>The pieces</h2>
+<table>
+  <tr><td><code>ExternalBuffer</code><br><span class="dim">external_buffer.*</span></td>
+      <td>An <code>sg_buffer</code> with exportable dedicated memory, plus the opaque FD
+          (from <code>vkGetMemoryFdKHR</code>) and the allocation size CUDA needs.</td></tr>
+  <tr><td><code>CrossSemaphore</code><br><span class="dim">cross_semaphore.*</span></td>
+      <td>An exportable Vulkan <em>timeline</em> semaphore. <code>queueWait</code>/
+          <code>queueSignal</code> are empty submits on sokol's graphics queue; the FD is
+          imported by CUDA. Timeline = monotonic <code>u64</code>, no signal-before-wait hazard.</td></tr>
+  <tr><td><code>CudaInterop</code><br><span class="dim">cuda_interop.*</span></td>
+      <td>CUDA <strong>Driver API</strong> (no <code>nvcc</code>, no <code>libcudart</code>):
+          match the device by UUID to sokol's <code>VkPhysicalDevice</code>, retain the
+          primary context, <code>cuImportExternalMemory</code> &rarr; a mapped
+          <code>CUdeviceptr</code> that aliases the exact drawn bytes,
+          <code>cuImportExternalSemaphore</code>. All <code>#ifdef GAMEENGINE_CUDA</code>.</td></tr>
+  <tr><td><code>SharedInstanceBuffer</code><br><span class="dim">shared_instance_buffer.*</span></td>
+      <td>The orchestrator. <code>consumeBegin/End</code> on the render thread,
+          <code>attachCuda</code> + <code>produceBegin/End</code> on the one CUDA thread.
+          Two sync modes below.</td></tr>
+</table>
+
+<h2>Sync modes</h2>
+<h3><code>Sync::Semaphore</code> (default)</h3>
+<p>
+  One buffer, strict alternation via two timeline semaphores. The compute thread waits
+  <code>render_done</code> (buffer free), runs as many integration sub-steps as it wants,
+  then signals <code>sim_ready</code>; the render thread waits <code>sim_ready</code> at
+  <code>VERTEX_INPUT</code>, draws, then signals <code>render_done</code> after
+  <code>sg_commit</code>. Sim rate can far exceed the frame rate (sub-steps per hand-off);
+  minimal latency; no extra VRAM.
+</p>
+<h3><code>Sync::DoubleBuffer</code></h3>
+<p>
+  Two buffers. The compute thread integrates freely into the back buffer, <code>sync</code>s
+  its stream, and flips it to the front once the last frame that read it has retired
+  (<code>render_done &ge; flip_frame</code>). The render thread always draws the current
+  front. Compute is fully unthrottled; ~1 frame more latency; 2&times; VRAM. Only
+  <code>render_done</code> is used.
+</p>
+
+<h2>Build &amp; threading notes</h2>
+<ul>
+  <li>CUDA is optional. <code>build.cpp</code> probes <code>CUDA_PATH</code> then
+    <code>/opt/cuda</code>; when found it defines <code>GAMEENGINE_CUDA</code>, links
+    <code>libcuda</code>, and adds the sandbox. The sandbox kernel is <code>nvcc --ptx</code>'d
+    and <code>cuModuleLoad</code>ed at runtime, keeping <code>nvcc</code> out of the C++ link.</li>
+  <li>The compute thread is a plain <code>std::thread</code>, <strong>not</strong> an
+    <a href="../app/worker.html"><code>app::Worker</code></a> (Workers must never touch the
+    GPU). It owns the CUDA context and calls <code>detachCuda()</code> before exiting so the
+    destructor, which may run elsewhere, has only Vulkan objects left.</li>
+  <li>Shutdown: stop + join the compute thread first, then tear down Vulkan.</li>
+</ul>
+
+<footer>Source: <code>src/gpu/external_buffer.*</code>, <code>src/gpu/cross_semaphore.*</code>, <code>src/gpu/cuda_interop.*</code>, <code>src/gpu/shared_instance_buffer.*</code>; fork in <code>external/sokol</code>. See <code>roadmap/compute-ray-tracer.md</code>.</footer>
+
+</main>
+</div>
+</body>
+</html>

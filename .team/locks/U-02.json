@@ -1,0 +1,18 @@
+{
+  "unit": "U-02",
+  "created": "2026-09-06T05:55:00Z",
+  "base": "b56a3d9",
+  "head": "ffbd8b4",
+  "files": [
+    "build.cpp",
+    "sandbox/model_test/main.cpp",
+    "src/graphics/debug_draw.cpp",
+    "src/graphics/deferred_renderer.cpp",
+    "src/graphics/deferred_renderer.hpp",
+    "src/graphics/presenter.cpp",
+    "src/graphics/presenter.hpp",
+    "src/graphics/renderer.hpp"
+  ],
+  "verifiers": ["reviewer", "test-writer", "qa", "spec-checker"],
+  "stage": "verify"
+}

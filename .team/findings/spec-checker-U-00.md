@@ -120,4 +120,4 @@ window and ran until the test timeout, logging only
    consider "a `concept` (compiled under `-std=c++23`)" to avoid a reviewer
    flagging the standard mismatch.
 
-status:
+status: handled — spec.md AC-4/5/6/7/9 rewritten to grep-able facts + runtime observations; AC-6b added for the visual promise (recorded as user manual A/B, never auto-met); AC-8 widened to "every TU that includes engine.glsl.h".

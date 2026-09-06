@@ -1,0 +1,20 @@
+{
+  "unit": "U-01",
+  "created": "2026-09-05T00:00:00Z",
+  "base": "e1818e3f27da207823cf481a1f8ef07288bbc2eb",
+  "head": "339fb42",
+  "files": [
+    "build.cpp",
+    "src/graphics/fullscreen_pass.cpp",
+    "src/graphics/fullscreen_pass.hpp",
+    "src/graphics/post.cpp",
+    "src/graphics/post.hpp",
+    "src/graphics/render_target.cpp",
+    "src/graphics/render_target.hpp",
+    "src/graphics/renderer.cpp",
+    "src/graphics/renderer.hpp",
+    "src/graphics/shaders/engine.glsl"
+  ],
+  "verifiers": ["reviewer", "test-writer", "qa", "spec-checker"],
+  "stage": "verify"
+}

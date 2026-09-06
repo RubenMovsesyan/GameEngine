@@ -1,11 +1,11 @@
 #pragma once
 
 #include <common.h>
-#include <graphics/frustum.hpp>
+#include <graphics/primitives/scene/frustum.hpp>
 
 #include <Eigen/Dense>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 class Camera {
     public:
@@ -65,4 +65,4 @@ class Camera {
         mutable Frustum m_frustum;
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

@@ -1,6 +1,6 @@
-#include <graphics/light.hpp>
+#include <graphics/primitives/scene/light.hpp>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 namespace {
 
@@ -29,4 +29,4 @@ std::string Light::display() const {
            std::to_string(spot_outer_cone_angle) + ", casts_shadows=" + (casts_shadows ? "true" : "false") + "}";
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

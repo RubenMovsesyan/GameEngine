@@ -1,13 +1,13 @@
 #pragma once
 
 #include <common.h>
-#include <graphics/texture.hpp>
+#include <graphics/primitives/scene/texture.hpp>
 
 #include <Eigen/Dense>
 
 #include <variant>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 // Procedural vertical gradient: ground color at the horizon fading to zenith overhead.
 // zenith/ground are linear radiance in the same units as lights; the tonemap applies
@@ -29,4 +29,4 @@ struct Skybox {
     f32 intensity = 1.0f;
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>graphics::Camera — GameEngine</title>
+<title>graphics::primitives::scene::Camera — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -48,7 +48,7 @@
 
 <main>
 
-<h1><code>graphics::Camera</code></h1>
+<h1><code>graphics::primitives::scene::Camera</code></h1>
 <p class="lede">View + projection matrices, Vulkan-convention, hand-derived (no glm/GLU dependency).</p>
 
 <h2>Role</h2>
@@ -156,7 +156,7 @@
   <li><code>transformationMatrix()</code> is a standard right-handed look-at (<code>right = forward × up</code>, <code>up' = right × forward</code>), camera looking down -Z in view space — matches glTF's own camera convention, which matters since <code>scene::loadGltf</code> loads content authored under that convention.</li>
 </ul>
 
-<footer>Source: <code>src/graphics/camera.hpp</code>, <code>src/graphics/camera.cpp</code></footer>
+<footer>Source: <code>src/graphics/primitives/scene/camera.hpp</code>, <code>src/graphics/primitives/scene/camera.cpp</code></footer>
 
 </main>
 </div>

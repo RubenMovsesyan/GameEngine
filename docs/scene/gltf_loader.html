@@ -66,7 +66,7 @@
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>scene::Model</code>, <code>graphics::StandardMesh</code>/
+  Depends on <code>scene::Model</code>, <code>graphics::primitives::scene::StandardMesh</code>/
   <code>Vertex</code>/<code>Light</code>/
   <a href="../graphics/material.html"><code>Material</code></a>/
   <a href="../graphics/texture.html"><code>Texture</code></a>, <code>cgltf</code>
@@ -79,7 +79,7 @@
 <h2>Public API</h2>
 <pre><code>struct LoadedGltf {
     std::vector&lt;Model&gt; models;
-    std::vector&lt;graphics::Light&gt; lights;
+    std::vector&lt;graphics::primitives::scene::Light&gt; lights;
 };
 
 LoadedGltf loadGltf(const std::filesystem::path&);</code></pre>

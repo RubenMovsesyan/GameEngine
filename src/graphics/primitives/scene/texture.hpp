@@ -8,7 +8,7 @@
 #include <span>
 #include <vector>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 struct DecodedPixels {
     std::vector<u8> pixels; // tightly packed RGBA8
@@ -52,4 +52,4 @@ class Texture {
         std::shared_ptr<State> m_state;
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <graphics/material.hpp>
-#include <graphics/mesh.hpp>
+#include <graphics/primitives/scene/material.hpp>
+#include <graphics/primitives/scene/mesh.hpp>
 
 #include <Eigen/Dense>
 
@@ -11,9 +11,9 @@
 namespace scene {
 
 struct ModelPart {
-    std::variant<graphics::StandardMesh, graphics::InstancedMesh> mesh;
+    std::variant<graphics::primitives::scene::StandardMesh, graphics::primitives::scene::InstancedMesh> mesh;
     Eigen::Matrix4f transform; // local to the model's own origin
-    graphics::Material material;
+    graphics::primitives::scene::Material material;
     Eigen::AlignedBox3f local_bounds; // mesh-space AABB (pre-transform); for frustum culling
 
     // Shares the existing vertex/index buffers -- no re-upload. Warns and no-ops if already that kind.
@@ -34,8 +34,8 @@ class Model {
         // renders exactly where its parts' transforms already put it.
         Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
 
-        template <graphics::Mesh T>
-        void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material, Eigen::AlignedBox3f local_bounds);
+        template <graphics::primitives::scene::Mesh T>
+        void addPart(T mesh, Eigen::Matrix4f transform, graphics::primitives::scene::Material material, Eigen::AlignedBox3f local_bounds);
 
         u32 partCount() const { return static_cast<u32>(m_parts.size()); }
         std::vector<ModelPart>& mutableParts() { return m_parts; }

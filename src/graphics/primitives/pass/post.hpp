@@ -1,11 +1,11 @@
 #pragma once
 
 #include <common.h>
-#include <graphics/fullscreen_pass.hpp>
+#include <graphics/primitives/pass/fullscreen_pass.hpp>
 
 #include <sokol_gfx.h>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 // ACES filmic tonemap: HDR radiance * exposure -> LDR. Wraps the `tonemap` shader program.
 class TonemapPass {
@@ -33,4 +33,4 @@ class FxaaPass {
         FullscreenPass m_pass;
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

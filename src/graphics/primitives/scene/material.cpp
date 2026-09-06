@@ -1,6 +1,6 @@
-#include <graphics/material.hpp>
+#include <graphics/primitives/scene/material.hpp>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 Material Material::create(std::optional<Texture> base_color_texture, std::optional<Texture> metallic_roughness_texture,
                            const Eigen::Vector4f& base_color_factor, f32 metallic_factor, f32 roughness_factor) {
@@ -13,4 +13,4 @@ Material Material::create(std::optional<Texture> base_color_texture, std::option
     return material;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

@@ -1,13 +1,13 @@
-#include <graphics/deferred_renderer.hpp>
+#include <graphics/renderers/deferred_renderer.hpp>
 
-#include <graphics/frustum.hpp>
-#include <graphics/texture.hpp>
+#include <graphics/primitives/scene/frustum.hpp>
+#include <graphics/primitives/scene/texture.hpp>
 
 #include <sokol_gfx.h>
 
 #include "engine.glsl.h"
 
-namespace graphics {
+namespace graphics::renderers {
 
 namespace {
 
@@ -20,36 +20,36 @@ constexpr sg_pixel_format kLdrFormat = SG_PIXELFORMAT_RGBA8;
 
 // Vertex layout shared by the G-buffer and shadow passes: interleaved Vertex at buffer 0.
 void setMeshLayout(sg_vertex_layout_state& layout) {
-    layout.buffers[0].stride = sizeof(Vertex);
+    layout.buffers[0].stride = sizeof(primitives::scene::Vertex);
     layout.attrs[ATTR_gbuffer_position].format = SG_VERTEXFORMAT_FLOAT3;
-    layout.attrs[ATTR_gbuffer_position].offset = offsetof(Vertex, position);
+    layout.attrs[ATTR_gbuffer_position].offset = offsetof(primitives::scene::Vertex, position);
     layout.attrs[ATTR_gbuffer_position].buffer_index = 0;
     layout.attrs[ATTR_gbuffer_normal].format = SG_VERTEXFORMAT_FLOAT3;
-    layout.attrs[ATTR_gbuffer_normal].offset = offsetof(Vertex, normal);
+    layout.attrs[ATTR_gbuffer_normal].offset = offsetof(primitives::scene::Vertex, normal);
     layout.attrs[ATTR_gbuffer_normal].buffer_index = 0;
     layout.attrs[ATTR_gbuffer_texcoord].format = SG_VERTEXFORMAT_FLOAT2;
-    layout.attrs[ATTR_gbuffer_texcoord].offset = offsetof(Vertex, uv);
+    layout.attrs[ATTR_gbuffer_texcoord].offset = offsetof(primitives::scene::Vertex, uv);
     layout.attrs[ATTR_gbuffer_texcoord].buffer_index = 0;
 }
 
 // The shadow pass reads the same interleaved vertex buffer but only consumes position;
 // declaring the unused attributes makes Vulkan complain that they go unread.
 void setShadowMeshLayout(sg_vertex_layout_state& layout) {
-    layout.buffers[0].stride = sizeof(Vertex);
+    layout.buffers[0].stride = sizeof(primitives::scene::Vertex);
     layout.attrs[ATTR_shadow_depth_position].format = SG_VERTEXFORMAT_FLOAT3;
-    layout.attrs[ATTR_shadow_depth_position].offset = offsetof(Vertex, position);
+    layout.attrs[ATTR_shadow_depth_position].offset = offsetof(primitives::scene::Vertex, position);
     layout.attrs[ATTR_shadow_depth_position].buffer_index = 0;
 }
 
 // Per-instance InstanceData at buffer 1: a mat4 is four consecutive FLOAT4 attributes.
 void setInstanceLayout(sg_vertex_layout_state& layout, int first_location, bool include_normal_matrix) {
-    layout.buffers[1].stride = sizeof(InstanceData);
+    layout.buffers[1].stride = sizeof(primitives::scene::InstanceData);
     layout.buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE;
 
     for (int i = 0; i < 4; i++) {
         const int slot = first_location + i;
         layout.attrs[slot].format = SG_VERTEXFORMAT_FLOAT4;
-        layout.attrs[slot].offset = static_cast<int>(offsetof(InstanceData, transform) + i * sizeof(Eigen::Vector4f));
+        layout.attrs[slot].offset = static_cast<int>(offsetof(primitives::scene::InstanceData, transform) + i * sizeof(Eigen::Vector4f));
         layout.attrs[slot].buffer_index = 1;
     }
 
@@ -59,7 +59,7 @@ void setInstanceLayout(sg_vertex_layout_state& layout, int first_location, bool 
     for (int i = 0; i < 4; i++) {
         const int slot = ATTR_gbuffer_instanced_inst_normal_matrix + i;
         layout.attrs[slot].format = SG_VERTEXFORMAT_FLOAT4;
-        layout.attrs[slot].offset = static_cast<int>(offsetof(InstanceData, normal_matrix) + i * sizeof(Eigen::Vector4f));
+        layout.attrs[slot].offset = static_cast<int>(offsetof(primitives::scene::InstanceData, normal_matrix) + i * sizeof(Eigen::Vector4f));
         layout.attrs[slot].buffer_index = 1;
     }
 }
@@ -78,7 +78,7 @@ void applyUniforms(int slot, const T& value) {
 } // namespace
 
 DeferredRenderer::DeferredRenderer() {
-    const Skybox defaults{};
+    const primitives::scene::Skybox defaults{};
     setSkybox(defaults);
 
     sg_sampler_desc material_sampler = {};
@@ -214,12 +214,12 @@ void DeferredRenderer::buildPipelines() {
     // --- Fullscreen passes: no vertex buffer, no depth. Lighting and sky write HDR; tonemap,
     // FXAA and the shadow-map debug blit all write the LDR target -- the Presenter, not this
     // renderer, is what blits to the swapchain.
-    m_lighting_pass = FullscreenPass::create(lighting_shader_desc(sg_query_backend()), kHdrFormat, "lighting pipeline");
-    m_sky_pass = FullscreenPass::create(sky_shader_desc(sg_query_backend()), kHdrFormat, "sky pipeline");
+    m_lighting_pass = primitives::pass::FullscreenPass::create(lighting_shader_desc(sg_query_backend()), kHdrFormat, "lighting pipeline");
+    m_sky_pass = primitives::pass::FullscreenPass::create(sky_shader_desc(sg_query_backend()), kHdrFormat, "sky pipeline");
     m_tonemap.emplace(kLdrFormat);
     m_fxaa.emplace(kLdrFormat);
     m_shadow_debug_pass =
-        FullscreenPass::create(shadow_debug_shader_desc(sg_query_backend()), kLdrFormat, "shadow debug pipeline");
+        primitives::pass::FullscreenPass::create(shadow_debug_shader_desc(sg_query_backend()), kLdrFormat, "shadow debug pipeline");
 }
 
 void DeferredRenderer::rebuildTargets(int width, int height) {
@@ -230,16 +230,16 @@ void DeferredRenderer::rebuildTargets(int width, int height) {
     m_width = width;
     m_height = height;
 
-    m_albedo = makeColorTarget(width, height, kAlbedoFormat, "gbuffer albedo");
-    m_normal = makeColorTarget(width, height, kNormalFormat, "gbuffer normal (octahedral)");
-    m_material = makeColorTarget(width, height, kMaterialFormat, "gbuffer material");
-    m_depth = makeDepthTarget(width, height, "gbuffer depth");
-    m_hdr = makeColorTarget(width, height, kHdrFormat, "hdr colour");
-    m_tonemapped = makeColorTarget(width, height, kLdrFormat, "tonemapped colour");
-    m_ldr = makeColorTarget(width, height, kLdrFormat, "final colour");
+    m_albedo = primitives::pass::makeColorTarget(width, height, kAlbedoFormat, "gbuffer albedo");
+    m_normal = primitives::pass::makeColorTarget(width, height, kNormalFormat, "gbuffer normal (octahedral)");
+    m_material = primitives::pass::makeColorTarget(width, height, kMaterialFormat, "gbuffer material");
+    m_depth = primitives::pass::makeDepthTarget(width, height, "gbuffer depth");
+    m_hdr = primitives::pass::makeColorTarget(width, height, kHdrFormat, "hdr colour");
+    m_tonemapped = primitives::pass::makeColorTarget(width, height, kLdrFormat, "tonemapped colour");
+    m_ldr = primitives::pass::makeColorTarget(width, height, kLdrFormat, "final colour");
 }
 
-void DeferredRenderer::beginFrame(const Camera& camera) {
+void DeferredRenderer::beginFrame(const primitives::scene::Camera& camera) {
     m_draw_list.clear();
     m_has_shadow_light = false;
 
@@ -253,18 +253,18 @@ void DeferredRenderer::beginFrame(const Camera& camera) {
     m_pending_camera = &camera;
 }
 
-void DeferredRenderer::setLights(const LightManager& lights) {
+void DeferredRenderer::setLights(const primitives::pass::LightManager& lights) {
     m_light_view = lights.view();
     m_light_count = lights.count();
 
-    if (const Light* directional = lights.directionalLight(); directional != nullptr) {
+    if (const primitives::scene::Light* directional = lights.directionalLight(); directional != nullptr) {
         m_sun_direction = directional->direction.normalized();
         m_has_shadow_light = true;
     }
 }
 
-void DeferredRenderer::setSkybox(const Skybox& skybox) {
-    if (const GradientSky* gradient = std::get_if<GradientSky>(&skybox.source); gradient != nullptr) {
+void DeferredRenderer::setSkybox(const primitives::scene::Skybox& skybox) {
+    if (const primitives::scene::GradientSky* gradient = std::get_if<primitives::scene::GradientSky>(&skybox.source); gradient != nullptr) {
         m_sky_zenith = gradient->zenith;
         m_sky_ground = gradient->ground;
         m_sky_kind = 0.0f;
@@ -302,20 +302,20 @@ void DeferredRenderer::cycleShadowMapDebugLayer() {
     m_shadow_debug_layer = (m_shadow_debug_layer + 1) % kCascadeCount;
 }
 
-template <Mesh T>
+template <primitives::scene::Mesh T>
 void DeferredRenderer::submit(
-    T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible
+    T& mesh, const primitives::scene::Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible
 ) {
     DrawItem item;
     item.vertex = mesh.vertexBuffer();
     item.index = mesh.indexBuffer();
-    if constexpr (std::same_as<T, InstancedMesh>) {
+    if constexpr (std::same_as<T, primitives::scene::InstancedMesh>) {
         item.instance = mesh.instanceBuffer();
     }
     item.index_count = mesh.indexCount();
     item.instance_count = mesh.instanceCount();
     item.model = model;
-    item.normal_matrix = normalMatrix(model);
+    item.normal_matrix = primitives::scene::normalMatrix(model);
     item.material = &material;
     item.world_bounds = world_bounds;
     item.camera_visible = camera_visible;
@@ -323,8 +323,8 @@ void DeferredRenderer::submit(
     m_draw_list.push_back(item);
 }
 
-template void DeferredRenderer::submit<StandardMesh>(StandardMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
-template void DeferredRenderer::submit<InstancedMesh>(InstancedMesh&, const Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void DeferredRenderer::submit<primitives::scene::StandardMesh>(primitives::scene::StandardMesh&, const primitives::scene::Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void DeferredRenderer::submit<primitives::scene::InstancedMesh>(primitives::scene::InstancedMesh&, const primitives::scene::Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
 
 void DeferredRenderer::recordShadowPass() {
     for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {
@@ -339,7 +339,7 @@ void DeferredRenderer::recordShadowPass() {
         pass.label = "shadow pass";
         sg_begin_pass(&pass);
 
-        const Frustum light_frustum = Frustum::fromViewProjection(m_cascade_view_proj[cascade]);
+        const primitives::scene::Frustum light_frustum = primitives::scene::Frustum::fromViewProjection(m_cascade_view_proj[cascade]);
 
         for (const DrawItem& item : m_draw_list) {
             const bool instanced = item.instance.id != SG_INVALID_ID;
@@ -394,7 +394,7 @@ void DeferredRenderer::recordGBufferPass() {
         const bool instanced = item.instance.id != SG_INVALID_ID;
         sg_apply_pipeline(instanced ? m_gbuffer_instanced_pipeline : m_gbuffer_pipeline);
 
-        const Material& material = *item.material;
+        const primitives::scene::Material& material = *item.material;
         const sg_view albedo = material.baseColorTexture() ? material.baseColorTexture()->view() : *m_white_texture;
         const sg_view metallic_roughness =
             material.metallicRoughnessTexture() ? material.metallicRoughnessTexture()->view() : *m_white_texture;
@@ -445,7 +445,7 @@ sg_view DeferredRenderer::render(int width, int height) {
     // Fitted here, not in beginFrame(): needs m_sun_direction, which setLights() -- called
     // after beginFrame() by contract -- is what sets. m_pending_camera is non-owning and
     // only valid for this frame; beginFrame() must have run first to set it.
-    const CascadeSetup cascades = computeCascades(
+    const primitives::pass::CascadeSetup cascades = primitives::pass::computeCascades(
         *m_pending_camera, m_sun_direction, m_shadow_distance, m_cascade_split_lambda, static_cast<f32>(kShadowMapResolution)
     );
     m_cascade_view_proj = cascades.view_proj;
@@ -554,7 +554,7 @@ sg_view DeferredRenderer::render(int width, int height) {
             });
         }
 
-        // Unlit overlay, no depth test -- see graphics::DebugDraw. No-op while disabled.
+        // Unlit overlay, no depth test -- see graphics::primitives::pass::DebugDraw. No-op while disabled.
         m_debug_draw.begin(m_view_projection);
         m_debug_draw.render();
 
@@ -564,4 +564,4 @@ sg_view DeferredRenderer::render(int width, int height) {
     return *m_ldr.texture;
 }
 
-} // namespace graphics
+} // namespace graphics::renderers

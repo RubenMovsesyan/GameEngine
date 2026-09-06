@@ -1,10 +1,10 @@
-#include <graphics/post.hpp>
+#include <graphics/primitives/pass/post.hpp>
 
 #include <Eigen/Dense>
 
 #include "engine.glsl.h"
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 namespace {
 
@@ -49,4 +49,4 @@ void FxaaPass::draw(sg_view source, sg_sampler sampler, int width, int height, b
     });
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

@@ -1,6 +1,6 @@
-#include <graphics/debug_draw.hpp>
+#include <graphics/primitives/pass/debug_draw.hpp>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 DebugDraw::DebugDraw() {
     sgl_desc_t desc = {};
@@ -119,4 +119,4 @@ void DebugDraw::render() {
     sgl_context_draw(m_context);
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

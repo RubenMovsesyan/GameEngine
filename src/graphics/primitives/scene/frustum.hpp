@@ -7,7 +7,7 @@
 
 #include <array>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 // Six inward-facing bounding planes of a view volume, extracted from an arbitrary world->clip matrix.
 class Frustum {
@@ -32,4 +32,4 @@ class Frustum {
         std::array<Eigen::Vector3f, 8> m_corners{};
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

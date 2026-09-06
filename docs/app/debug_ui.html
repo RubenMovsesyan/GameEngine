@@ -82,7 +82,7 @@
   before invoking the caller's <code>panels</code> callback, before
   <code>simgui_render()</code> — so no <code>ImGui::</code> call the caller makes inside
   <code>panels</code> ever runs while the panel is hidden, and no ImGui frame is even
-  constructed. Same guarantee <code>graphics::DebugDraw</code> already gives.
+  constructed. Same guarantee <code>graphics::primitives::pass::DebugDraw</code> already gives.
 </p>
 <p>
   <code>handleEvent()</code> is the one method that does <em>not</em> gate on visibility —

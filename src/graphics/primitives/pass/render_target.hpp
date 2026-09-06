@@ -4,7 +4,7 @@
 
 #include <sokol_gfx.h>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 // An offscreen render target: the image, the view it is rendered through, and the view it
 // is sampled through afterwards.
@@ -22,4 +22,4 @@ RenderTarget makeColorTarget(int width, int height, sg_pixel_format format, cons
 // the deferred lighting and sky passes read it back.
 RenderTarget makeDepthTarget(int width, int height, const char* label);
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

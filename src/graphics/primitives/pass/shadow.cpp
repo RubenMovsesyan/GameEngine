@@ -1,10 +1,10 @@
-#include <graphics/shadow.hpp>
+#include <graphics/primitives/pass/shadow.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 namespace {
 
@@ -43,7 +43,7 @@ constexpr f32 kCasterMargin = 50.0f;
 } // namespace
 
 CascadeSetup computeCascades(
-    const Camera& camera, const Eigen::Vector3f& light_direction, f32 shadow_distance, f32 split_lambda,
+    const scene::Camera& camera, const Eigen::Vector3f& light_direction, f32 shadow_distance, f32 split_lambda,
     f32 shadow_map_resolution
 ) {
     const f32 near = camera.nearPlane();
@@ -118,4 +118,4 @@ CascadeSetup computeCascades(
     return out;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

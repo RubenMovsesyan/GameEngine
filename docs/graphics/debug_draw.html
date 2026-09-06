@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>graphics::DebugDraw — GameEngine</title>
+<title>graphics::primitives::pass::DebugDraw — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -37,7 +37,7 @@
 
 <main>
 
-<h1><code>graphics::DebugDraw</code></h1>
+<h1><code>graphics::primitives::pass::DebugDraw</code></h1>
 <p class="lede">Immediate-mode debug lines — AABBs, frustums, axes — drawn as an unlit overlay on top of the finished frame.</p>
 
 <h2>Role</h2>
@@ -45,7 +45,7 @@
   A thin wrapper over <a href="https://github.com/floooh/sokol/blob/master/util/sokol_gl.h"><code>sokol_gl.h</code></a>
   (vendored at <code>external/sokol/util/sokol_gl.h</code>), which does the actual immediate-mode
   vertex batching and drawing. <code>DebugDraw</code> only adds the world-space, engine-typed API
-  (<code>Eigen</code> vectors, <code>graphics::Frustum</code> corners) on top of it.
+  (<code>Eigen</code> vectors, <code>graphics::primitives::scene::Frustum</code> corners) on top of it.
 </p>
 <p>
   <code>Renderer</code> owns one instance and flushes it as the last thing in the frame — inside the
@@ -114,7 +114,7 @@
 <p>
   <code>aabb()</code> takes an <code>Eigen::AlignedBox3f</code> and enumerates its 8 corners itself.
   <code>frustum()</code> instead takes 8 corners directly, in the exact order
-  <code>graphics::Frustum::corners()</code> already produces them: near face
+  <code>graphics::primitives::scene::Frustum::corners()</code> already produces them: near face
   {bottom-left, bottom-right, top-left, top-right} at indices 0–3, then the far face in the same
   bottom-left/bottom-right/top-left/top-right order at indices 4–7. Both build the same 12 line
   segments — 4 edges around the near/bottom face, 4 around the far/top face, 4 connecting the two —

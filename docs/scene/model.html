@@ -70,7 +70,7 @@
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <a href="../graphics/mesh.html"><code>graphics::Mesh</code></a> (the concept,
+  Depends on <a href="../graphics/mesh.html"><code>graphics::primitives::scene::Mesh</code></a> (the concept,
   <code>StandardMesh</code>, <code>InstancedMesh</code>) and
   <a href="../graphics/material.html"><code>Material</code></a> only — no
   <code>Renderer</code>, no <code>Camera</code>. Built by <code>scene::loadGltf</code>,
@@ -81,13 +81,13 @@
 
 <h2>Public API</h2>
 <pre><code>struct ModelPart {
-    std::variant&lt;graphics::StandardMesh, graphics::InstancedMesh&gt; mesh;
+    std::variant&lt;graphics::primitives::scene::StandardMesh, graphics::primitives::scene::InstancedMesh&gt; mesh;
     Eigen::Matrix4f transform;        // local to the model's own origin
-    graphics::Material material;
+    graphics::primitives::scene::Material material;
     Eigen::AlignedBox3f local_bounds; // mesh-space AABB, pre-transform; for frustum culling
 
     void convertToStandard();    // shares buffers, no re-upload; warns and no-ops if already that kind
-    void convertToInstanced();   // lossy for the reverse direction -- see graphics::Mesh
+    void convertToInstanced();   // lossy for the reverse direction -- see graphics::primitives::scene::Mesh
 };
 
 // Transform the 8 local corners and re-fit; loose for a rotated box but never smaller than true.
@@ -98,8 +98,8 @@ class Model {
     // a Model with no placement set renders exactly where its parts' transforms already put it.
     Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
 
-    template &lt;graphics::Mesh T&gt;
-    void addPart(T mesh, Eigen::Matrix4f transform, graphics::Material material, Eigen::AlignedBox3f local_bounds);
+    template &lt;graphics::primitives::scene::Mesh T&gt;
+    void addPart(T mesh, Eigen::Matrix4f transform, graphics::primitives::scene::Material material, Eigen::AlignedBox3f local_bounds);
 
     u32 partCount() const;
     std::vector&lt;ModelPart&gt;& mutableParts();
@@ -120,7 +120,7 @@ class Model {
   </li>
   <li>No static factory — unlike <code>Mesh</code>/<code>Surface</code>, <code>Model</code> doesn't allocate any GPU resource itself, it just aggregates already-created meshes, so ordinary construction + <code>addPart()</code> is enough.</li>
   <li>
-    <strong><code>addPart&lt;T&gt;()</code> is templated, constrained by <code>graphics::Mesh</code>,
+    <strong><code>addPart&lt;T&gt;()</code> is templated, constrained by <code>graphics::primitives::scene::Mesh</code>,
     and explicitly instantiated</strong> for <code>StandardMesh</code>/<code>InstancedMesh</code>
     in <code>model.cpp</code> — same pattern as <code>Renderer::renderMesh&lt;T&gt;()</code>. Keeps
     the real function body out of the header while still accepting either mesh kind at the call

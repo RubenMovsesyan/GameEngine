@@ -1,8 +1,8 @@
-#include <graphics/camera.hpp>
+#include <graphics/primitives/scene/camera.hpp>
 
 #include <cmath>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 Camera::Camera(
     f32 fov_y_radians, f32 aspect_ratio, f32 near_plane, f32 far_plane, const Eigen::Vector3f& position,
@@ -103,4 +103,4 @@ const Frustum& Camera::frustum() const {
     return m_frustum;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

@@ -1,11 +1,11 @@
-#include <graphics/texture.hpp>
+#include <graphics/primitives/scene/texture.hpp>
 
 #include <rlog.h>
 
 #include <mutex>
 #include <thread>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 namespace {
 
@@ -131,4 +131,4 @@ bool Texture::isReady() const {
     return m_state->ready;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

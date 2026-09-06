@@ -1,23 +1,23 @@
 #pragma once
 
 #include <gpu/handle.hpp>
-#include <graphics/camera.hpp>
-#include <graphics/debug_draw.hpp>
-#include <graphics/fullscreen_pass.hpp>
-#include <graphics/light_manager.hpp>
-#include <graphics/material.hpp>
-#include <graphics/mesh.hpp>
-#include <graphics/post.hpp>
-#include <graphics/render_target.hpp>
+#include <graphics/primitives/scene/camera.hpp>
+#include <graphics/primitives/pass/debug_draw.hpp>
+#include <graphics/primitives/pass/fullscreen_pass.hpp>
+#include <graphics/primitives/pass/light_manager.hpp>
+#include <graphics/primitives/scene/material.hpp>
+#include <graphics/primitives/scene/mesh.hpp>
+#include <graphics/primitives/pass/post.hpp>
+#include <graphics/primitives/pass/render_target.hpp>
 #include <graphics/renderer.hpp>
-#include <graphics/shadow.hpp>
-#include <graphics/skybox.hpp>
+#include <graphics/primitives/pass/shadow.hpp>
+#include <graphics/primitives/scene/skybox.hpp>
 
 #include <array>
 #include <optional>
 #include <vector>
 
-namespace graphics {
+namespace graphics::renderers {
 
 // One implementation of the graphics::Renderer concept: deferred shading --
 // shadow cascades -> G-buffer -> lighting -> sky -> tonemap -> FXAA, its output left in an
@@ -32,22 +32,22 @@ class DeferredRenderer {
         // Seeds view/inverse-view-projection and fits the shadow cascades against this
         // camera. Called once, unconditionally, at the start of the frame -- not inferred
         // from whichever submit() happens to run first.
-        void beginFrame(const Camera&);
+        void beginFrame(const primitives::scene::Camera&);
 
         // camera_visible only gates the G-buffer pass; shadow casters render regardless (an off-screen
         // object can still cast a shadow into view). Caller decides visibility (e.g. against
         // Camera::frustum()) -- submit() itself has no notion of "camera".
-        template <Mesh T>
+        template <primitives::scene::Mesh T>
         void submit(
-            T& mesh, const Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds,
+            T& mesh, const primitives::scene::Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds,
             bool camera_visible
         );
 
         // Call between beginFrame() and render().
-        void setLights(const LightManager&);
+        void setLights(const primitives::pass::LightManager&);
 
         // Unpacks the Skybox into the sky pass's stashed params. Defaults render a gradient sky.
-        void setSkybox(const Skybox&);
+        void setSkybox(const primitives::scene::Skybox&);
 
         // Brightness multiplier applied before the tonemap curve; scene-dependent, tune per scene.
         void setExposure(f32);
@@ -76,7 +76,7 @@ class DeferredRenderer {
         // Immediate-mode debug lines (AABBs, frustums, axes). Off by default; call
         // debugDraw().setEnabled(true) to turn it on. Calls between beginFrame() and
         // render() are drawn as an unlit overlay, unaffected by tonemap/FXAA.
-        DebugDraw& debugDraw() { return m_debug_draw; }
+        primitives::pass::DebugDraw& debugDraw() { return m_debug_draw; }
 
         // Records the shadow, G-buffer, lighting, sky, tonemap and FXAA passes for one
         // frame at width x height pixels and returns a view of the final LDR image.
@@ -91,7 +91,7 @@ class DeferredRenderer {
         void recordShadowPass();
         void recordGBufferPass();
 
-        static constexpr u32 kCascadeCount = kShadowCascadeCount;
+        static constexpr u32 kCascadeCount = primitives::pass::kShadowCascadeCount;
         static constexpr int kShadowMapResolution = 2048;
 
         // One queued draw. The sokol ids are copies, but the Material pointer is non-owning and
@@ -104,7 +104,7 @@ class DeferredRenderer {
             u32 instance_count = 1;
             Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
             Eigen::Matrix4f normal_matrix = Eigen::Matrix4f::Identity();
-            const Material* material = nullptr;
+            const primitives::scene::Material* material = nullptr;
             Eigen::AlignedBox3f world_bounds;
             bool camera_visible = true; // false => shadow-cast only, skipped by the G-buffer pass
         };
@@ -116,14 +116,14 @@ class DeferredRenderer {
         int m_height = 0;
 
         // G-buffer: albedo, octahedral normal, packed metallic-roughness, plus depth.
-        RenderTarget m_albedo;
-        RenderTarget m_normal;
-        RenderTarget m_material;
-        RenderTarget m_depth;
+        primitives::pass::RenderTarget m_albedo;
+        primitives::pass::RenderTarget m_normal;
+        primitives::pass::RenderTarget m_material;
+        primitives::pass::RenderTarget m_depth;
 
-        RenderTarget m_hdr;         // lighting + sky output, before tonemapping
-        RenderTarget m_tonemapped;  // tonemap output, FXAA input
-        RenderTarget m_ldr;         // final LDR image: FXAA + debug overlays; the Presenter blits this, render() returns it
+        primitives::pass::RenderTarget m_hdr;         // lighting + sky output, before tonemapping
+        primitives::pass::RenderTarget m_tonemapped;  // tonemap output, FXAA input
+        primitives::pass::RenderTarget m_ldr;         // final LDR image: FXAA + debug overlays; the Presenter blits this, render() returns it
 
         // Directional shadow map: one D32 array slice per cascade.
         gpu::ImageHandle m_shadow_image;
@@ -146,12 +146,12 @@ class DeferredRenderer {
         sg_pipeline m_shadow_pipeline = {};
         sg_pipeline m_shadow_instanced_pipeline = {};
 
-        // Fullscreen screen-space passes, all built on graphics::FullscreenPass.
-        FullscreenPass m_lighting_pass;
-        FullscreenPass m_sky_pass;
-        FullscreenPass m_shadow_debug_pass;
-        std::optional<TonemapPass> m_tonemap; // needs an output format, so emplaced in buildPipelines()
-        std::optional<FxaaPass> m_fxaa;
+        // Fullscreen screen-space passes, all built on graphics::primitives::pass::FullscreenPass.
+        primitives::pass::FullscreenPass m_lighting_pass;
+        primitives::pass::FullscreenPass m_sky_pass;
+        primitives::pass::FullscreenPass m_shadow_debug_pass;
+        std::optional<primitives::pass::TonemapPass> m_tonemap; // needs an output format, so emplaced in buildPipelines()
+        std::optional<primitives::pass::FxaaPass> m_fxaa;
 
         sg_view m_light_view = {};
         u32 m_light_count = 0;
@@ -161,7 +161,7 @@ class DeferredRenderer {
         f32 m_sky_intensity;
         f32 m_sky_kind; // 0 = gradient; 1 = cubemap (not built yet)
 
-        // Recomputed each frame from the live camera, by graphics::computeCascades.
+        // Recomputed each frame from the live camera, by graphics::primitives::pass::computeCascades.
         std::array<Eigen::Matrix4f, kCascadeCount> m_cascade_view_proj;
         std::array<f32, kCascadeCount> m_cascade_split_depth{};
         Eigen::Vector3f m_sun_direction = Eigen::Vector3f(-0.4f, -1.0f, -0.35f).normalized(); // overridden by setLights
@@ -177,7 +177,7 @@ class DeferredRenderer {
         // Non-owning; valid only for the frame that queued it (same lifetime contract as
         // DrawItem::material). render() reads it to fit the shadow cascades, once
         // setLights() has had a chance to set m_sun_direction.
-        const Camera* m_pending_camera = nullptr;
+        const primitives::scene::Camera* m_pending_camera = nullptr;
 
         // Stashed once by beginFrame(camera), consumed by render().
         Eigen::Vector3f m_view_position{0.0f, 0.0f, 0.0f};
@@ -190,9 +190,9 @@ class DeferredRenderer {
         f32 m_exposure = 0.003f;
         bool m_fxaa_enabled = true;
 
-        DebugDraw m_debug_draw;
+        primitives::pass::DebugDraw m_debug_draw;
 };
 
-static_assert(Renderer<DeferredRenderer>);
+static_assert(graphics::Renderer<DeferredRenderer>);
 
-} // namespace graphics
+} // namespace graphics::renderers

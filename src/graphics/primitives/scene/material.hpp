@@ -1,12 +1,12 @@
 #pragma once
 
-#include <graphics/texture.hpp>
+#include <graphics/primitives/scene/texture.hpp>
 
 #include <Eigen/Dense>
 
 #include <optional>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 // glTF metallic-roughness material: two optional textures plus the factors that always apply.
 //
@@ -36,4 +36,4 @@ class Material {
         f32 m_roughness_factor = 1.0f;
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

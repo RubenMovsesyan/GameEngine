@@ -7,7 +7,7 @@
 
 #include <string>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 enum class LightType {
     Directional,
@@ -33,4 +33,4 @@ class Light {
 
 static_assert(utils::Display<Light>);
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

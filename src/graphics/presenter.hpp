@@ -1,7 +1,7 @@
 #pragma once
 
 #include <gpu/handle.hpp>
-#include <graphics/fullscreen_pass.hpp>
+#include <graphics/primitives/pass/fullscreen_pass.hpp>
 #include <graphics/renderer.hpp>
 
 #include <sokol_gfx.h>
@@ -37,7 +37,7 @@ class Presenter {
         int targetHeight() const;
         void blitAndFinish(sg_view image, const std::function<void()>& overlay);
 
-        FullscreenPass m_blit;
+        primitives::pass::FullscreenPass m_blit;
         gpu::SamplerHandle m_sampler;
 };
 

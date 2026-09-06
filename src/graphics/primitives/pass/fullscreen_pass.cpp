@@ -1,6 +1,6 @@
-#include <graphics/fullscreen_pass.hpp>
+#include <graphics/primitives/pass/fullscreen_pass.hpp>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 FullscreenPass FullscreenPass::create(const sg_shader_desc* shader_desc, sg_pixel_format output_format, const char* label) {
     sg_pipeline_desc desc = {};
@@ -29,4 +29,4 @@ void FullscreenPass::draw(const sg_bindings& bindings, const std::function<void(
     sg_draw(0, 3, 1);
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

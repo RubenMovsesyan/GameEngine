@@ -1,6 +1,6 @@
-#include <graphics/mesh.hpp>
+#include <graphics/primitives/scene/mesh.hpp>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 namespace {
 
@@ -102,4 +102,4 @@ void InstancedMesh::uploadIfDirty() {
     m_dirty = false;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

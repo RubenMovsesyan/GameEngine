@@ -8,7 +8,7 @@
 #include <span>
 #include <vector>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 struct Vertex {
     Eigen::Vector3f position;
@@ -100,4 +100,4 @@ class InstancedMesh {
 
 static_assert(Mesh<InstancedMesh>);
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

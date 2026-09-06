@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>graphics::LightManager — GameEngine</title>
+<title>graphics::primitives::pass::LightManager — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -48,7 +48,7 @@
 
 <main>
 
-<h1><code>graphics::LightManager</code></h1>
+<h1><code>graphics::primitives::pass::LightManager</code></h1>
 <p class="lede">Turns a set of Lights into one GPU-readable structured buffer, built explicitly rather than lazily.</p>
 
 <h2>Role</h2>
@@ -61,7 +61,7 @@
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends on <code>gpu::Device</code> (for the upload) and <code>graphics::Light</code>.
+  Depends on <code>gpu::Device</code> (for the upload) and <code>graphics::primitives::scene::Light</code>.
   <code>Renderer::setLights(const LightManager&amp;)</code> is the only consumer.
 </p>
 
@@ -105,7 +105,7 @@
   <li>No <code>remove()</code> — not needed yet; add-only.</li>
 </ul>
 
-<footer>Source: <code>src/graphics/light_manager.hpp</code>, <code>src/graphics/light_manager.cpp</code></footer>
+<footer>Source: <code>src/graphics/primitives/pass/light_manager.hpp</code>, <code>src/graphics/primitives/pass/light_manager.cpp</code></footer>
 
 </main>
 </div>

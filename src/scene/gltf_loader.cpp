@@ -1,6 +1,6 @@
 #include <scene/gltf_loader.hpp>
 
-#include <graphics/material.hpp>
+#include <graphics/primitives/scene/material.hpp>
 
 #include <rlog.h>
 
@@ -70,7 +70,7 @@ std::vector<u8> resolveImageBytes(const cgltf_texture* tex, const std::filesyste
 }
 
 // Runs on whatever thread calls it -- the background decode thread, for loadTexture().
-graphics::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
+graphics::primitives::scene::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
     int width = 0;
     int height = 0;
     int channels = 0;
@@ -78,7 +78,7 @@ graphics::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
     if (pixels == nullptr) {
         RLOG(LL_FATAL, "gltf: failed to decode texture image (%s)", stbi_failure_reason());
     }
-    graphics::DecodedPixels result{
+    graphics::primitives::scene::DecodedPixels result{
         std::vector<u8>(pixels, pixels + static_cast<usize>(width) * static_cast<usize>(height) * 4), static_cast<u32>(width), static_cast<u32>(height)
     };
     stbi_image_free(pixels);
@@ -86,21 +86,21 @@ graphics::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
     return result;
 }
 
-std::optional<graphics::Texture> loadTexture(const cgltf_texture* tex, const std::filesystem::path& gltf_path,
+std::optional<graphics::primitives::scene::Texture> loadTexture(const cgltf_texture* tex, const std::filesystem::path& gltf_path,
                                               sg_pixel_format format) {
     if (tex == nullptr || tex->image == nullptr) {
         return std::nullopt;
     }
     auto decode = [bytes = resolveImageBytes(tex, gltf_path)]() mutable { return decodeImageBytes(std::move(bytes)); };
-    return graphics::Texture::loadAsyncThread(std::move(decode), format);
+    return graphics::primitives::scene::Texture::loadAsyncThread(std::move(decode), format);
 }
 
-graphics::Material loadMaterial(const cgltf_material* material, const std::filesystem::path& gltf_path) {
+graphics::primitives::scene::Material loadMaterial(const cgltf_material* material, const std::filesystem::path& gltf_path) {
     Eigen::Vector4f base_color_factor{1.0f, 1.0f, 1.0f, 1.0f};
     f32 metallic_factor = 1.0f;
     f32 roughness_factor = 1.0f;
-    std::optional<graphics::Texture> base_color_texture;
-    std::optional<graphics::Texture> metallic_roughness_texture;
+    std::optional<graphics::primitives::scene::Texture> base_color_texture;
+    std::optional<graphics::primitives::scene::Texture> metallic_roughness_texture;
 
     if (material != nullptr && material->has_pbr_metallic_roughness) {
         const cgltf_pbr_metallic_roughness& pbr = material->pbr_metallic_roughness;
@@ -111,7 +111,7 @@ graphics::Material loadMaterial(const cgltf_material* material, const std::files
         metallic_roughness_texture = loadTexture(pbr.metallic_roughness_texture.texture, gltf_path, SG_PIXELFORMAT_RGBA8);
     }
 
-    return graphics::Material::create(std::move(base_color_texture), std::move(metallic_roughness_texture), base_color_factor, metallic_factor,
+    return graphics::primitives::scene::Material::create(std::move(base_color_texture), std::move(metallic_roughness_texture), base_color_factor, metallic_factor,
                                        roughness_factor);
 }
 
@@ -149,7 +149,7 @@ void appendPrimitive(const cgltf_primitive& primitive, const Eigen::Matrix4f& tr
         RLOG(LL_FATAL, "gltf: primitive missing POSITION/NORMAL/TEXCOORD_0");
     }
 
-    std::vector<graphics::Vertex> vertices(position_accessor->count);
+    std::vector<graphics::primitives::scene::Vertex> vertices(position_accessor->count);
     for (cgltf_size i = 0; i < position_accessor->count; i++) {
         cgltf_accessor_read_float(position_accessor, i, vertices[i].position.data(), 3);
         cgltf_accessor_read_float(normal_accessor, i, vertices[i].normal.data(), 3);
@@ -162,7 +162,7 @@ void appendPrimitive(const cgltf_primitive& primitive, const Eigen::Matrix4f& tr
         local_bounds.extend(Eigen::Vector3f(position_accessor->min[0], position_accessor->min[1], position_accessor->min[2]));
         local_bounds.extend(Eigen::Vector3f(position_accessor->max[0], position_accessor->max[1], position_accessor->max[2]));
     } else {
-        for (const graphics::Vertex& vertex : vertices) {
+        for (const graphics::primitives::scene::Vertex& vertex : vertices) {
             local_bounds.extend(vertex.position);
         }
     }
@@ -172,31 +172,31 @@ void appendPrimitive(const cgltf_primitive& primitive, const Eigen::Matrix4f& tr
         indices[i] = static_cast<u32>(cgltf_accessor_read_index(primitive.indices, i));
     }
 
-    graphics::Material material = loadMaterial(primitive.material, gltf_path);
-    model.addPart(graphics::StandardMesh::create(vertices, indices), transform, std::move(material), local_bounds);
+    graphics::primitives::scene::Material material = loadMaterial(primitive.material, gltf_path);
+    model.addPart(graphics::primitives::scene::StandardMesh::create(vertices, indices), transform, std::move(material), local_bounds);
 }
 
-graphics::LightType toLightType(cgltf_light_type type) {
+graphics::primitives::scene::LightType toLightType(cgltf_light_type type) {
     switch (type) {
         case cgltf_light_type_directional:
-            return graphics::LightType::Directional;
+            return graphics::primitives::scene::LightType::Directional;
         case cgltf_light_type_point:
-            return graphics::LightType::Point;
+            return graphics::primitives::scene::LightType::Point;
         case cgltf_light_type_spot:
-            return graphics::LightType::Spot;
+            return graphics::primitives::scene::LightType::Spot;
         default:
             RLOG(LL_FATAL, "gltf: unsupported light type");
     }
     __builtin_unreachable(); // RLOG(LL_FATAL, ...) exits the process
 }
 
-void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, std::vector<graphics::Light>& lights) {
+void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, std::vector<graphics::primitives::scene::Light>& lights) {
     // glTF lights aim down local -Z; inverse-transpose keeps a non-uniformly scaled node pointing true.
     const Eigen::Matrix3f normal_basis = transform.block<3, 3>(0, 0).inverse().transpose();
     const Eigen::Vector3f direction = (normal_basis * Eigen::Vector3f(0.0f, 0.0f, -1.0f)).normalized();
 
-    const graphics::LightType type = toLightType(light.type);
-    lights.push_back(graphics::Light{
+    const graphics::primitives::scene::LightType type = toLightType(light.type);
+    lights.push_back(graphics::primitives::scene::Light{
         .type = type,
         .color = Eigen::Vector3f(light.color[0], light.color[1], light.color[2]),
         .intensity = light.intensity,
@@ -205,12 +205,12 @@ void appendLight(const cgltf_light& light, const Eigen::Matrix4f& transform, std
         .range = light.range,
         .spot_inner_cone_angle = light.spot_inner_cone_angle,
         .spot_outer_cone_angle = light.spot_outer_cone_angle,
-        .casts_shadows = type != graphics::LightType::Point, // glTF has no flag; point-light shadows aren't built
+        .casts_shadows = type != graphics::primitives::scene::LightType::Point, // glTF has no flag; point-light shadows aren't built
     });
 }
 
 void walkNode(const cgltf_node& node, const Eigen::Matrix4f& parent_transform, const std::filesystem::path& gltf_path,
-              Model& model, std::vector<graphics::Light>& lights) {
+              Model& model, std::vector<graphics::primitives::scene::Light>& lights) {
     float local[16];
     cgltf_node_transform_local(&node, local);
     const Eigen::Matrix4f transform = parent_transform * Eigen::Map<const Eigen::Matrix4f>(local);

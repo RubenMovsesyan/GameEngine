@@ -1,6 +1,6 @@
-#include <graphics/light_manager.hpp>
+#include <graphics/primitives/pass/light_manager.hpp>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 namespace {
 
@@ -8,11 +8,11 @@ namespace {
 struct GpuLight {
     Eigen::Vector4f color_intensity;  // xyz = color, w = intensity
     Eigen::Vector4f position_range;   // xyz = world position, w = range
-    Eigen::Vector4f direction_type;   // xyz = world direction, w = LightType
+    Eigen::Vector4f direction_type;   // xyz = world direction, w = scene::LightType
     Eigen::Vector4f cone_angles;      // x = inner, y = outer, zw unused
 };
 
-GpuLight toGpuLight(const Light& light) {
+GpuLight toGpuLight(const scene::Light& light) {
     return GpuLight{
         .color_intensity = Eigen::Vector4f(light.color.x(), light.color.y(), light.color.z(), light.intensity),
         .position_range = Eigen::Vector4f(light.position.x(), light.position.y(), light.position.z(), light.range),
@@ -24,13 +24,13 @@ GpuLight toGpuLight(const Light& light) {
 
 } // namespace
 
-void LightManager::add(const Light& light) {
+void LightManager::add(const scene::Light& light) {
     m_lights.push_back(&light);
 }
 
-const Light* LightManager::directionalLight() const {
-    for (const Light* light : m_lights) {
-        if (light->type == LightType::Directional && light->casts_shadows) {
+const scene::Light* LightManager::directionalLight() const {
+    for (const scene::Light* light : m_lights) {
+        if (light->type == scene::LightType::Directional && light->casts_shadows) {
             return light;
         }
     }
@@ -46,7 +46,7 @@ void LightManager::build() {
 
     std::vector<GpuLight> gpu_lights;
     gpu_lights.reserve(m_lights.size());
-    for (const Light* light : m_lights) {
+    for (const scene::Light* light : m_lights) {
         gpu_lights.push_back(toGpuLight(*light));
     }
 
@@ -65,4 +65,4 @@ void LightManager::build() {
     m_view = gpu::makeView(view_desc);
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

@@ -1,6 +1,6 @@
 #include <graphics/presenter.hpp>
 
-#include <graphics/texture.hpp>
+#include <graphics/primitives/scene/texture.hpp>
 
 #include <Eigen/Dense>
 
@@ -14,7 +14,7 @@
 namespace graphics {
 
 Presenter::Presenter()
-    : m_blit(FullscreenPass::create(present_shader_desc(sg_query_backend()), kSwapchainColorFormat, "present pipeline")) {
+    : m_blit(primitives::pass::FullscreenPass::create(present_shader_desc(sg_query_backend()), primitives::pass::kSwapchainColorFormat, "present pipeline")) {
     sg_sampler_desc sampler = {};
     sampler.min_filter = SG_FILTER_LINEAR;
     sampler.mag_filter = SG_FILTER_LINEAR;
@@ -28,7 +28,7 @@ void Presenter::beginFrame() {
     // Textures decoded on worker threads are uploaded here, on the sokol thread, once per
     // frame -- before any renderer that might sample a freshly-loaded texture runs. Any
     // render path without a Presenter has to call this itself.
-    Texture::drainUploads();
+    primitives::scene::Texture::drainUploads();
 }
 
 int Presenter::targetWidth() const {

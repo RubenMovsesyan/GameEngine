@@ -46,7 +46,7 @@
 
 <main>
 
-<h1><code>graphics::Renderer</code> &amp; <code>graphics::DeferredRenderer</code></h1>
+<h1><code>graphics::Renderer</code> &amp; <code>graphics::renderers::DeferredRenderer</code></h1>
 <p class="lede">A one-method concept that any renderer satisfies, and the deferred renderer that is the first implementation of it.</p>
 
 <h2>The concept</h2>
@@ -72,7 +72,7 @@ concept Renderer = requires(T&amp; renderer, int width, int height) {
   <li>the returned <code>sg_view</code> must stay valid until the next <code>render()</code> call.</li>
 </ul>
 
-<h2><code>DeferredRenderer</code> &mdash; the deferred implementation</h2>
+<h2 id="deferred"><code>DeferredRenderer</code> &mdash; the deferred implementation</h2>
 <p>
   Deferred shading: a directional cascaded shadow pass, then one G-buffer pass with a
   draw per submitted mesh, then fullscreen lighting, sky, tonemap and FXAA passes. Its
@@ -226,7 +226,7 @@ static_assert(Renderer&lt;DeferredRenderer&gt;);</code></pre>
   </li>
 </ul>
 
-<footer>Source: <code>src/graphics/renderer.hpp</code> (concept), <code>src/graphics/deferred_renderer.hpp</code>, <code>src/graphics/deferred_renderer.cpp</code></footer>
+<footer>Source: <code>src/graphics/renderer.hpp</code> (concept), <code>src/graphics/renderers/deferred_renderer.hpp</code>, <code>src/graphics/renderers/deferred_renderer.cpp</code></footer>
 
 </main>
 </div>

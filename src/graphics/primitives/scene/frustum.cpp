@@ -1,6 +1,6 @@
-#include <graphics/frustum.hpp>
+#include <graphics/primitives/scene/frustum.hpp>
 
-namespace graphics {
+namespace graphics::primitives::scene {
 
 Frustum Frustum::fromViewProjection(const Eigen::Matrix4f& view_projection) {
     Frustum frustum;
@@ -50,4 +50,4 @@ bool Frustum::intersects(const Eigen::AlignedBox3f& world_box) const {
     return true;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::scene

@@ -37,7 +37,8 @@ int main(int argc, char** argv) {
 
 	// Shaders -> a single sokol-shdc generated header carrying the SPIR-V for every program,
 	// so the binary keeps shipping its own bytecode. A real Task (not a raw exec()'d Command),
-	// renderer.cpp is tracked as depending on it and rebuilds when a shader changes.
+	// so every TU that includes the generated header (see includes_shader_header below) is
+	// tracked as depending on it and rebuilds when a shader changes.
 	const std::string shader_source = "src/graphics/shaders/engine.glsl";
 	const std::string shader_header = ".build/shaders/engine.glsl.h";
 
@@ -62,19 +63,22 @@ int main(int argc, char** argv) {
 	    "external/imgui/imgui_tables.cpp",
 	    "external/imgui/imgui_widgets.cpp",
 
-	    "src/graphics/camera.cpp",
-	    "src/graphics/frustum.cpp",
-	    "src/graphics/shadow.cpp",
-	    "src/graphics/light.cpp",
-	    "src/graphics/mesh.cpp",
-	    "src/graphics/texture.cpp",
-	    "src/graphics/material.cpp",
-	    "src/graphics/light_manager.cpp",
-	    "src/graphics/debug_draw.cpp",
-	    "src/graphics/render_target.cpp",
-	    "src/graphics/fullscreen_pass.cpp",
-	    "src/graphics/post.cpp",
-	    "src/graphics/deferred_renderer.cpp",
+	    "src/graphics/primitives/scene/camera.cpp",
+	    "src/graphics/primitives/scene/frustum.cpp",
+	    "src/graphics/primitives/scene/light.cpp",
+	    "src/graphics/primitives/scene/mesh.cpp",
+	    "src/graphics/primitives/scene/texture.cpp",
+	    "src/graphics/primitives/scene/material.cpp",
+
+	    "src/graphics/primitives/pass/shadow.cpp",
+	    "src/graphics/primitives/pass/light_manager.cpp",
+	    "src/graphics/primitives/pass/debug_draw.cpp",
+	    "src/graphics/primitives/pass/render_target.cpp",
+	    "src/graphics/primitives/pass/fullscreen_pass.cpp",
+	    "src/graphics/primitives/pass/post.cpp",
+
+	    "src/graphics/renderers/deferred_renderer.cpp",
+
 	    "src/graphics/presenter.cpp",
 
 	    "src/scene/model.cpp",
@@ -93,8 +97,9 @@ int main(int argc, char** argv) {
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
 	    // Every TU that includes the generated engine.glsl.h must rebuild when a shader changes.
-	    const bool includes_shader_header = source == "src/graphics/deferred_renderer.cpp" ||
-	                                        source == "src/graphics/post.cpp" || source == "src/graphics/presenter.cpp";
+	    const bool includes_shader_header = source == "src/graphics/renderers/deferred_renderer.cpp" ||
+	                                        source == "src/graphics/primitives/pass/post.cpp" ||
+	                                        source == "src/graphics/presenter.cpp";
 	    if (includes_shader_header && shader_task != nullptr) {
 	        task.depends_on(*shader_task);
 	    }

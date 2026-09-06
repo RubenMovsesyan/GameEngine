@@ -9,7 +9,7 @@
 
 #include <array>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 // Immediate-mode debug lines (AABBs, frustums, axes), drawn as an unlit overlay: no
 // depth test, so shapes are visible through solid geometry. A thin wrapper over
@@ -48,4 +48,4 @@ class DebugDraw {
         bool m_enabled = false;
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

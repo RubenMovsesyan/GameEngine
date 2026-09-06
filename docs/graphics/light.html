@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>graphics::Light — GameEngine</title>
+<title>graphics::primitives::scene::Light — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -48,13 +48,13 @@
 
 <main>
 
-<h1><code>graphics::Light</code></h1>
+<h1><code>graphics::primitives::scene::Light</code></h1>
 <p class="lede">Plain data mirroring glTF's KHR_lights_punctual fields, plus the owning node's resolved world position/direction.</p>
 
 <h2>Role</h2>
 <p>
   A punctual light: directional, point, or spot. No GPU resource, no behavior beyond
-  <code>display()</code> — <code>graphics::LightManager</code> is what turns a set of
+  <code>display()</code> — <code>graphics::primitives::pass::LightManager</code> is what turns a set of
   these into something the GPU can read.
 </p>
 
@@ -100,7 +100,7 @@ class Light {
   <li><code>range == 0</code> means "infinite range" per the glTF spec's own convention for an unset field, not "zero-range light."</li>
 </ul>
 
-<footer>Source: <code>src/graphics/light.hpp</code>, <code>src/graphics/light.cpp</code></footer>
+<footer>Source: <code>src/graphics/primitives/scene/light.hpp</code>, <code>src/graphics/primitives/scene/light.cpp</code></footer>
 
 </main>
 </div>

@@ -1,13 +1,13 @@
 #pragma once
 
 #include <common.h>
-#include <graphics/camera.hpp>
+#include <graphics/primitives/scene/camera.hpp>
 
 #include <Eigen/Dense>
 
 #include <array>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 inline constexpr u32 kShadowCascadeCount = 4;
 
@@ -22,8 +22,8 @@ struct CascadeSetup {
 // the near plane and shadow_distance. split_lambda in [0, 1] blends uniform (0) and logarithmic (1)
 // splits -- higher packs more resolution near the camera.
 CascadeSetup computeCascades(
-    const Camera& camera, const Eigen::Vector3f& light_direction, f32 shadow_distance, f32 split_lambda,
+    const scene::Camera& camera, const Eigen::Vector3f& light_direction, f32 shadow_distance, f32 split_lambda,
     f32 shadow_map_resolution
 );
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

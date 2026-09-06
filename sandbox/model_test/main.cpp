@@ -4,10 +4,10 @@
 #include <app/application.hpp>
 #include <app/cli_parser.hpp>
 #include <app/debug_ui.hpp>
-#include <graphics/camera.hpp>
-#include <graphics/debug_draw.hpp>
-#include <graphics/deferred_renderer.hpp>
-#include <graphics/light_manager.hpp>
+#include <graphics/primitives/scene/camera.hpp>
+#include <graphics/primitives/pass/debug_draw.hpp>
+#include <graphics/renderers/deferred_renderer.hpp>
+#include <graphics/primitives/pass/light_manager.hpp>
 #include <graphics/presenter.hpp>
 #include <scene/gltf_loader.hpp>
 
@@ -39,14 +39,14 @@ struct Sandbox {
         std::filesystem::path model_path;
 
         // All constructed in init(), once the GPU and the window size are up.
-        std::optional<graphics::DeferredRenderer> renderer;
+        std::optional<graphics::renderers::DeferredRenderer> renderer;
         std::optional<graphics::Presenter> presenter;
-        std::optional<graphics::LightManager> lights;
-        std::optional<graphics::Camera> camera;
+        std::optional<graphics::primitives::pass::LightManager> lights;
+        std::optional<graphics::primitives::scene::Camera> camera;
 
         std::vector<scene::Model> models;             // instanced grid group
         std::vector<scene::Model> standalone_models;   // culling-test group, +10 Y
-        std::vector<graphics::Light> scene_lights;     // owned here for LightManager's pointer lifetime
+        std::vector<graphics::primitives::scene::Light> scene_lights;     // owned here for LightManager's pointer lifetime
 
         // F5 snapshots the camera's frustum corners here for debug-draw. Drawing the LIVE
         // camera's own frustum through its own view-projection is degenerate -- it's always
@@ -76,7 +76,7 @@ void init(app::Application& app, Sandbox& sandbox) {
     for (scene::Model& model : sandbox.models) {
         for (scene::ModelPart& part : model.mutableParts()) {
             part.convertToInstanced();
-            graphics::InstancedMesh& instanced = std::get<graphics::InstancedMesh>(part.mesh);
+            graphics::primitives::scene::InstancedMesh& instanced = std::get<graphics::primitives::scene::InstancedMesh>(part.mesh);
             for (u32 x = 0; x < kGridSize; x++) {
                 for (u32 z = 0; z < kGridSize; z++) {
                     Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
@@ -99,13 +99,13 @@ void init(app::Application& app, Sandbox& sandbox) {
     }
 
     sandbox.lights.emplace();
-    for (const graphics::Light& light : sandbox.scene_lights) {
+    for (const graphics::primitives::scene::Light& light : sandbox.scene_lights) {
         RLOG(LL_DEBUG, "Added light: " + light.display());
         sandbox.lights->add(light);
     }
     sandbox.lights->build();
 
-    sandbox.renderer->setSkybox(graphics::Skybox{}); // calibrated default gradient sky
+    sandbox.renderer->setSkybox(graphics::primitives::scene::Skybox{}); // calibrated default gradient sky
 
     const f32 aspect = static_cast<f32>(app.width()) / static_cast<f32>(app.height());
     sandbox.camera.emplace(1.0472f, aspect, 0.1f, 100.0f, Eigen::Vector3f{0.0f, 0.0f, 3.0f}, Eigen::Vector3f{0.0f, 0.0f, -1.0f}, kWorldUp);
@@ -114,7 +114,7 @@ void init(app::Application& app, Sandbox& sandbox) {
 }
 
 void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
-    graphics::Camera& camera = *sandbox.camera;
+    graphics::primitives::scene::Camera& camera = *sandbox.camera;
 
     const Eigen::Vector3f forward = camera.direction().normalized();
     const Eigen::Vector3f right = forward.cross(kWorldUp).normalized();
@@ -154,7 +154,7 @@ void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
 // Culls and submits every part of every model against frustum. This loop -- not Camera or
 // Model -- is what ties "a group of models" to "a camera" for one frame; Renderer::submit
 // has no notion of camera, and Model has no notion of Renderer or Camera at all.
-void submitScene(graphics::DeferredRenderer& renderer, std::vector<scene::Model>& models, const graphics::Frustum& frustum) {
+void submitScene(graphics::renderers::DeferredRenderer& renderer, std::vector<scene::Model>& models, const graphics::primitives::scene::Frustum& frustum) {
     for (scene::Model& model : models) {
         for (scene::ModelPart& part : model.mutableParts()) {
             const Eigen::Matrix4f world_matrix = model.world_transform * part.transform;
@@ -163,7 +163,7 @@ void submitScene(graphics::DeferredRenderer& renderer, std::vector<scene::Model>
             // Camera-frustum cull only decides G-buffer visibility -- a culled object still casts shadows.
             // Instanced parts carry per-instance transforms we don't cull yet, so treat them as visible.
             const bool camera_visible =
-                !std::holds_alternative<graphics::StandardMesh>(part.mesh) || frustum.intersects(world_bounds);
+                !std::holds_alternative<graphics::primitives::scene::StandardMesh>(part.mesh) || frustum.intersects(world_bounds);
 
             std::visit(
                 [&](auto& mesh) { renderer.submit(mesh, part.material, world_matrix, world_bounds, camera_visible); }, part.mesh
@@ -192,7 +192,7 @@ void frame(app::Application& app, Sandbox& sandbox) {
         sandbox.renderer->cycleShadowMapDebugLayer();
     }
     if (app.input().isKeyPressed(SAPP_KEYCODE_F3)) {
-        graphics::DebugDraw& debug_draw = sandbox.renderer->debugDraw();
+        graphics::primitives::pass::DebugDraw& debug_draw = sandbox.renderer->debugDraw();
         debug_draw.setEnabled(!debug_draw.isEnabled());
     }
     if (app.input().isKeyPressed(SAPP_KEYCODE_F4)) {
@@ -211,11 +211,11 @@ void frame(app::Application& app, Sandbox& sandbox) {
 
     flyCamera(app, sandbox, dt);
 
-    graphics::DeferredRenderer& renderer = *sandbox.renderer;
+    graphics::renderers::DeferredRenderer& renderer = *sandbox.renderer;
     renderer.beginFrame(*sandbox.camera);
     renderer.setLights(*sandbox.lights);
 
-    const graphics::Frustum& frustum = sandbox.camera->frustum();
+    const graphics::primitives::scene::Frustum& frustum = sandbox.camera->frustum();
     submitScene(renderer, sandbox.models, frustum);
     submitScene(renderer, sandbox.standalone_models, frustum);
 

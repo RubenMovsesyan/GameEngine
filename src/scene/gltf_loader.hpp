@@ -1,6 +1,6 @@
 #pragma once
 
-#include <graphics/light.hpp>
+#include <graphics/primitives/scene/light.hpp>
 #include <scene/model.hpp>
 
 #include <filesystem>
@@ -13,7 +13,7 @@ namespace scene {
 // collected flat across the whole file, independent of which root node they're under.
 struct LoadedGltf {
     std::vector<Model> models;
-    std::vector<graphics::Light> lights;
+    std::vector<graphics::primitives::scene::Light> lights;
 };
 
 LoadedGltf loadGltf(const std::filesystem::path&);

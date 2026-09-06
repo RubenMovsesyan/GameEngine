@@ -1,6 +1,6 @@
-#include <graphics/render_target.hpp>
+#include <graphics/primitives/pass/render_target.hpp>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 RenderTarget makeColorTarget(int width, int height, sg_pixel_format format, const char* label) {
     sg_image_desc image_desc = {};
@@ -50,4 +50,4 @@ RenderTarget makeDepthTarget(int width, int height, const char* label) {
     return target;
 }
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

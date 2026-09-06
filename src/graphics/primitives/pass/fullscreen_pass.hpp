@@ -4,7 +4,7 @@
 
 #include <functional>
 
-namespace graphics {
+namespace graphics::primitives::pass {
 
 // Pass this as FullscreenPass::create's output_format to leave the pipeline's colour format
 // unset, so sokol resolves it against the swapchain at pipeline-creation time. Distinct from
@@ -36,4 +36,4 @@ class FullscreenPass {
         sg_pipeline m_pipeline{};
 };
 
-} // namespace graphics
+} // namespace graphics::primitives::pass

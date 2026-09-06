@@ -74,9 +74,9 @@ concept Renderer = requires(T&amp; renderer, int width, int height) {
 
 <h2><code>DeferredRenderer</code> &mdash; the deferred implementation</h2>
 <p>
-  Deferred shading: a directional cascaded shadow pass, then a G-buffer pass per
-  submitted mesh, then fullscreen lighting, sky, tonemap and FXAA passes. Its output is
-  left in an LDR <a href="render_target.html">RenderTarget</a> for the
+  Deferred shading: a directional cascaded shadow pass, then one G-buffer pass with a
+  draw per submitted mesh, then fullscreen lighting, sky, tonemap and FXAA passes. Its
+  output is left in an LDR <a href="render_target.html">RenderTarget</a> for the
   <a href="presenter.html">Presenter</a> to blit. It owns every pipeline and target
   involved.
 </p>
@@ -193,8 +193,11 @@ static_assert(Renderer&lt;DeferredRenderer&gt;);</code></pre>
     back once <code>setLights()</code> has had its turn.
   </li>
   <li>
-    <strong>Three LDR targets, to avoid read-after-write.</strong> Tonemap writes
-    <code>m_tonemapped</code>; FXAA reads that and writes <code>m_ldr</code>; the
+    <strong>Two LDR targets, to avoid read-after-write.</strong> Tonemap writes
+    <code>m_tonemapped</code> (both it and the final <code>m_ldr</code> are
+    <code>RGBA8</code>; the HDR lighting/sky buffer <code>m_hdr</code> is
+    <code>RGBA16F</code>); FXAA reads <code>m_tonemapped</code> and writes
+    <code>m_ldr</code>; the
     shadow-map debug blit and the <a href="debug_draw.html">DebugDraw</a> line overlay
     also draw into <code>m_ldr</code>; <code>render()</code> returns
     <code>m_ldr.texture</code>. FXAA no longer targets the swapchain &mdash; the

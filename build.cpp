@@ -74,7 +74,8 @@ int main(int argc, char** argv) {
 	    "src/graphics/render_target.cpp",
 	    "src/graphics/fullscreen_pass.cpp",
 	    "src/graphics/post.cpp",
-	    "src/graphics/renderer.cpp",
+	    "src/graphics/deferred_renderer.cpp",
+	    "src/graphics/presenter.cpp",
 
 	    "src/scene/model.cpp",
 	    "src/scene/gltf_loader.cpp",
@@ -92,7 +93,9 @@ int main(int argc, char** argv) {
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
 	    // Every TU that includes the generated engine.glsl.h must rebuild when a shader changes.
-	    if ((source == "src/graphics/renderer.cpp" || source == "src/graphics/post.cpp") && shader_task != nullptr) {
+	    const bool includes_shader_header = source == "src/graphics/deferred_renderer.cpp" ||
+	                                        source == "src/graphics/post.cpp" || source == "src/graphics/presenter.cpp";
+	    if (includes_shader_header && shader_task != nullptr) {
 	        task.depends_on(*shader_task);
 	    }
 	    objects.push_back(task);

@@ -3,19 +3,20 @@
 namespace graphics {
 
 DebugDraw::DebugDraw() {
-    // color_format and depth_format both left zero-initialized (the "unset" sentinel,
-    // distinct from the real SG_PIXELFORMAT_NONE value): sokol_gl copies them verbatim
-    // into its pipeline desc, which only lets sg_make_pipeline resolve them against the
-    // swapchain's actual formats when they're left unset -- the same default every
-    // fullscreen pipeline in Renderer already relies on. Setting depth_format explicitly
-    // to NONE here previously mismatched the swapchain's real depth attachment and
-    // tripped VALIDATE_APIP_SWAPCHAIN_DEPTH_FORMAT. The "no depth test" behaviour this
-    // pass wants comes from sokol_gl's own default depth.compare = SG_COMPAREFUNC_ALWAYS,
-    // not from having no depth format at all.
     sgl_desc_t desc = {};
     sgl_setup(&desc);
 
+    // The debug lines are drawn into DeferredRenderer's final LDR target -- an RGBA8 colour
+    // attachment with no depth buffer -- not the swapchain. So the context's formats are
+    // pinned to that target: RGBA8 colour, depth NONE (there is no depth attachment to
+    // match), one sample. "No depth test" then comes from sokol_gl's own default
+    // depth.compare = SG_COMPAREFUNC_ALWAYS. (An earlier version left these unset so
+    // sg_make_pipeline would resolve them against the swapchain; that only worked while
+    // this drew straight to the swapchain.)
     sgl_context_desc_t ctx_desc = {};
+    ctx_desc.color_format = SG_PIXELFORMAT_RGBA8;
+    ctx_desc.depth_format = SG_PIXELFORMAT_NONE;
+    ctx_desc.sample_count = 1;
     m_context = sgl_make_context(&ctx_desc);
 }
 

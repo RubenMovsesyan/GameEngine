@@ -6,8 +6,9 @@
 #include <app/debug_ui.hpp>
 #include <graphics/camera.hpp>
 #include <graphics/debug_draw.hpp>
+#include <graphics/deferred_renderer.hpp>
 #include <graphics/light_manager.hpp>
-#include <graphics/renderer.hpp>
+#include <graphics/presenter.hpp>
 #include <scene/gltf_loader.hpp>
 
 #include <imgui.h>
@@ -38,7 +39,8 @@ struct Sandbox {
         std::filesystem::path model_path;
 
         // All constructed in init(), once the GPU and the window size are up.
-        std::optional<graphics::Renderer> renderer;
+        std::optional<graphics::DeferredRenderer> renderer;
+        std::optional<graphics::Presenter> presenter;
         std::optional<graphics::LightManager> lights;
         std::optional<graphics::Camera> camera;
 
@@ -63,6 +65,7 @@ struct Sandbox {
 
 void init(app::Application& app, Sandbox& sandbox) {
     sandbox.renderer.emplace();
+    sandbox.presenter.emplace();
 
     scene::LoadedGltf loaded = scene::loadGltf(sandbox.model_path);
     sandbox.models = std::move(loaded.models);
@@ -151,7 +154,7 @@ void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
 // Culls and submits every part of every model against frustum. This loop -- not Camera or
 // Model -- is what ties "a group of models" to "a camera" for one frame; Renderer::submit
 // has no notion of camera, and Model has no notion of Renderer or Camera at all.
-void submitScene(graphics::Renderer& renderer, std::vector<scene::Model>& models, const graphics::Frustum& frustum) {
+void submitScene(graphics::DeferredRenderer& renderer, std::vector<scene::Model>& models, const graphics::Frustum& frustum) {
     for (scene::Model& model : models) {
         for (scene::ModelPart& part : model.mutableParts()) {
             const Eigen::Matrix4f world_matrix = model.world_transform * part.transform;
@@ -208,7 +211,7 @@ void frame(app::Application& app, Sandbox& sandbox) {
 
     flyCamera(app, sandbox, dt);
 
-    graphics::Renderer& renderer = *sandbox.renderer;
+    graphics::DeferredRenderer& renderer = *sandbox.renderer;
     renderer.beginFrame(*sandbox.camera);
     renderer.setLights(*sandbox.lights);
 
@@ -231,7 +234,7 @@ void frame(app::Application& app, Sandbox& sandbox) {
         renderer.debugDraw().frustum(*sandbox.frozen_frustum, Eigen::Vector4f(0.2f, 1.0f, 0.2f, 1.0f));
     }
 
-    renderer.endFrame([&]() {
+    sandbox.presenter->present(renderer, [&]() {
         app.debugUI().draw(app.width(), app.height(), dt, sapp_dpi_scale(), [&]() {
             if (ImGui::Begin("Debug")) {
                 bool debug_draw = renderer.debugDraw().isEnabled();
@@ -259,6 +262,7 @@ void cleanup(Sandbox& sandbox) {
     sandbox.models.clear();
     sandbox.standalone_models.clear();
     sandbox.lights.reset();
+    sandbox.presenter.reset();
     sandbox.renderer.reset();
     sandbox.camera.reset();
 }

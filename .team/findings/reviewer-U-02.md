@@ -102,3 +102,5 @@ no
   that include engine.glsl.h.
 
 status:
+
+status: handled — pass. 4 low issues. #1 (unused <functional> include in deferred_renderer.hpp) and #2 (stale endFrame comment in src/app/debug_ui.hpp) will be fixed in the U-02 settle commit. #3 (Presenter::beginFrame naming) rejected: it is the frame-start drain despite running late in the callback; "beginFrame" reads fine against the concept lifecycle. #4 is a clarification, not a defect (AC-5 reads as "no local definitions", which holds).

@@ -2,7 +2,7 @@
 
 | Unit | Title | Serves | Expected files | Status |
 |------|-------|--------|----------------|--------|
-| U-01 | Extract `graphics/` primitives (RenderTarget, FullscreenPass, post) and compose them in the renderer | AC-1, AC-5, AC-8 | src/graphics/render_target.hpp, src/graphics/render_target.cpp, src/graphics/fullscreen_pass.hpp, src/graphics/fullscreen_pass.cpp, src/graphics/post.hpp, src/graphics/post.cpp, src/graphics/shaders/engine.glsl, src/graphics/renderer.hpp, src/graphics/renderer.cpp, build.cpp | verifying |
+| U-01 | Extract `graphics/` primitives (RenderTarget, FullscreenPass, post) and compose them in the renderer | AC-1, AC-5, AC-8 | src/graphics/render_target.hpp, src/graphics/render_target.cpp, src/graphics/fullscreen_pass.hpp, src/graphics/fullscreen_pass.cpp, src/graphics/post.hpp, src/graphics/post.cpp, src/graphics/shaders/engine.glsl, src/graphics/renderer.hpp, src/graphics/renderer.cpp, build.cpp | verified |
 | U-02 | Rename to DeferredRenderer, add the Renderer concept, `render()`+`Presenter`, rewire the sandbox | AC-1, AC-2, AC-3, AC-4, AC-6, AC-6b, AC-7, AC-8 | src/graphics/deferred_renderer.hpp, src/graphics/deferred_renderer.cpp, src/graphics/renderer.hpp, src/graphics/presenter.hpp, src/graphics/presenter.cpp, sandbox/model_test/main.cpp, build.cpp | todo |
 | U-03 | Docs pages + index nav + AGENTS.md for the new model | AC-9 | docs/graphics/render_target.html, docs/graphics/fullscreen_pass.html, docs/graphics/post.html, docs/graphics/presenter.html, docs/graphics/renderer.html, docs/index.html, AGENTS.md | todo |
 

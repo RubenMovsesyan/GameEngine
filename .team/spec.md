@@ -41,7 +41,7 @@ of AC-4/AC-6b/AC-7 are `cannot determine`, not `met`.
 
 ## Acceptance criteria
 - AC-1: `./build -j "$(nproc)"` completes with no compile or link errors and
-  produces `.build/bin/sandbox/model_test`. — status: unverified
+  produces `.build/bin/sandbox/model_test`. — status: verified
 - AC-2: `src/graphics/renderer.hpp` defines a `graphics::Renderer` `concept`
   (compiled under `-std=c++23`) requiring exactly
   `{ r.render(width, height) } -> std::same_as<sg_view>` (`int width, int

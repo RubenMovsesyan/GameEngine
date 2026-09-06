@@ -3,25 +3,21 @@
 #include <gpu/handle.hpp>
 #include <graphics/camera.hpp>
 #include <graphics/debug_draw.hpp>
+#include <graphics/fullscreen_pass.hpp>
 #include <graphics/light_manager.hpp>
 #include <graphics/material.hpp>
 #include <graphics/mesh.hpp>
+#include <graphics/post.hpp>
+#include <graphics/render_target.hpp>
 #include <graphics/shadow.hpp>
 #include <graphics/skybox.hpp>
 
 #include <array>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace graphics {
-
-// An offscreen render target: the image, the view it is rendered through, and the view it
-// is sampled through afterwards.
-struct RenderTarget {
-    gpu::ImageHandle image;
-    gpu::ViewHandle attachment;
-    gpu::ViewHandle texture;
-};
 
 // Deferred renderer: shadow cascades -> G-buffer -> lighting -> sky -> tonemap -> FXAA.
 //
@@ -145,11 +141,13 @@ class Renderer {
         sg_pipeline m_gbuffer_instanced_pipeline = {};
         sg_pipeline m_shadow_pipeline = {};
         sg_pipeline m_shadow_instanced_pipeline = {};
-        sg_pipeline m_lighting_pipeline = {};
-        sg_pipeline m_sky_pipeline = {};
-        sg_pipeline m_tonemap_pipeline = {};
-        sg_pipeline m_fxaa_pipeline = {};
-        sg_pipeline m_shadow_debug_pipeline = {};
+
+        // Fullscreen screen-space passes, all built on graphics::FullscreenPass.
+        FullscreenPass m_lighting_pass;
+        FullscreenPass m_sky_pass;
+        FullscreenPass m_shadow_debug_pass;
+        std::optional<TonemapPass> m_tonemap; // needs an output format, so emplaced in buildPipelines()
+        std::optional<FxaaPass> m_fxaa;
 
         sg_view m_light_view = {};
         u32 m_light_count = 0;

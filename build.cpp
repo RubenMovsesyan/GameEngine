@@ -71,6 +71,9 @@ int main(int argc, char** argv) {
 	    "src/graphics/material.cpp",
 	    "src/graphics/light_manager.cpp",
 	    "src/graphics/debug_draw.cpp",
+	    "src/graphics/render_target.cpp",
+	    "src/graphics/fullscreen_pass.cpp",
+	    "src/graphics/post.cpp",
 	    "src/graphics/renderer.cpp",
 
 	    "src/scene/model.cpp",
@@ -88,7 +91,8 @@ int main(int argc, char** argv) {
 	std::vector<std::reference_wrapper<Task>> objects;
 	for (const auto& source : engine_sources) {
 	    Task& task = engine.addTask(Output(Object(source)));
-	    if (source == "src/graphics/renderer.cpp" && shader_task != nullptr) {
+	    // Every TU that includes the generated engine.glsl.h must rebuild when a shader changes.
+	    if ((source == "src/graphics/renderer.cpp" || source == "src/graphics/post.cpp") && shader_task != nullptr) {
 	        task.depends_on(*shader_task);
 	    }
 	    objects.push_back(task);

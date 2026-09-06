@@ -2,6 +2,7 @@
 build
 compile_commands.json
 .cache/
+.team/
 
 # Test assets under sandbox/*/test_assets/ -- keep the directory, not its contents.
 sandbox/*/test_assets/*

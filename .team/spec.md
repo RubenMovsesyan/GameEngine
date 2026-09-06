@@ -71,9 +71,12 @@ of AC-4/AC-6b/AC-7 are `cannot determine`, not `met`.
   `graphics::FxaaPass`. In `deferred_renderer.cpp` each of the five fullscreen
   passes (lighting, sky, tonemap, fxaa, shadow-map debug) is issued through
   `FullscreenPass` — the tonemap and fxaa passes via `TonemapPass`/`FxaaPass`.
-  `grep -n 'struct RenderTarget\|makeColorTarget\|makeDepthTarget'
-  src/graphics/deferred_renderer.*` returns nothing. `./build` links. — status:
-  unverified
+  No *definition* of `RenderTarget` or the target factories remains in
+  `deferred_renderer.*`:
+  `grep -nE 'struct RenderTarget \{|RenderTarget makeColorTarget\(|RenderTarget makeDepthTarget\('
+  src/graphics/deferred_renderer.*` returns nothing (the `makeColorTarget` /
+  `makeDepthTarget` call sites inside `rebuildTargets()` are expected and fine).
+  `./build` links. — status: unverified
 - AC-6: `git diff <base>..<head> -- src/graphics/shaders/engine.glsl` shows no
   textual change to the `gbuffer*`, `shadow_depth*`, `lighting`, `sky`,
   `tonemap`, `fxaa`, `shadow_debug` program bodies; its only additions are a

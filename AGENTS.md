@@ -119,14 +119,15 @@ Resources sharing a name across programs must share a binding. Use the generated
   range first, or use one of the local `applyUniforms` helpers (in
   `renderers/deferred_renderer.cpp`, `renderers/point_renderer.cpp`, and
   `primitives/pass/post.cpp`).
-- **`external/sokol` is a fork** (`gameengine/vk-interop`, `.gitmodules` `branch =`) over
-  `floooh/sokol` master. Upstream's Vulkan backend has no native-handle accessor; the fork
-  adds `sg_vk_query_buffer_info` / `sg_vk_query_device_info`, a
-  `sg_buffer_desc.vk_external_memory` opt-in (exportable dedicated memory), and the two
-  external-memory/-semaphore FD device extensions in `sokol_app.h`. Every change is fenced
-  with a `GameEngine fork` comment. **Pivot away the moment upstream sokol grows first-class
-  external-memory support** — repoint the submodule and adapt `src/gpu/`. The fork's `HEAD`
-  must be pushed to a fork you control or a fresh clone can't resolve the submodule.
+- **`external/sokol` is a fork** — `RubenMovsesyan/sokol` (private), branch
+  `gameengine/vk-interop` over `floooh/sokol` master. Upstream's Vulkan backend has no
+  native-handle accessor; the fork adds `sg_vk_query_buffer_info` /
+  `sg_vk_query_device_info`, a `sg_buffer_desc.vk_external_memory` opt-in (exportable
+  dedicated memory), and the two external-memory/-semaphore FD device extensions in
+  `sokol_app.h`. Every change is fenced with a `GameEngine fork` comment. Inside the
+  submodule, `origin` is the fork and `upstream` is `floooh/sokol`. **Pivot away the moment
+  upstream sokol grows first-class external-memory support** — repoint `.gitmodules` at
+  `floooh/sokol`, bump the pin, adapt `src/gpu/`.
 - **CUDA is optional** (`build.cpp` probes `CUDA_PATH` / `/opt/cuda`). When present it
   defines `GAMEENGINE_CUDA`, links `libcuda` (Driver API only — no `nvcc`, no `libcudart`
   in the engine), and builds `sandbox/cuda_points_test` (its kernel is `nvcc --ptx`'d and

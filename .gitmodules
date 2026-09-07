@@ -15,11 +15,13 @@
 	url = https://github.com/nothings/stb.git
 [submodule "external/sokol"]
 	path = external/sokol
-	# FORK: carries the gameengine/vk-interop branch (Vulkan external-memory export +
-	# sg_vk_* accessors) over floooh/sokol master. Push that branch to a fork you own and
-	# change this url to it -- a fresh clone can't resolve the pinned SHA on upstream.
-	# Drop the fork once upstream sokol has first-class external-memory support.
-	url = https://github.com/floooh/sokol.git
+	# FORK: RubenMovsesyan/sokol (private), branch gameengine/vk-interop over floooh/sokol
+	# master -- Vulkan external-memory export + sg_vk_* accessors for CUDA interop. Every
+	# hunk is fenced with a "GameEngine fork" comment. Drop the fork (repoint at
+	# floooh/sokol, bump the pin) once upstream sokol grows first-class external-memory
+	# support. `git -C external/sokol remote add upstream https://github.com/floooh/sokol`
+	# to rebase the branch.
+	url = git@github.com:RubenMovsesyan/sokol.git
 	branch = gameengine/vk-interop
 [submodule "external/sokol-tools-bin"]
 	path = external/sokol-tools-bin

@@ -77,13 +77,14 @@
           <code>CUdeviceptr</code> that aliases the exact drawn bytes,
           <code>cuImportExternalSemaphore</code>. All <code>#ifdef GAMEENGINE_CUDA</code>.</td></tr>
   <tr><td><code>SharedInstanceBuffer</code><br><span class="dim">shared_instance_buffer.*</span></td>
-      <td>The orchestrator. <code>consumeBegin/End</code> on the render thread,
-          <code>attachCuda</code> + <code>produceBegin/End</code> on the one CUDA thread.
-          Two sync modes below.</td></tr>
+      <td>The orchestrator. <code>consumeBegin/End</code> on the render thread;
+          <code>attachCuda</code> + (<code>produceBegin/End</code> or
+          <code>publishIfRequested</code>) on the one CUDA worker. Three sync modes below &mdash;
+          the mode <em>is</em> the priority policy.</td></tr>
 </table>
 
 <h2>Sync modes</h2>
-<h3><code>Sync::Semaphore</code> (default)</h3>
+<h3><code>Sync::Semaphore</code> (default) &mdash; render-priority</h3>
 <p>
   One buffer, strict alternation via two timeline semaphores. The compute thread waits
   <code>render_done</code> (buffer free), runs as many integration sub-steps as it wants,
@@ -100,6 +101,20 @@
   front. Compute is fully unthrottled; ~1 frame more latency; 2&times; VRAM. Only
   <code>render_done</code> is used.
 </p>
+<h3><code>Sync::SimPriority</code> &mdash; sim-priority</h3>
+<p>
+  The compute thread owns a <strong>private</strong> authoritative buffer
+  (<code>cuMemAlloc</code>, never drawn) and hammers it in place with <strong>no
+  render-gated wait, ever</strong>. When the render thread wants a fresh frame it sets an
+  atomic; the next sim iteration&rsquo;s <code>publishIfRequested()</code> copies the private
+  buffer into a free slot of a <strong>3-buffer ring</strong> (on the sim stream, race-free
+  with the kernels) and bumps the <code>publish_done</code> timeline value. The render
+  thread draws the newest ready slot, waiting only on that copy &mdash; never on the sim.
+  A render stall just drops snapshots (the ring-slot check in <code>publishIfRequested</code>
+  is a non-blocking <code>vkGetSemaphoreCounterValue</code>); the sim rate holds. ~3&times;
+  VRAM (ring only). The sim kernels run on a high-priority CUDA stream
+  (<code>CudaInterop::makeStream(true)</code>).
+</p>
 
 <h2>Build &amp; threading notes</h2>
 <ul>
@@ -107,11 +122,13 @@
     <code>/opt/cuda</code>; when found it defines <code>GAMEENGINE_CUDA</code>, links
     <code>libcuda</code>, and adds the sandbox. The sandbox kernel is <code>nvcc --ptx</code>'d
     and <code>cuModuleLoad</code>ed at runtime, keeping <code>nvcc</code> out of the C++ link.</li>
-  <li>The compute thread is a plain <code>std::thread</code>, <strong>not</strong> an
-    <a href="../app/worker.html"><code>app::Worker</code></a> (Workers must never touch the
-    GPU). It owns the CUDA context and calls <code>detachCuda()</code> before exiting so the
-    destructor, which may run elsewhere, has only Vulkan objects left.</li>
-  <li>Shutdown: stop + join the compute thread first, then tear down Vulkan.</li>
+  <li>The compute thread is an <a href="../app/worker.html"><code>app::Worker</code></a>
+    (<code>app.addWorker</code>). A worker may drive CUDA but must never call
+    <code>sg_*</code>. <code>Application</code> starts it after <code>init()</code> and, on
+    shutdown, sets <code>workerShouldStop()</code> then joins it <em>before</em> the cleanup
+    callback &mdash; so the worker's own <code>detachCuda()</code> (which releases the CUDA
+    context + imports that alias Vulkan memory) runs while sokol/Vulkan are still up. Only
+    then is the rest of the Vulkan state torn down.</li>
 </ul>
 
 <footer>Source: <code>src/gpu/external_buffer.*</code>, <code>src/gpu/cross_semaphore.*</code>, <code>src/gpu/cuda_interop.*</code>, <code>src/gpu/shared_instance_buffer.*</code>; fork in <code>external/sokol</code>. See <code>roadmap/compute-ray-tracer.md</code>.</footer>

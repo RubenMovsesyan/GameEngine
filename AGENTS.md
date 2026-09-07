@@ -46,9 +46,15 @@ subclass, no singleton, no `shared_ptr` graph beyond the resource handles themse
   that defines `VK_USE_PLATFORM_XLIB_KHR` before pulling in `<vulkan/vulkan.h>`.
 
 **sokol_gfx is single-threaded and sokol_app owns the frame loop.** Every `sg_*` call must
-happen on the thread that runs the `app::Application` callbacks. `app::Worker` exists for
-CPU work only — a worker must never touch the GPU. Work that needs both (texture loading)
-decodes on a worker and uploads from the frame callback; see `graphics::Texture::drainUploads`.
+happen on the thread that runs the `app::Application` callbacks — that is the *only* thread
+that renders. `app::Worker` runs everything else off that thread: pure-CPU work, and GPU
+compute that goes through its own API (e.g. a CUDA simulation thread). **A worker must never
+call `sg_*`.** It may drive CUDA and share a buffer with the renderer through the
+`gpu::SharedInstanceBuffer` handshake, but the sokol rendering path stays on the frame
+callback. `Application` starts workers after `init()` and stops + joins them (via
+`workerShouldStop()`) before the cleanup callback, so a worker's GPU teardown finishes while
+the context is still up. Work that needs both (texture loading) decodes on a worker and
+uploads from the frame callback; see `graphics::Texture::drainUploads`.
 
 **Every module gets a `docs/` page** — an HTML page (dark mode) explaining how that module
 works, with real code examples pulled from the module itself. Link the shared stylesheet at
@@ -126,8 +132,11 @@ Resources sharing a name across programs must share a binding. Use the generated
   in the engine), and builds `sandbox/cuda_points_test` (its kernel is `nvcc --ptx`'d and
   JIT-loaded at runtime). `src/gpu/cuda_interop.*` is fully `#ifdef GAMEENGINE_CUDA`.
 - `gpu::nativeHandle(sg_buffer)` is now filled on Vulkan too (via the fork). See
-  `src/gpu/external_buffer.*`, `cross_semaphore.*`, `shared_instance_buffer.*` for the
-  zero-copy CUDA interop + cross-API timeline-semaphore sync, and
-  `roadmap/compute-ray-tracer.md`.
+  `src/gpu/external_buffer.*`, `cross_semaphore.*`, `cuda_interop.*`,
+  `shared_instance_buffer.*` for the zero-copy CUDA interop + cross-API timeline-semaphore
+  sync, and `roadmap/compute-ray-tracer.md`. `gpu::SharedInstanceBuffer` has three sync
+  modes — `Semaphore` / `DoubleBuffer` (render-priority) and `SimPriority` (a private sim
+  buffer + published ring; the sim never waits on the renderer). The CUDA thread is an
+  `app::Worker`.
 - A build step's output must not share a name with a top-level source directory. Object
   files mirror source paths into `.build/`.

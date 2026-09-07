@@ -36,8 +36,11 @@ concept, blits through `Presenter`. Still to do, in rough order:
 
 ## 1 — Galaxy simulator (main)
 
-- Thousands (1k–50k), not billions, of stars. Orbital integration on a `Worker`
-  (CPU), writing into the staging array the renderer streams.
+- Thousands to millions of stars. **GPU** integration on a CUDA `app::Worker` via
+  `gpu::SharedInstanceBuffer` in `Sync::SimPriority` mode: the sim owns a private buffer,
+  runs free, publishes snapshots into a ring the `PointRenderer` draws — the render thread
+  never stalls the sim. (CPU-on-a-Worker orbital integration is the fallback if a machine
+  has no CUDA.) See `docs/gpu/interop.html`.
 - Disable/replace the gradient sky (black, or a faint nebula billboard).
 - Recalibrate exposure for a near-black frame; auto-exposure is a nice-to-have.
 - Scale/precision: bounded coordinates (±~1000 units) is fine for a first version;

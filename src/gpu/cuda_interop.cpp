@@ -69,6 +69,9 @@ CudaInterop::~CudaInterop() {
     for (CUexternalMemory m : m_external_memory) {
         cuDestroyExternalMemory(m);
     }
+    for (CUstream s : m_extra_streams) {
+        cuStreamDestroy(s);
+    }
     if (m_stream != nullptr) {
         cuStreamDestroy(m_stream);
     }
@@ -78,7 +81,7 @@ CudaInterop::~CudaInterop() {
 }
 
 CudaInterop::CudaInterop(CudaInterop&& o) noexcept
-    : m_device(o.m_device), m_context(o.m_context), m_stream(o.m_stream),
+    : m_device(o.m_device), m_context(o.m_context), m_stream(o.m_stream), m_extra_streams(std::move(o.m_extra_streams)),
       m_external_memory(std::move(o.m_external_memory)), m_external_semaphores(std::move(o.m_external_semaphores)) {
     o.m_context = nullptr;
     o.m_stream = nullptr;
@@ -91,6 +94,7 @@ CudaInterop& CudaInterop::operator=(CudaInterop&& o) noexcept {
         m_device = o.m_device;
         m_context = o.m_context;
         m_stream = o.m_stream;
+        m_extra_streams = std::move(o.m_extra_streams);
         m_external_memory = std::move(o.m_external_memory);
         m_external_semaphores = std::move(o.m_external_semaphores);
         o.m_context = nullptr;
@@ -176,21 +180,48 @@ int CudaInterop::importSemaphore(const CrossSemaphore& semaphore) {
 }
 
 void CudaInterop::waitAsync(int semaphore, u64 value) {
-    CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS params = {};
-    params.params.fence.value = value;
-    CUexternalSemaphore s = m_external_semaphores[static_cast<usize>(semaphore)];
-    cuOk(cuWaitExternalSemaphoresAsync(&s, &params, 1, m_stream), "cuWaitExternalSemaphoresAsync");
+    waitAsync(semaphore, value, m_stream);
 }
 
 void CudaInterop::signalAsync(int semaphore, u64 value) {
+    signalAsync(semaphore, value, m_stream);
+}
+
+void CudaInterop::waitAsync(int semaphore, u64 value, CUstream stream) {
+    CUDA_EXTERNAL_SEMAPHORE_WAIT_PARAMS params = {};
+    params.params.fence.value = value;
+    CUexternalSemaphore s = m_external_semaphores[static_cast<usize>(semaphore)];
+    cuOk(cuWaitExternalSemaphoresAsync(&s, &params, 1, stream), "cuWaitExternalSemaphoresAsync");
+}
+
+void CudaInterop::signalAsync(int semaphore, u64 value, CUstream stream) {
     CUDA_EXTERNAL_SEMAPHORE_SIGNAL_PARAMS params = {};
     params.params.fence.value = value;
     CUexternalSemaphore s = m_external_semaphores[static_cast<usize>(semaphore)];
-    cuOk(cuSignalExternalSemaphoresAsync(&s, &params, 1, m_stream), "cuSignalExternalSemaphoresAsync");
+    cuOk(cuSignalExternalSemaphoresAsync(&s, &params, 1, stream), "cuSignalExternalSemaphoresAsync");
 }
 
 void CudaInterop::sync() {
-    cuOk(cuStreamSynchronize(m_stream), "cuStreamSynchronize");
+    sync(m_stream);
+}
+
+void CudaInterop::sync(CUstream stream) {
+    cuOk(cuStreamSynchronize(stream), "cuStreamSynchronize");
+}
+
+CUstream CudaInterop::makeStream(bool high_priority) {
+    int lo = 0;
+    int hi = 0;
+    int priority = 0;
+    if (high_priority && cuCtxGetStreamPriorityRange(&lo, &hi) == CUDA_SUCCESS) {
+        priority = hi; // numerically lowest == highest priority
+    }
+    CUstream stream = nullptr;
+    if (!cuOk(cuStreamCreateWithPriority(&stream, CU_STREAM_NON_BLOCKING, priority), "cuStreamCreateWithPriority")) {
+        return nullptr;
+    }
+    m_extra_streams.push_back(stream);
+    return stream;
 }
 
 } // namespace gpu

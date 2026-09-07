@@ -32,6 +32,11 @@ void Application::initCallback(void* user_data) {
     if (app.m_init) {
         app.m_init(app);
     }
+
+    // Workers are registered from within init(); start them now that setup is complete.
+    for (auto& worker : app.m_workers) {
+        worker->run();
+    }
 }
 
 void Application::frameCallback(void* user_data) {
@@ -80,6 +85,13 @@ void Application::eventCallback(const sapp_event* event, void* user_data) {
 
 void Application::cleanupCallback(void* user_data) {
     Application& app = *static_cast<Application*>(user_data);
+
+    // Stop and join workers first: one may hold GPU resources (a CUDA context aliasing
+    // Vulkan memory) that its own teardown must release while sokol/Vulkan are still up.
+    app.m_workers_should_stop.store(true, std::memory_order_release);
+    for (auto& worker : app.m_workers) {
+        worker->join();
+    }
 
     // Release GPU-owning state while sokol is still up; sg_destroy_* asserts after shutdown.
     if (app.m_cleanup) {

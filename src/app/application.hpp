@@ -4,6 +4,7 @@
 #include <app/input_state.hpp>
 #include <app/worker.hpp>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -16,7 +17,8 @@ namespace app {
 // Owns the window and the sokol_gfx context, and drives the frame loop.
 //
 // sokol_gfx is single-threaded and sokol_app owns the loop, so the callbacks below all run
-// on the thread that called run(). Nothing on a Worker may touch the GPU.
+// on the thread that called run() -- the ONLY thread that renders. A Worker runs off that
+// thread and must never call sg_* (see addWorker); it may drive CUDA / other GPU compute.
 class Application {
     public:
         struct Config {
@@ -58,8 +60,15 @@ class Application {
         void setCursorCaptured(bool captured);
         void toggleCursorCapture() { setCursorCaptured(!isCursorCaptured()); }
 
-        // UserData is inferred from work's second parameter; args construct it.
-        // For CPU work only -- a Worker must never call into the GPU.
+        // Registers `work` to run on its own thread. Call from the init callback; the
+        // Application starts every worker once init() returns and, on shutdown, sets
+        // workerShouldStop() then joins them all before the cleanup callback runs (so a
+        // worker's own teardown finishes while sokol/Vulkan are still up).
+        //
+        // `work` has signature void(Application&, UserData&). It must never call sg_* --
+        // rendering stays on the frame-callback thread -- but driving CUDA or another GPU
+        // compute API from here is fine (see gpu::SharedInstanceBuffer). UserData is
+        // inferred from the second parameter; args construct it.
         template <typename F, typename... Args>
         void addWorker(F&& work, Args&&... args) {
             using UserData = typename detail::WorkerCallableTraits<std::decay_t<F>>::UserData;
@@ -67,6 +76,9 @@ class Application {
                 *this, std::function<void(Application&, UserData&)>(std::forward<F>(work)), UserData(std::forward<Args>(args)...)
             ));
         }
+
+        // A worker's loop should poll this and exit when it returns true.
+        bool workerShouldStop() const { return m_workers_should_stop.load(std::memory_order_acquire); }
 
     private:
         static void initCallback(void* user_data);
@@ -82,6 +94,7 @@ class Application {
         std::optional<DebugUI> m_debug_ui;
 
         std::vector<std::unique_ptr<WorkerBase>> m_workers;
+        std::atomic<bool> m_workers_should_stop{false};
 };
 
 } // namespace app

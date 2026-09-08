@@ -7,6 +7,19 @@
 
 namespace gpu {
 
+SharedInstanceBuffer::~SharedInstanceBuffer() {
+    // consumeBegin/consumeEnd leave empty vkQueueSubmits in flight that wait on / signal
+    // m_sim_ready / m_render_done / m_publish_done. Those semaphores are destroyed right
+    // after this body (member teardown), so the queue must be idle first -- otherwise the
+    // validation layer flags "semaphore currently in use by VkQueue".
+    if (sg_query_backend() == SG_BACKEND_VULKAN && sg_isvalid()) {
+        const sg_vk_device_info dev = sg_vk_query_device_info();
+        if (dev.device != 0) {
+            vkDeviceWaitIdle(reinterpret_cast<VkDevice>(static_cast<uintptr_t>(dev.device)));
+        }
+    }
+}
+
 std::unique_ptr<SharedInstanceBuffer> SharedInstanceBuffer::create(const Desc& desc) {
 #ifndef GAMEENGINE_CUDA
     (void)desc;

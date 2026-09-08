@@ -146,6 +146,7 @@ int main(int argc, char** argv) {
 	};
 	if (cuda) {
 	    sandbox_mains.push_back("sandbox/cuda_points_test/cuda_points_test.cpp");
+	    sandbox_mains.push_back("sandbox/galaxy_sim/galaxy_sim.cpp");
 	}
 
 	std::vector<std::reference_wrapper<Task>> engine_objects;

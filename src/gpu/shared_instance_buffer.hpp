@@ -46,6 +46,9 @@ class SharedInstanceBuffer {
         };
 
         SharedInstanceBuffer() = default;
+        // Waits for the graphics queue to drain before the CrossSemaphores are destroyed --
+        // the bracketing empty submits in consume*() keep referencing them until then.
+        ~SharedInstanceBuffer();
         SharedInstanceBuffer(const SharedInstanceBuffer&) = delete;
         SharedInstanceBuffer& operator=(const SharedInstanceBuffer&) = delete;
 

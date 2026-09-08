@@ -10,6 +10,8 @@
 #include <graphics/primitives/scene/point.hpp>
 #include <graphics/renderers/point_renderer.hpp>
 
+#include "body.h" // struct Body (+ <common.h> primitives)
+
 #include <cuda.h>
 
 #include <imgui.h>
@@ -22,41 +24,61 @@
 #include <cmath>
 #include <memory>
 #include <random>
-#include <thread>
 #include <vector>
 
-// Galaxy simulation -- scaffold only.
+// Galaxy simulation -- naive direct O(N^2) gravity.
 //
-// A render thread and an independent CUDA simulation thread share one instance buffer via
-// gpu::SharedInstanceBuffer in Sync::SimPriority mode: the sim owns a private buffer it can
-// hammer at whatever rate it likes, and only DtoD-copies a snapshot into the ring the
-// renderer draws when the renderer asks (publishIfRequested). The sim is a NO-OP for now --
-// the stars just sit in the disc generateDisc() lays out. Drop the integration kernels into
-// simWorker's loop when building the actual simulation.
+// A render thread and an independent CUDA sim app::Worker share one instance buffer via
+// gpu::SharedInstanceBuffer in Sync::SimPriority: the sim owns a private Body[] buffer it
+// integrates at whatever rate it likes, and a pack kernel turns a snapshot into the
+// PointInstance ring the renderer draws only when the renderer asks (publishIfRequested).
 //
-//   ./run galaxy_sim [--count N] [--frames N]
+// Scaled units (see body.h): length = 1 kpc, mass = 1 solar mass. G' is the scaled
+// gravitational constant; the time unit is not fixed yet, so G' and dt are degenerate for
+// now (only their product shapes the trajectory) -- both are CLI knobs.
+//
+//   ./run galaxy_sim [--count N] [--frames N] [--substeps K]
+//                    [--dt X] [--softening X] [--omega X] [--gravity X]
 
 namespace {
 
 using graphics::primitives::scene::Camera;
 using graphics::primitives::scene::PointInstance;
 
-constexpr f32 kMoveSpeed = 25.0f;
+constexpr f32 kMoveSpeed = 20.0f;
 constexpr f32 kLookSensitivity = 0.15f;
 constexpr f32 kPitchLimit = 1.5533f;
-constexpr f32 kDiscRadius = 45.0f;
+constexpr f32 kTwoPi = 6.28318531f;
+
+// --- scaled units ------------------------------------------------------------------------
+// length: 1 unit = 1 kpc (3.0857e19 m)   mass: 1 unit = 1 solar mass (1.98e30 kg)
+// gravity: G' = G_SI * Msun * T^2 / L^3. The time unit T is deferred ("time scaling later"),
+// so G' is a free knob -- dt absorbs the remaining freedom. 1.0 corresponds to
+// T = sqrt(L^3 / (G_SI*Msun)) ~ 472 Gyr.
+constexpr f32 kGravityDefault = 1.0f;
+constexpr f32 kDiscRadius = 15.0f;  // kpc
+constexpr f32 kMassMin = 0.08f;     // solar masses
+constexpr f32 kMassMax = 100.0f;
+
 const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 
 struct Sandbox {
         u32 count = 1000;
         u32 max_frames = 0; // 0 = run until the window closes
+        u32 substeps = 16;
+
+        f32 dt = 0.004f;
+        f32 softening = 0.6f;
+        f32 gravity = kGravityDefault;
+        f32 omega = 0.0f;   // CLI: 0 => auto (sqrt(G' * M_tot / R^3)); resolved in generateDisc
+        f32 total_mass = 0.0f;
 
         std::optional<graphics::Presenter> presenter;
         std::optional<graphics::renderers::PointRenderer> renderer;
         std::optional<Camera> camera;
         std::unique_ptr<gpu::SharedInstanceBuffer> shared;
 
-        std::vector<PointInstance> seed;
+        std::vector<Body> seed;
 
         std::atomic<bool> compute_ok{false};
         std::atomic<u64> sim_iters{0};
@@ -64,7 +86,7 @@ struct Sandbox {
 
         f32 exposure = 0.9f;
         f32 yaw = 0.0f;
-        f32 pitch = -0.35f;
+        f32 pitch = -0.42f;
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point rate_mark = std::chrono::steady_clock::now();
         u64 sim_at_mark = 0;
@@ -73,24 +95,44 @@ struct Sandbox {
         f32 frame_rate = 0.0f;
 };
 
-// A rough disc of stars: uniform-area radial density, a little vertical scatter, warmer and
-// brighter toward the core. Same shape as cuda_points_test, just the starting layout.
+// A disc of stars: uniform-area radial density, thin vertical scatter, uniform-random mass.
+// Every star gets a tangential velocity with the SAME angular velocity omega (rigid
+// rotation, v = Omega x r), so inner stars start sub-circular and the disc winds up.
 void generateDisc(Sandbox& sandbox) {
-    std::mt19937 rng{424242};
-    std::uniform_real_distribution<f32> angle{0.0f, 6.2831853f};
+    std::mt19937 rng{4242};
     std::uniform_real_distribution<f32> unit{0.0f, 1.0f};
-    std::normal_distribution<f32> height{0.0f, 1.2f};
+    std::normal_distribution<f32> height{0.0f, 0.03f * kDiscRadius};
+    std::uniform_real_distribution<f32> mass{kMassMin, kMassMax};
 
     sandbox.seed.resize(sandbox.count);
+    f32 total_mass = 0.0f;
+
     for (u32 i = 0; i < sandbox.count; i++) {
         const f32 r = std::sqrt(unit(rng)) * kDiscRadius;
-        const f32 a = angle(rng);
-        const f32 core = 1.0f - r / kDiscRadius;
+        const f32 theta = kTwoPi * unit(rng);
 
-        PointInstance& star = sandbox.seed[i];
-        star.position = Eigen::Vector3f{r * std::cos(a), height(rng) * (0.3f + core), r * std::sin(a)};
-        star.size = 0.06f + 0.18f * unit(rng);
-        star.color = Eigen::Vector4f{1.0f, 0.9f, 0.8f, 0.4f + 2.0f * core * core};
+        Body& b = sandbox.seed[i];
+        b.pos[0] = r * std::cos(theta);
+        b.pos[1] = height(rng);
+        b.pos[2] = r * std::sin(theta);
+        b.mass = mass(rng);
+        b.pad = 0.0f;
+
+        total_mass += b.mass;
+    }
+    sandbox.total_mass = total_mass;
+
+    // omega: CLI override, else rim ~ circular for the drawn mass.
+    if (sandbox.omega <= 0.0f) {
+        sandbox.omega = std::sqrt(sandbox.gravity * total_mass / (kDiscRadius * kDiscRadius * kDiscRadius));
+    }
+    const f32 w = sandbox.omega;
+
+    for (u32 i = 0; i < sandbox.count; i++) {
+        Body& b = sandbox.seed[i];
+        b.vel[0] = -w * b.pos[2];
+        b.vel[1] = 0.0f;
+        b.vel[2] = w * b.pos[0];
     }
 }
 
@@ -104,29 +146,80 @@ void simWorker(app::Application& app, Sandbox*& sptr) {
         return;
     }
 
-    const size_t bytes = static_cast<size_t>(s.count) * sizeof(PointInstance);
-    if (!s.shared->primeSimState(s.seed.data(), bytes)) {
+    CUmodule module = nullptr;
+    CUfunction k_accel = nullptr;
+    CUfunction k_step = nullptr;
+    CUfunction k_pack = nullptr;
+    if (cuModuleLoad(&module, ".build/cuda/galaxy_sim.ptx") != CUDA_SUCCESS ||
+        cuModuleGetFunction(&k_accel, module, "accel") != CUDA_SUCCESS ||
+        cuModuleGetFunction(&k_step, module, "step") != CUDA_SUCCESS ||
+        cuModuleGetFunction(&k_pack, module, "pack") != CUDA_SUCCESS) {
+        RLOG(LL_ERROR, "galaxy_sim: failed to load galaxy_sim.ptx");
+        s.shared->detachCuda();
+        return;
+    }
+
+    const u32 count = s.count;
+    const u32 block = 256;
+    const u32 grid = (count + block - 1) / block;
+
+    // Scratch accelerations, one float3 per body (count * 3 floats). Sandbox-owned.
+    CUdeviceptr d_accel = 0;
+    if (cuMemAlloc(&d_accel, static_cast<usize>(count) * 3u * sizeof(f32)) != CUDA_SUCCESS) {
+        RLOG(LL_ERROR, "galaxy_sim: cuMemAlloc(d_accel) failed");
+        cuModuleUnload(module);
+        s.shared->detachCuda();
+        return;
+    }
+
+    // Body -> PointInstance for a ring slot.
+    s.shared->setPublishPack([k_pack, count, grid, block](CUdeviceptr sim_state, CUdeviceptr ring_slot, u32 /*n*/,
+                                                          CUstream stream) {
+        CUdeviceptr src = sim_state;
+        CUdeviceptr dst = ring_slot;
+        u32 n = count;
+        void* args[] = {&src, &dst, &n};
+        cuLaunchKernel(k_pack, grid, 1, 1, block, 1, 1, 0, stream, args, nullptr);
+    });
+
+    if (!s.shared->primeSimState(s.seed.data(), static_cast<usize>(count) * sizeof(Body))) {
         RLOG(LL_ERROR, "galaxy_sim: primeSimState failed");
+        cuMemFree(d_accel);
+        cuModuleUnload(module);
         s.shared->detachCuda();
         return;
     }
     cuCtxSynchronize();
     s.compute_ok.store(true, std::memory_order_release);
 
+    const CUstream stream = s.shared->simStream();
+    u64 cycle = 0;
+
     while (!app.workerShouldStop()) {
-        // TODO(galaxy): integrate the star state here --
-        //   launch kernels on s.shared->simStream() writing s.shared->simStatePtr(),
-        //   as many sub-steps as you want; the renderer never gates this loop.
-        // For now the sim is a no-op: the disc just sits where generateDisc() put it.
+        CUdeviceptr d_sim = s.shared->simStatePtr();
+        u32 n = count;
+        f32 g = s.gravity;
+        f32 soft2 = s.softening * s.softening;
+        f32 dt = s.dt;
 
-        s.shared->publishIfRequested(); // DtoD-copies the (unchanged) private buffer on request
-        s.sim_iters.fetch_add(1, std::memory_order_relaxed);
+        for (u32 k = 0; k < s.substeps; k++) {
+            void* accel_args[] = {&d_sim, &d_accel, &n, &g, &soft2};
+            cuLaunchKernel(k_accel, grid, 1, 1, block, 1, 1, 0, stream, accel_args, nullptr);
+            void* step_args[] = {&d_sim, &d_accel, &n, &dt};
+            cuLaunchKernel(k_step, grid, 1, 1, block, 1, 1, 0, stream, step_args, nullptr);
+        }
 
-        // No real work yet -> don't peg a core. Remove once the loop launches kernels.
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
+        s.shared->publishIfRequested(); // non-blocking; never waits on the renderer
+        s.sim_iters.fetch_add(s.substeps, std::memory_order_relaxed);
+
+        if (((++cycle) & 0x3F) == 0) {
+            s.shared->cuda().sync(stream); // bound the sim-stream queue
+        }
     }
 
-    s.shared->cuda().sync(s.shared->simStream());
+    s.shared->cuda().sync(stream);
+    cuMemFree(d_accel);
+    cuModuleUnload(module);
     s.shared->detachCuda();
 }
 
@@ -174,13 +267,13 @@ void init(app::Application& app, Sandbox& sandbox) {
 
     const f32 aspect = static_cast<f32>(app.width()) / static_cast<f32>(app.height());
     sandbox.camera.emplace(
-        1.0472f, aspect, 0.5f, 500.0f, Eigen::Vector3f{0.0f, 20.0f, 70.0f}, Eigen::Vector3f{0.0f, -0.28f, -1.0f}, kWorldUp
+        1.0472f, aspect, 0.5f, 500.0f, Eigen::Vector3f{0.0f, 26.0f, 46.0f}, Eigen::Vector3f{0.0f, -0.46f, -0.89f}, kWorldUp
     );
 
-    // Application starts the worker once init() returns and stops + joins it before cleanup.
     app.addWorker(simWorker, &sandbox);
 
-    RLOG(LL_INFO, "galaxy_sim: %u stars, sim-priority shared buffer, sim is a no-op stub", sandbox.count);
+    RLOG(LL_INFO, "galaxy_sim: %u stars, M_tot=%.0f Msun, omega=%.3f, dt=%.4f, eps=%.2f, G'=%.3f", sandbox.count,
+         sandbox.total_mass, sandbox.omega, sandbox.dt, sandbox.softening, sandbox.gravity);
 
     sandbox.last_time = std::chrono::steady_clock::now();
     sandbox.rate_mark = sandbox.last_time;
@@ -224,10 +317,15 @@ void frame(app::Application& app, Sandbox& sandbox) {
     sandbox.presenter->present(renderer, [&]() {
         app.debugUI().draw(app.width(), app.height(), dt, sapp_dpi_scale(), [&]() {
             if (ImGui::Begin("galaxy_sim")) {
-                ImGui::Text("%u stars", sandbox.count);
+                ImGui::Text("%u stars   N-body O(N^2) direct", sandbox.count);
                 ImGui::Text("sim iters/sec : %.0f", sandbox.sim_rate);
                 ImGui::Text("render fps    : %.0f", sandbox.frame_rate);
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "simulation: no-op stub");
+                ImGui::Separator();
+                ImGui::Text("M_tot  %.0f Msun", sandbox.total_mass);
+                ImGui::Text("omega  %.3f", sandbox.omega);
+                ImGui::SliderFloat("dt", &sandbox.dt, 0.0002f, 0.03f, "%.4f");
+                ImGui::SliderFloat("softening (eps)", &sandbox.softening, 0.05f, 4.0f, "%.2f");
+                ImGui::SliderFloat("G'", &sandbox.gravity, 0.05f, 8.0f, "%.2f");
                 ImGui::SliderFloat("exposure", &sandbox.exposure, 0.05f, 3.0f, "%.2f");
                 if (!sandbox.compute_ok.load(std::memory_order_acquire)) {
                     ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "sim thread not running");
@@ -241,12 +339,11 @@ void frame(app::Application& app, Sandbox& sandbox) {
 }
 
 void cleanup(Sandbox& sandbox) {
-    RLOG(LL_INFO, "galaxy_sim: %llu sim iters over %llu frames",
+    RLOG(LL_INFO, "galaxy_sim: %llu sim iters over %llu frames (last: %.0f iters/s, %.0f fps)",
          static_cast<unsigned long long>(sandbox.sim_iters.load(std::memory_order_relaxed)),
-         static_cast<unsigned long long>(sandbox.render_frames));
+         static_cast<unsigned long long>(sandbox.render_frames), sandbox.sim_rate, sandbox.frame_rate);
 
-    // Application has already stopped + joined the worker (detachCuda ran), so only
-    // Vulkan-owning objects are left to release while sokol is still up.
+    // Application has already stopped + joined the worker (detachCuda ran).
     sandbox.presenter.reset();
     sandbox.renderer.reset();
     sandbox.camera.reset();
@@ -262,6 +359,11 @@ int main(int argc, char** argv) {
     app::CliParser cli{argc, argv};
     cli.defineArg<u32>("count");
     cli.defineArg<u32>("frames");
+    cli.defineArg<u32>("substeps");
+    cli.defineArg<f32>("dt");
+    cli.defineArg<f32>("softening");
+    cli.defineArg<f32>("omega");
+    cli.defineArg<f32>("gravity");
     cli.parse();
 
     Sandbox sandbox;
@@ -270,6 +372,21 @@ int main(int argc, char** argv) {
     }
     if (const auto v = cli.arg<u32>("frames"); v && *v > 0) {
         sandbox.max_frames = *v;
+    }
+    if (const auto v = cli.arg<u32>("substeps"); v && *v > 0) {
+        sandbox.substeps = *v;
+    }
+    if (const auto v = cli.arg<f32>("dt"); v && *v > 0.0f) {
+        sandbox.dt = *v;
+    }
+    if (const auto v = cli.arg<f32>("softening"); v && *v > 0.0f) {
+        sandbox.softening = *v;
+    }
+    if (const auto v = cli.arg<f32>("omega"); v && *v > 0.0f) {
+        sandbox.omega = *v;
+    }
+    if (const auto v = cli.arg<f32>("gravity"); v && *v > 0.0f) {
+        sandbox.gravity = *v;
     }
 
     app::Application app{

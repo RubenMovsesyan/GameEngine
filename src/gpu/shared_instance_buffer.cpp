@@ -161,6 +161,7 @@ void SharedInstanceBuffer::detachCuda() {
         m_sim_state = 0;
     }
     m_sim_stream = nullptr; // owned + destroyed by CudaInterop
+    m_pack = nullptr;       // may capture CUfunction handles from the (now-dead) module
     m_cuda.reset();
     m_device_ptr = {0, 0, 0};
     m_sim_ready_sem = -1;
@@ -217,7 +218,10 @@ bool SharedInstanceBuffer::primeSimState(const void* seed, usize bytes) {
         return false;
     }
     // Seed ring slot 0 too so the first frames before any publish aren't garbage.
-    if (cuMemcpyDtoD(m_device_ptr[0], m_sim_state, bytes) != CUDA_SUCCESS) {
+    if (m_pack) {
+        m_pack(m_sim_state, m_device_ptr[0], m_max_instances, m_sim_stream);
+        cuStreamSynchronize(m_sim_stream);
+    } else if (cuMemcpyDtoD(m_device_ptr[0], m_sim_state, bytes) != CUDA_SUCCESS) {
         return false;
     }
     m_ready_slot.store(0, std::memory_order_release);
@@ -237,9 +241,13 @@ void SharedInstanceBuffer::publishIfRequested() {
         return;
     }
 
-    // Copy the current sim state into `next` on the sim stream (race-free with the in-place
+    // Turn the current sim state into `next` on the sim stream (race-free with the in-place
     // kernels queued before it), then signal that slot's readiness.
-    cuMemcpyDtoDAsync(m_device_ptr[next], m_sim_state, m_total_bytes, m_sim_stream);
+    if (m_pack) {
+        m_pack(m_sim_state, m_device_ptr[next], m_max_instances, m_sim_stream);
+    } else {
+        cuMemcpyDtoDAsync(m_device_ptr[next], m_sim_state, m_total_bytes, m_sim_stream);
+    }
     m_publish_value++;
     m_cuda->signalAsync(m_publish_done_sem, m_publish_value, m_sim_stream);
 

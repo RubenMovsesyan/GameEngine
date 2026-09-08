@@ -120,9 +120,9 @@ void simWorker(app::Application& app, Sandbox*& sptr) {
 
     CUmodule module = nullptr;
     CUfunction integrate = nullptr;
-    if (cuModuleLoad(&module, ".build/cuda/integrate.ptx") != CUDA_SUCCESS ||
+    if (cuModuleLoad(&module, ".build/cuda/cuda_points_test.ptx") != CUDA_SUCCESS ||
         cuModuleGetFunction(&integrate, module, "integrate") != CUDA_SUCCESS) {
-        RLOG(LL_ERROR, "cuda_points_test: failed to load integrate.ptx");
+        RLOG(LL_ERROR, "cuda_points_test: failed to load cuda_points_test.ptx");
         s.shared->detachCuda();
         return;
     }

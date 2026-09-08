@@ -11,6 +11,8 @@
 
 #ifdef GAMEENGINE_CUDA
 #include <gpu/cuda_interop.hpp>
+
+#include <functional>
 #endif
 
 namespace gpu {
@@ -94,7 +96,18 @@ class SharedInstanceBuffer {
         CUdeviceptr simStatePtr() const { return m_sim_state; }
         // The high-priority stream the sim kernels + the publish copy run on.
         CUstream simStream() const { return m_sim_stream; }
-        // Seed the private buffer and the first ring slot once, before the loop.
+
+        // How to turn the private sim buffer into a ring slot the renderer draws. Unset =>
+        // a raw device->device memcpy (only valid when the sim layout already equals the
+        // instance layout, as in cuda_points_test). Set it once, after attachCuda() and
+        // before primeSimState(), when the sim state is a different struct (galaxy_sim's
+        // Body -> PointInstance pack kernel). Runs on simStream().
+        using PackFn = std::function<void(CUdeviceptr sim_state, CUdeviceptr ring_slot, u32 count, CUstream stream)>;
+        void setPublishPack(PackFn pack) { m_pack = std::move(pack); }
+
+        // Seed the private buffer and the first ring slot once, before the loop. `bytes` is
+        // the host->device copy size for the sim buffer; the ring slot is filled via the
+        // pack fn (or a straight copy if none is set).
         bool primeSimState(const void* seed, usize bytes);
         // If the render thread asked for a fresh snapshot and a ring slot is free, enqueue
         // (on simStream) a copy of the private buffer into it and publish it. Never blocks;
@@ -127,6 +140,7 @@ class SharedInstanceBuffer {
 
 #ifdef GAMEENGINE_CUDA
         std::optional<CudaInterop> m_cuda;
+        PackFn m_pack;                                 // SimPriority: sim_state -> ring slot (empty = raw copy)
         std::array<CUdeviceptr, 3> m_device_ptr{0, 0, 0};
         int m_sim_ready_sem = -1;
         int m_render_done_sem = -1;

@@ -229,8 +229,7 @@ GltfAsset loadGltf(const std::filesystem::path& path) {
         RLOG(LL_FATAL, "gltf: no default scene in %s", path.c_str());
     }
 
-    // One Model per root node that actually contributes a mesh -- a root node whose subtree
-    // is lights-only still gets walked (for its lights) but its empty Model is discarded.
+    // Lights-only root nodes are walked for their lights; their empty Model is dropped.
     GltfAsset result;
     for (cgltf_size i = 0; i < data->scene->nodes_count; i++) {
         Model model;

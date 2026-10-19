@@ -8,8 +8,7 @@
 
 namespace assets::loaders {
 
-// Everything one glTF file yields. One Model per scene root node whose subtree contains a
-// mesh; lights collected flat across the whole file.
+// One Model per mesh-bearing scene root node; lights flat across the file.
 struct GltfAsset {
     std::vector<scene::Model> models;
     std::vector<graphics::primitives::scene::Light> lights;

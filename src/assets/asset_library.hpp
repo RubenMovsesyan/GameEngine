@@ -15,11 +15,7 @@
 
 namespace assets {
 
-// Path-keyed cache of loaded assets of any type. One instance per (type, canonical path):
-// load<T>(path) twice returns the same object. Loaders are registered per type at runtime.
-//
-// Frame-callback thread only (loaders create sokol resources). Holds sokol handles: call
-// clear() and drop every returned pointer before sg_shutdown().
+// One cached instance per (type, canonical path). Frame thread only; clear() before sg_shutdown().
 class AssetLibrary {
     public:
         template <typename T>
@@ -34,9 +30,7 @@ class AssetLibrary {
         template <typename T>
         void setLoader(Loader<T> loader);
 
-        // Ts... are produced from one already-loadable Source: load<Ti>(path) loads (or reuses)
-        // Source at that path, runs `split`, and caches every element under (Ti, path).
-        // `split` must return std::tuple<Ts...>. A direct setLoader<Ti> takes precedence.
+        // split(const Source&) -> std::tuple<Ts...>; a direct setLoader<Ti> takes precedence.
         template <typename Source, typename... Ts, typename Fn>
         void setSplitLoader(Fn&& split);
 

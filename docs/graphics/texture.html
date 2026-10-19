@@ -34,7 +34,12 @@
 
   <h4>scene</h4>
   <a href="../scene/model.html">Model</a>
-  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
 
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
@@ -66,7 +71,7 @@
 <p>
   Depends on <code>gpu::Device</code> (<code>createTexture()</code>, guarded internally
   by <code>Device</code>'s own submit mutex — see <a href="../gpu/device.html">Device</a>).
-  Built by <code>scene::loadGltf</code> for each primitive's base-color texture; held on
+  Built by <code>assets::loaders::loadGltf</code> for each primitive's base-color texture; held on
   <code>scene::ModelPart::texture</code>; read every frame by
   <code>graphics::Renderer::renderMesh()</code> for the G-buffer pass's albedo binding.
 </p>
@@ -114,7 +119,7 @@ class Texture {
     supplies a <code>std::function&lt;DecodedPixels()&gt;</code> that turns raw
     compressed bytes into pixels — <code>graphics/</code> never touches
     <code>stb_image</code> directly, matching the existing rule that asset-format
-    knowledge stays in <code>scene/</code>. <code>scene::loadGltf</code> is the only
+    knowledge stays in <code>scene/</code>. <code>assets::loaders::loadGltf</code> is the only
     caller today and supplies the <code>stb_image</code> call.
   </li>
   <li>

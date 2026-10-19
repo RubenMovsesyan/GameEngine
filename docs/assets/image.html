@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>assets::loaders::loadTexture — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="../graphics/renderer.html">Renderer (concept)</a>
+  <a href="../graphics/presenter.html">Presenter</a>
+
+  <h4>graphics · primitives/scene</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/frustum.html">Frustum</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/material.html">Material</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/point_renderer.html">Point (PointInstance)</a>
+  <a href="../graphics/skybox.html">Skybox</a>
+  <a href="../graphics/texture.html">Texture</a>
+
+  <h4>graphics · primitives/pass</h4>
+  <a href="../graphics/debug_draw.html">DebugDraw</a>
+  <a href="../graphics/fullscreen_pass.html">FullscreenPass</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/post.html">post (Tonemap/Fxaa)</a>
+  <a href="../graphics/render_target.html">RenderTarget</a>
+
+  <h4>graphics · renderers</h4>
+  <a href="../graphics/renderer.html#deferred">DeferredRenderer</a>
+  <a href="../graphics/point_renderer.html">PointRenderer</a>
+
+  <h4>gpu</h4>
+  <a href="../gpu/interop.html">CUDA interop</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a class="here" href="../assets/image.html">loadTexture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>assets::loaders::loadTexture</code> / <code>decodeImage</code></h1>
+<p class="lede">Image file to <code>Texture</code>, plus the shared stb_image decode step the glTF loader also uses.</p>
+
+<h2>Role</h2>
+<p><code>loadTexture(path)</code> reads the file's bytes now, then hands decoding to <code>Texture::loadAsyncThread</code>: it returns a placeholder immediately and the real image is swapped in by <code>Texture::drainUploads()</code> (called by <code>Presenter</code> each frame). <code>decodeImage</code> is the stb_image step, shared with <a href="gltf.html"><code>loadGltf</code></a>'s embedded textures. This translation unit owns <code>STB_IMAGE_IMPLEMENTATION</code>.</p>
+
+<h2>Public API</h2>
+<pre><code>// stb_image decode to tightly packed RGBA8. Fatal on failure. Safe off the sokol thread.
+graphics::primitives::scene::DecodedPixels decodeImage(std::vector&lt;u8&gt; encoded_bytes);
+
+// Placeholder now; decoded on a background thread, swapped in by Texture::drainUploads().
+graphics::primitives::scene::Texture loadTexture(const std::filesystem::path&amp; path);</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li>Always decodes to tightly packed RGBA8 (<code>STBI_rgb_alpha</code>), whatever the source channel count.</li>
+  <li><code>decodeImage</code> can run (and fail fatally) on the background thread; process-wide exit is fine from any thread.</li>
+</ul>
+
+<footer>Source: <code>src/assets/loaders/image.hpp</code>, <code>src/assets/loaders/image.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -25,13 +25,10 @@ struct ModelPart {
 // Transform the 8 local corners and re-fit; loose for a rotated box but never smaller than true.
 Eigen::AlignedBox3f worldBounds(const Eigen::Matrix4f& world_matrix, const Eigen::AlignedBox3f& local);
 
-// A flat collection of meshes, each with its own local transform. Pure data -- no Camera or
-// Renderer dependency; culling and submission are the caller's job (see sandbox/model_test).
+// Flat collection of meshes with local transforms. No Camera/Renderer dependency.
 class Model {
     public:
-        // Placed on top of every part's own (already-baked-in) transform by the caller --
-        // see Renderer/submitScene. Defaults to identity; a Model with no placement set
-        // renders exactly where its parts' transforms already put it.
+        // Shared by every holder of a cached Model -- prefer caller-side placement.
         Eigen::Matrix4f world_transform = Eigen::Matrix4f::Identity();
 
         template <graphics::primitives::scene::Mesh T>

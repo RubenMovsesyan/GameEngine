@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>assets::AssetLibrary — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="../graphics/renderer.html">Renderer (concept)</a>
+  <a href="../graphics/presenter.html">Presenter</a>
+
+  <h4>graphics · primitives/scene</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/frustum.html">Frustum</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/material.html">Material</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/point_renderer.html">Point (PointInstance)</a>
+  <a href="../graphics/skybox.html">Skybox</a>
+  <a href="../graphics/texture.html">Texture</a>
+
+  <h4>graphics · primitives/pass</h4>
+  <a href="../graphics/debug_draw.html">DebugDraw</a>
+  <a href="../graphics/fullscreen_pass.html">FullscreenPass</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/post.html">post (Tonemap/Fxaa)</a>
+  <a href="../graphics/render_target.html">RenderTarget</a>
+
+  <h4>graphics · renderers</h4>
+  <a href="../graphics/renderer.html#deferred">DeferredRenderer</a>
+  <a href="../graphics/point_renderer.html">PointRenderer</a>
+
+  <h4>gpu</h4>
+  <a href="../gpu/interop.html">CUDA interop</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+
+  <h4>assets</h4>
+  <a class="here" href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+</nav>
+
+<main>
+
+<h1><code>assets::AssetLibrary</code></h1>
+<p class="lede">Load a file once, share it everywhere. A cache of loaded assets of any type, keyed by (type, canonical path), with loaders registered per type at runtime.</p>
+
+<h2>Role</h2>
+<p>
+  Before this, every sandbox called its loader directly and kept the result in its own
+  variables; drawing a model twice meant loading the file twice. Now
+  <code>load&lt;T&gt;(path)</code> returns a shared pointer to the one cached instance, and a
+  second call with the same path (in any spelling — <code>./cube.glb</code>,
+  <code>/abs/dir/../cube.glb</code>) returns that same pointer.
+</p>
+<pre><code>assets::AssetLibrary assets;
+assets::loaders::registerDefaultLoaders(assets);
+
+auto cube   = assets.load&lt;scene::Model&gt;("res/cube.glb");                // parses the glb
+auto again  = assets.load&lt;scene::Model&gt;("res/cube.glb");                // same pointer
+auto lights = assets.load&lt;std::vector&lt;Light&gt;&gt;("res/cube.glb");         // cache hit, no re-parse
+auto tex    = assets.load&lt;Texture&gt;("res/smile.jpg");
+
+// A custom asset type: register a loader once, then load&lt;T&gt; works for it.
+assets.setLoader&lt;Heightmap&gt;([](const std::filesystem::path&amp; p) { return Heightmap::fromFile(p); });</code></pre>
+
+<h2>Depends on / depended on by</h2>
+<p>
+  Header-only templates over the standard library plus <code>rlog</code>; knows no asset
+  type itself. Built-in loaders live in <code>src/assets/loaders/</code> and are registered by
+  <a href="defaults.html"><code>registerDefaultLoaders()</code></a>. Used by
+  <code>sandbox/model_test</code>.
+</p>
+
+<h2>Public API</h2>
+<pre><code>class AssetLibrary {
+    public:
+        template &lt;typename T&gt;
+        using Loader = std::function&lt;T(const std::filesystem::path&amp;)&gt;;
+
+        AssetLibrary() = default;
+        // Split producers capture `this`: pinned in place.
+        AssetLibrary(const AssetLibrary&amp;) = delete;
+        AssetLibrary&amp; operator=(const AssetLibrary&amp;) = delete;
+
+        // Replaces any earlier loader for T. Receives the canonical absolute path.
+        template &lt;typename T&gt;
+        void setLoader(Loader&lt;T&gt; loader);
+
+        // split(const Source&amp;) -&gt; std::tuple&lt;Ts...&gt;; a direct setLoader&lt;Ti&gt; takes precedence.
+        template &lt;typename Source, typename... Ts, typename Fn&gt;
+        void setSplitLoader(Fn&amp;&amp; split);
+
+        // Shared, read-only. Fatal if no loader can produce T or the file doesn&#x27;t exist.
+        template &lt;typename T&gt;
+        std::shared_ptr&lt;const T&gt; load(const std::filesystem::path&amp; path) {
+            return loadShared&lt;T&gt;(path);
+        }
+
+        // Same cached object as load&lt;T&gt;(), mutable: edits are visible to every holder.
+        template &lt;typename T&gt;
+        std::shared_ptr&lt;T&gt; loadMut(const std::filesystem::path&amp; path) {
+            return loadShared&lt;T&gt;(path);
+        }
+
+        template &lt;typename T&gt;
+        bool contains(const std::filesystem::path&amp; path) const {
+            return m_cache.contains(Key{typeid(T), canonical(path)});
+        }
+
+        usize size() const { return m_cache.size(); }
+        // Drops the library&#x27;s references; objects die once callers drop theirs too.
+        void clear() { m_cache.clear(); }
+
+        static std::string canonical(const std::filesystem::path&amp; path);
+};</code></pre>
+
+<h2>Split loaders</h2>
+<p>
+  One file can hold several kinds of asset (a glTF has models and lights).
+  <code>setSplitLoader&lt;Source, T1, ..., Tn&gt;(split)</code> declares that each
+  <code>Ti</code> comes from a <code>Source</code> already loadable at the same path.
+  <code>load&lt;Ti&gt;(path)</code> loads (or reuses) the <code>Source</code>, calls
+  <code>split(const Source&amp;)</code> once, and caches <em>every</em> tuple element under
+  <code>(Ti, path)</code>. You choose which sub-assets exist by what the split returns; a
+  "many of a kind" product is a container type, e.g. <code>std::vector&lt;Light&gt;</code>.
+</p>
+<pre><code>assets.setSplitLoader&lt;GltfAsset, scene::Model, std::vector&lt;Light&gt;&gt;(
+    [](const GltfAsset&amp; g) { return std::tuple&lt;scene::Model, std::vector&lt;Light&gt;&gt;{mergeModels(g.models), g.lights}; });</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><strong>Key = (C++ type, canonical path).</strong> The path is made absolute and normalized with <code>std::filesystem::weakly_canonical</code>. Keying by type as well lets one path hold several assets (the glTF source, its <code>Model</code>, its lights).</li>
+  <li><strong><code>load</code> vs <code>loadMut</code>:</strong> both return the same cached object. <code>loadMut</code> just drops the <code>const</code>, so an edit is visible to every holder, including <code>load</code> callers.</li>
+  <li><strong>Failure is fatal</strong>: no loader for the type, or a missing file, ends the process via <code>RLOG(LL_FATAL)</code> with the demangled type name. Loaders themselves follow the same convention.</li>
+  <li><strong>Runtime registration</strong> (<code>std::function</code> per type) means a missing loader is caught at the <code>load</code> call, not at compile time. In exchange, a sandbox can replace a built-in loader with its own.</li>
+  <li><strong>Precedence:</strong> a direct <code>setLoader&lt;T&gt;</code> beats a split loader that also produces <code>T</code>. The split source stays cached after splitting. A product already in the cache (e.g. from a direct loader) is not overwritten by a later split.</li>
+  <li><strong>Lifetime.</strong> <code>clear()</code> drops only the library's references; any <code>shared_ptr</code> a caller still holds keeps its object alive. Most assets own sokol handles, so call <code>clear()</code> and drop your own pointers before <code>sg_shutdown()</code> (see <code>model_test</code>'s <code>cleanup()</code>).</li>
+  <li><strong>Not movable or copyable</strong>: split producers capture <code>this</code>.</li>
+  <li><strong>Frame thread only.</strong> Loaders create sokol resources and the cache is unsynchronized. Texture decoding still happens off-thread inside the texture loader (<code>Texture::loadAsyncThread</code>).</li>
+  <li><strong>Shared <code>Model</code> means shared <code>Model::world_transform</code>.</strong> Place copies from the caller side (as <code>model_test</code>'s <code>submitModel(..., placement, ...)</code> does), not by editing the cached model.</li>
+</ul>
+
+<footer>Source: <code>src/assets/asset_library.hpp</code>, <code>src/assets/asset_library.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

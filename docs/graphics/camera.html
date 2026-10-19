@@ -34,7 +34,12 @@
 
   <h4>scene</h4>
   <a href="../scene/model.html">Model</a>
-  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
 
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
@@ -154,7 +159,7 @@
     winding parity too.
   </li>
   <li>Depth range is Vulkan's <code>[0,1]</code>, not OpenGL's <code>[-1,1]</code> — the row-2 near/far terms are derived for that directly, not adapted from a GL formula.</li>
-  <li><code>transformationMatrix()</code> is a standard right-handed look-at (<code>right = forward × up</code>, <code>up' = right × forward</code>), camera looking down -Z in view space — matches glTF's own camera convention, which matters since <code>scene::loadGltf</code> loads content authored under that convention.</li>
+  <li><code>transformationMatrix()</code> is a standard right-handed look-at (<code>right = forward × up</code>, <code>up' = right × forward</code>), camera looking down -Z in view space — matches glTF's own camera convention, which matters since <code>assets::loaders::loadGltf</code> loads content authored under that convention.</li>
 </ul>
 
 <footer>Source: <code>src/graphics/primitives/scene/camera.hpp</code>, <code>src/graphics/primitives/scene/camera.cpp</code></footer>

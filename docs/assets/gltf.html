@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>scene::loadGltf — GameEngine</title>
+<title>assets::loaders::loadGltf — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -11,35 +11,50 @@
 
 <nav>
   <a class="brand" href="../index.html">Game<span>Engine</span></a>
-  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
-
-  <h4>gpu</h4>
-  <a href="../gpu/instance.html">Instance</a>
-  <a href="../gpu/device.html">Device</a>
-  <a href="../gpu/swapchain.html">Swapchain</a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
 
   <h4>graphics</h4>
+  <a href="../graphics/renderer.html">Renderer (concept)</a>
+  <a href="../graphics/presenter.html">Presenter</a>
+
+  <h4>graphics · primitives/scene</h4>
   <a href="../graphics/camera.html">Camera</a>
   <a href="../graphics/frustum.html">Frustum</a>
   <a href="../graphics/light.html">Light</a>
-  <a href="../graphics/light_manager.html">LightManager</a>
   <a href="../graphics/material.html">Material</a>
   <a href="../graphics/mesh.html">Mesh</a>
-  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
-  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/point_renderer.html">Point (PointInstance)</a>
   <a href="../graphics/skybox.html">Skybox</a>
-  <a href="../graphics/surface.html">Surface</a>
   <a href="../graphics/texture.html">Texture</a>
 
+  <h4>graphics · primitives/pass</h4>
+  <a href="../graphics/debug_draw.html">DebugDraw</a>
+  <a href="../graphics/fullscreen_pass.html">FullscreenPass</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/post.html">post (Tonemap/Fxaa)</a>
+  <a href="../graphics/render_target.html">RenderTarget</a>
+
+  <h4>graphics · renderers</h4>
+  <a href="../graphics/renderer.html#deferred">DeferredRenderer</a>
+  <a href="../graphics/point_renderer.html">PointRenderer</a>
+
+  <h4>gpu</h4>
+  <a href="../gpu/interop.html">CUDA interop</a>
+
   <h4>scene</h4>
-  <a href="model.html">Model</a>
-  <a class="here" href="gltf_loader.html">loadGltf</a>
+  <a href="../scene/model.html">Model</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a class="here" href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
 
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
   <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
   <a href="../app/input_state.html">InputState</a>
-  <a href="../app/window.html">Window</a>
   <a href="../app/worker.html">Worker</a>
 
   <h4>utils</h4>
@@ -48,8 +63,8 @@
 
 <main>
 
-<h1><code>scene::loadGltf</code></h1>
-<p class="lede">Parses a glTF/glb file with cgltf and returns its models and lights directly. The only place in the engine that knows cgltf exists.</p>
+<h1><code>assets::loaders::loadGltf</code></h1>
+<p class="lede">Parses a glTF/glb file with cgltf and returns a <code>GltfAsset</code> (models + lights). Registered as the <code>GltfAsset</code> loader by <a href="defaults.html">registerDefaultLoaders</a>. The only place in the engine that knows cgltf exists.</p>
 
 <h2>Role</h2>
 <p>
@@ -71,18 +86,24 @@
   <a href="../graphics/material.html"><code>Material</code></a>/
   <a href="../graphics/texture.html"><code>Texture</code></a>, <code>cgltf</code>
   (vendored, single-header), and <code>stb_image</code> (vendored, single-header, image
-  decode only). Called directly by test/game code — <code>graphics/</code> never depends
-  on cgltf or stb_image; the dependency direction is strictly <code>scene/</code> →
-  <code>graphics/</code>, never the reverse.
+  decode only, via <a href="image.html"><code>decodeImage</code></a>). Normally reached through
+  <a href="asset_library.html"><code>AssetLibrary</code></a>: <code>load&lt;GltfAsset&gt;</code>
+  directly, or <code>load&lt;scene::Model&gt;</code> / <code>load&lt;std::vector&lt;Light&gt;&gt;</code>
+  through the default split loader. <code>graphics/</code> never depends on cgltf or stb_image.
 </p>
 
 <h2>Public API</h2>
-<pre><code>struct LoadedGltf {
-    std::vector&lt;Model&gt; models;
+<pre><code>// One Model per mesh-bearing scene root node; lights flat across the file.
+struct GltfAsset {
+    std::vector&lt;scene::Model&gt; models;
     std::vector&lt;graphics::primitives::scene::Light&gt; lights;
 };
 
-LoadedGltf loadGltf(const std::filesystem::path&);</code></pre>
+// Fatal on parse/buffer failure or unsupported content.
+GltfAsset loadGltf(const std::filesystem::path&amp; path);
+
+// All root models&#x27; parts in one Model (copies share GPU buffers -- no re-upload).
+scene::Model mergeModels(const std::vector&lt;scene::Model&gt;&amp; models);</code></pre>
 
 <h2>What it does and doesn't support</h2>
 <ul>
@@ -90,7 +111,7 @@ LoadedGltf loadGltf(const std::filesystem::path&);</code></pre>
   <li>Requires <code>POSITION</code>, <code>NORMAL</code>, and <code>TEXCOORD_0</code> on every primitive.</li>
   <li>Node transforms: <code>cgltf_node_transform_local</code> fills a column-major <code>float[16]</code>, which matches <code>Eigen::Matrix4f</code>'s default storage directly — <code>Eigen::Map&lt;const Eigen::Matrix4f&gt;(local)</code> reads it with no conversion.</li>
   <li>Light direction/position come from the owning node's accumulated world transform, not from the light itself — glTF stores punctual lights as node attachments, same as meshes. Direction is local <code>(0,0,-1)</code> transformed by the inverse-transpose of the node's 3×3 linear block, so a non-uniformly scaled light node still points true — the same fix <code>gbuffer.vert</code> now uses for mesh normals (see <a href="../graphics/mesh.html"><code>normalMatrix()</code></a>).</li>
-  <li>Each primitive gets a mesh-space AABB: if the <code>POSITION</code> accessor declares <code>min</code>/<code>max</code> (glTF requires it to, in practice), those two points are used directly; otherwise the vertex positions are scanned. It rides along into <a href="model.html"><code>ModelPart::local_bounds</code></a> for frustum culling.</li>
+  <li>Each primitive gets a mesh-space AABB: if the <code>POSITION</code> accessor declares <code>min</code>/<code>max</code> (glTF requires it to, in practice), those two points are used directly; otherwise the vertex positions are scanned. It rides along into <a href="../scene/model.html"><code>ModelPart::local_bounds</code></a> for frustum culling.</li>
   <li>
     <strong>Full metallic-roughness materials</strong> — <code>loadMaterial()</code>
     reads <code>base_color_texture</code>/<code>metallic_roughness_texture</code> plus
@@ -119,9 +140,9 @@ LoadedGltf loadGltf(const std::filesystem::path&);</code></pre>
     <code>cgltf_decode_uri()</code>, read with <code>std::ifstream</code>.
     <code>sandbox/model_test/test_assets/smile_cube.gltf</code> +
     <code>smile_cube.bin</code> + <code>smile.jpg</code> is the one asset in the repo
-    exercising the separate-file path end to end. <code>decodeImageBytes()</code> is the
+    exercising the separate-file path end to end. <a href="image.html"><code>decodeImage()</code></a> is the
     plain <code>stb_image</code> decode step, split out from byte resolution so
-    <code>loadTexture()</code> (base color, format <code>SRGBA8_UNORM</code>) and
+    <code>loadGltfTexture()</code> (base color, format <code>SRGBA8_UNORM</code>) and
     <code>metallic_roughness_texture</code>'s load (format <code>RGBA8_UNORM</code> —
     it's linear data, not color) both reuse it unchanged.
   </li>
@@ -132,9 +153,11 @@ LoadedGltf loadGltf(const std::filesystem::path&);</code></pre>
     loading in this function.
   </li>
   <li>Fatal (not silently degraded) on: parse/buffer-load failure, no default scene, unsupported primitive/light type, missing required attributes, undecodable texture image — matches the engine-wide convention of <code>RLOG(LL_FATAL, ...)</code> for unrecoverable errors. The texture-decode fatal can fire from the background thread; a process-wide exit is fine from any thread.</li>
+  <li><strong><code>mergeModels()</code></strong> concatenates every root model's parts into one <code>Model</code> for the default <code>scene::Model</code> split. Part copies share their GPU buffers and texture state, so nothing is re-uploaded.</li>
+  <li>Moved from <code>src/scene/gltf_loader.*</code> (where it returned <code>scene::LoadedGltf</code>) so every built-in loader lives under <code>src/assets/loaders/</code>.</li>
 </ul>
 
-<footer>Source: <code>src/scene/gltf_loader.hpp</code>, <code>src/scene/gltf_loader.cpp</code></footer>
+<footer>Source: <code>src/assets/loaders/gltf.hpp</code>, <code>src/assets/loaders/gltf.cpp</code></footer>
 
 </main>
 </div>

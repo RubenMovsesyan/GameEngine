@@ -16,7 +16,8 @@ src/graphics/  the graphics engine -- the Renderer concept + Presenter at the ro
   primitives/scene/  pipeline-agnostic scene types (Mesh, Material, Texture, Camera, Frustum, Skybox, Light, PointInstance)
   primitives/pass/   GPU-pass building blocks (RenderTarget, FullscreenPass, Tonemap/Fxaa, DebugDraw, shadow cascades, LightManager)
   renderers/         whole rendering strategies (DeferredRenderer, PointRenderer)
-src/scene/  glTF loading and the scene/model tree
+src/scene/  Model (meshes + local transforms + materials)
+src/assets/ AssetLibrary (load once, share by path) + built-in loaders in loaders/ (glTF, image)
 src/app/    window, input, frame loop (sokol_app)
 src/utils/  small shared helpers
 sandbox/    test executables

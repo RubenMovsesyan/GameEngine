@@ -33,7 +33,12 @@
 
   <h4>scene</h4>
   <a href="../scene/model.html">Model</a>
-  <a href="../scene/gltf_loader.html">loadGltf</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
 
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
@@ -64,7 +69,7 @@
 <h2>Depends on / depended on by</h2>
 <p>
   Both concrete types depend on <code>gpu::Device</code>. <code>StandardMesh</code> is built by
-  <code>scene::loadGltf</code> (one per glTF primitive); either type can end up inside a
+  <code>assets::loaders::loadGltf</code> (one per glTF primitive); either type can end up inside a
   <code>scene::ModelPart</code> via <code>scene::ModelPart::convertToStandard()</code>/
   <code>convertToInstanced()</code>. Drawn by the templated
   <code>graphics::Renderer::renderMesh&lt;T&gt;()</code>, explicitly instantiated for both types.
@@ -168,7 +173,7 @@ class InstancedMesh {
     surprises — only the <code>3&times;3</code> block is ever read. The non-instanced
     <a href="renderer.html">Renderer</a> path computes it per draw from the model matrix
     and ships it in the G-buffer push constant; see
-    <a href="../scene/gltf_loader.html">loadGltf</a> for the matching fix on light
+    <a href="../assets/gltf.html">loadGltf</a> for the matching fix on light
     directions.
   </li>
   <li>

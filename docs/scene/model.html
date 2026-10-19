@@ -33,7 +33,12 @@
 
   <h4>scene</h4>
   <a class="here" href="model.html">Model</a>
-  <a href="gltf_loader.html">loadGltf</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
 
   <h4>app</h4>
   <a href="../app/application.html">Application</a>
@@ -62,7 +67,7 @@
   <code>submitScene()</code> in <code>sandbox/model_test/model_test.cpp</code> for the reference
   loop — that function, not <code>Model</code> or <code>Camera</code>, is what ties "a
   group of models" to "a camera" for one frame. No node hierarchy or scene graph beyond
-  the flat part list — see <a href="gltf_loader.html">loadGltf</a> for how a glTF node
+  the flat part list — see <a href="../assets/gltf.html">loadGltf</a> for how a glTF node
   tree collapses into it. Each part can independently be a <code>StandardMesh</code> or an
   <code>InstancedMesh</code> — see <a href="../graphics/material.html">Material</a>
   <a href="../graphics/mesh.html">Mesh</a>.
@@ -73,10 +78,12 @@
   Depends on <a href="../graphics/mesh.html"><code>graphics::primitives::scene::Mesh</code></a> (the concept,
   <code>StandardMesh</code>, <code>InstancedMesh</code>) and
   <a href="../graphics/material.html"><code>Material</code></a> only — no
-  <code>Renderer</code>, no <code>Camera</code>. Built by <code>scene::loadGltf</code>,
-  which returns a <code>std::vector&lt;Model&gt;</code> directly (one per glTF scene root
-  node that contributes a mesh); nothing owns a single <code>Model</code> on its
-  behalf — the old <code>scene::Scene</code> wrapper that used to hold one no longer exists.
+  <code>Renderer</code>, no <code>Camera</code>. Built by <code>assets::loaders::loadGltf</code>,
+  inside a <code>GltfAsset</code> (one per glTF scene root node that contributes a mesh).
+  Usually obtained as one shared, merged <code>Model</code> via
+  <a href="../assets/asset_library.html"><code>AssetLibrary::load&lt;scene::Model&gt;(path)</code></a>,
+  so every user of a file draws the same instance. Iterate it read-only with
+  <code>parts()</code>.
 </p>
 
 <h2>Public API</h2>
@@ -114,9 +121,8 @@ class Model {
     <code>Light</code>s together in a <code>scene::Scene</code>, which turned out to buy
     nothing either — every load produced exactly one <code>Model</code>, so the wrapper
     just added a layer around a list that was already the right shape.
-    <a href="gltf_loader.html">loadGltf</a> now returns
-    <code>std::vector&lt;Model&gt;</code> and <code>std::vector&lt;Light&gt;</code>
-    directly.
+    <a href="../assets/gltf.html">loadGltf</a> now returns a <code>GltfAsset</code>
+    holding <code>std::vector&lt;Model&gt;</code> and <code>std::vector&lt;Light&gt;</code>.
   </li>
   <li>No static factory — unlike <code>Mesh</code>/<code>Surface</code>, <code>Model</code> doesn't allocate any GPU resource itself, it just aggregates already-created meshes, so ordinary construction + <code>addPart()</code> is enough.</li>
   <li>
@@ -126,7 +132,7 @@ class Model {
     the real function body out of the header while still accepting either mesh kind at the call
     site; a third <code>Mesh</code>-satisfying type would need its own explicit instantiation line
     added. Its trailing <code>local_bounds</code> is the mesh-space AABB
-    <a href="gltf_loader.html">loadGltf</a> computes per primitive (from the glTF
+    <a href="../assets/gltf.html">loadGltf</a> computes per primitive (from the glTF
     <code>POSITION</code> accessor's declared <code>min</code>/<code>max</code>, or a
     vertex scan when those are absent).
   </li>
@@ -164,7 +170,7 @@ class Model {
     <code>Material</code> parameter has no default — building one needs a
     <code>gpu::Device</code>, so unlike the old
     <code>std::optional&lt;Texture&gt; = std::nullopt</code> shape, there's no
-    device-free default to fall back to. <code>scene::loadGltf</code> is the only
+    device-free default to fall back to. <code>assets::loaders::loadGltf</code> is the only
     caller and always builds a real one via <code>loadMaterial()</code>, including for
     a primitive with no glTF material at all (defaults, both textures absent). Whatever
     the <code>Material</code> holds just gets forwarded into

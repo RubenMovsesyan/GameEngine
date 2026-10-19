@@ -304,7 +304,7 @@ void DeferredRenderer::cycleShadowMapDebugLayer() {
 
 template <primitives::scene::Mesh T>
 void DeferredRenderer::submit(
-    T& mesh, const primitives::scene::Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible
+    const T& mesh, const primitives::scene::Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds, bool camera_visible
 ) {
     DrawItem item;
     item.vertex = mesh.vertexBuffer();
@@ -323,8 +323,8 @@ void DeferredRenderer::submit(
     m_draw_list.push_back(item);
 }
 
-template void DeferredRenderer::submit<primitives::scene::StandardMesh>(primitives::scene::StandardMesh&, const primitives::scene::Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
-template void DeferredRenderer::submit<primitives::scene::InstancedMesh>(primitives::scene::InstancedMesh&, const primitives::scene::Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void DeferredRenderer::submit<primitives::scene::StandardMesh>(const primitives::scene::StandardMesh&, const primitives::scene::Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
+template void DeferredRenderer::submit<primitives::scene::InstancedMesh>(const primitives::scene::InstancedMesh&, const primitives::scene::Material&, const Eigen::Matrix4f&, const Eigen::AlignedBox3f&, bool);
 
 void DeferredRenderer::recordShadowPass() {
     for (u32 cascade = 0; cascade < kCascadeCount; cascade++) {

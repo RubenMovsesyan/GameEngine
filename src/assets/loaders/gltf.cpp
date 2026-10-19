@@ -1,4 +1,6 @@
-#include <scene/gltf_loader.hpp>
+#include <assets/loaders/gltf.hpp>
+
+#include <assets/loaders/image.hpp>
 
 #include <graphics/primitives/scene/material.hpp>
 
@@ -7,16 +9,15 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-
 #include <cstdlib>
 #include <fstream>
 #include <optional>
 #include <string_view>
 #include <vector>
 
-namespace scene {
+namespace assets::loaders {
+
+using scene::Model;
 
 namespace {
 
@@ -69,29 +70,12 @@ std::vector<u8> resolveImageBytes(const cgltf_texture* tex, const std::filesyste
     return owned_bytes;
 }
 
-// Runs on whatever thread calls it -- the background decode thread, for loadTexture().
-graphics::primitives::scene::DecodedPixels decodeImageBytes(std::vector<u8> bytes) {
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    stbi_uc* pixels = stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()), &width, &height, &channels, STBI_rgb_alpha);
-    if (pixels == nullptr) {
-        RLOG(LL_FATAL, "gltf: failed to decode texture image (%s)", stbi_failure_reason());
-    }
-    graphics::primitives::scene::DecodedPixels result{
-        std::vector<u8>(pixels, pixels + static_cast<usize>(width) * static_cast<usize>(height) * 4), static_cast<u32>(width), static_cast<u32>(height)
-    };
-    stbi_image_free(pixels);
-    RLOG(LL_DEBUG, "gltf: loaded texture %ux%u", result.width, result.height);
-    return result;
-}
-
-std::optional<graphics::primitives::scene::Texture> loadTexture(const cgltf_texture* tex, const std::filesystem::path& gltf_path,
+std::optional<graphics::primitives::scene::Texture> loadGltfTexture(const cgltf_texture* tex, const std::filesystem::path& gltf_path,
                                               sg_pixel_format format) {
     if (tex == nullptr || tex->image == nullptr) {
         return std::nullopt;
     }
-    auto decode = [bytes = resolveImageBytes(tex, gltf_path)]() mutable { return decodeImageBytes(std::move(bytes)); };
+    auto decode = [bytes = resolveImageBytes(tex, gltf_path)]() mutable { return decodeImage(std::move(bytes)); };
     return graphics::primitives::scene::Texture::loadAsyncThread(std::move(decode), format);
 }
 
@@ -107,8 +91,8 @@ graphics::primitives::scene::Material loadMaterial(const cgltf_material* materia
         base_color_factor = Eigen::Vector4f(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2], pbr.base_color_factor[3]);
         metallic_factor = pbr.metallic_factor;
         roughness_factor = pbr.roughness_factor;
-        base_color_texture = loadTexture(pbr.base_color_texture.texture, gltf_path, SG_PIXELFORMAT_SRGB8A8);
-        metallic_roughness_texture = loadTexture(pbr.metallic_roughness_texture.texture, gltf_path, SG_PIXELFORMAT_RGBA8);
+        base_color_texture = loadGltfTexture(pbr.base_color_texture.texture, gltf_path, SG_PIXELFORMAT_SRGB8A8);
+        metallic_roughness_texture = loadGltfTexture(pbr.metallic_roughness_texture.texture, gltf_path, SG_PIXELFORMAT_RGBA8);
     }
 
     return graphics::primitives::scene::Material::create(std::move(base_color_texture), std::move(metallic_roughness_texture), base_color_factor, metallic_factor,
@@ -230,7 +214,7 @@ void walkNode(const cgltf_node& node, const Eigen::Matrix4f& parent_transform, c
 
 } // namespace
 
-LoadedGltf loadGltf(const std::filesystem::path& path) {
+GltfAsset loadGltf(const std::filesystem::path& path) {
     cgltf_options options{};
     cgltf_data* data = nullptr;
     if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
@@ -247,7 +231,7 @@ LoadedGltf loadGltf(const std::filesystem::path& path) {
 
     // One Model per root node that actually contributes a mesh -- a root node whose subtree
     // is lights-only still gets walked (for its lights) but its empty Model is discarded.
-    LoadedGltf result;
+    GltfAsset result;
     for (cgltf_size i = 0; i < data->scene->nodes_count; i++) {
         Model model;
         walkNode(*data->scene->nodes[i], Eigen::Matrix4f::Identity(), path, model, result.lights);
@@ -260,4 +244,14 @@ LoadedGltf loadGltf(const std::filesystem::path& path) {
     return result;
 }
 
-} // namespace scene
+Model mergeModels(const std::vector<Model>& models) {
+    Model merged;
+    for (const Model& model : models) {
+        for (const scene::ModelPart& part : model.parts()) {
+            std::visit([&](const auto& mesh) { merged.addPart(mesh, part.transform, part.material, part.local_bounds); }, part.mesh);
+        }
+    }
+    return merged;
+}
+
+} // namespace assets::loaders

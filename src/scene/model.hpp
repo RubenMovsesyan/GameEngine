@@ -38,6 +38,7 @@ class Model {
         void addPart(T mesh, Eigen::Matrix4f transform, graphics::primitives::scene::Material material, Eigen::AlignedBox3f local_bounds);
 
         u32 partCount() const { return static_cast<u32>(m_parts.size()); }
+        const std::vector<ModelPart>& parts() const { return m_parts; }
         std::vector<ModelPart>& mutableParts() { return m_parts; }
 
     private:

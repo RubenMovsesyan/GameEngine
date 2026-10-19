@@ -39,7 +39,7 @@ class DeferredRenderer {
         // Camera::frustum()) -- submit() itself has no notion of "camera".
         template <primitives::scene::Mesh T>
         void submit(
-            T& mesh, const primitives::scene::Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds,
+            const T& mesh, const primitives::scene::Material& material, const Eigen::Matrix4f& model, const Eigen::AlignedBox3f& world_bounds,
             bool camera_visible
         );
 

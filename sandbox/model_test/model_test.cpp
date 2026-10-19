@@ -9,7 +9,9 @@
 #include <graphics/renderers/deferred_renderer.hpp>
 #include <graphics/primitives/pass/light_manager.hpp>
 #include <graphics/presenter.hpp>
-#include <scene/gltf_loader.hpp>
+#include <assets/asset_library.hpp>
+#include <assets/loaders/defaults.hpp>
+#include <scene/model.hpp>
 
 #include <imgui.h>
 
@@ -19,8 +21,10 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -44,9 +48,21 @@ struct Sandbox {
         std::optional<graphics::primitives::pass::LightManager> lights;
         std::optional<graphics::primitives::scene::Camera> camera;
 
-        std::vector<scene::Model> models;             // instanced grid group
-        std::vector<scene::Model> standalone_models;   // culling-test group, +10 Y
-        std::vector<graphics::primitives::scene::Light> scene_lights;     // owned here for LightManager's pointer lifetime
+        // Loaded once, shared: the grid and the standalone copy both draw this one Model.
+        assets::AssetLibrary assets;
+        std::shared_ptr<const scene::Model> model;
+        std::shared_ptr<const std::vector<graphics::primitives::scene::Light>> scene_lights; // keeps LightManager's pointers alive
+
+        // Grid: per-part InstancedMesh sharing the Model's GPU geometry, 10x10 instances.
+        struct GridPart {
+                graphics::primitives::scene::InstancedMesh mesh;
+                const scene::ModelPart* part;
+        };
+        std::vector<GridPart> grid;
+
+        // Culling-test copy, +10 Y: the same Model, placed by this sandbox (not by the asset).
+        std::shared_ptr<const scene::Model> standalone;
+        Eigen::Matrix4f standalone_placement = Eigen::Matrix4f::Identity();
 
         // F5 snapshots the camera's frustum corners here for debug-draw. Drawing the LIVE
         // camera's own frustum through its own view-projection is degenerate -- it's always
@@ -67,39 +83,36 @@ void init(app::Application& app, Sandbox& sandbox) {
     sandbox.renderer.emplace();
     sandbox.presenter.emplace();
 
-    scene::LoadedGltf loaded = scene::loadGltf(sandbox.model_path);
-    sandbox.models = std::move(loaded.models);
-    sandbox.scene_lights = std::move(loaded.lights);
-    RLOG(LL_DEBUG, "gltf: %zu model(s), %zu light(s)", sandbox.models.size(), sandbox.scene_lights.size());
+    assets::loaders::registerDefaultLoaders(sandbox.assets);
+    sandbox.model = sandbox.assets.load<scene::Model>(sandbox.model_path);
+    sandbox.scene_lights = sandbox.assets.load<std::vector<graphics::primitives::scene::Light>>(sandbox.model_path); // split: no re-parse
+    RLOG(LL_INFO, "assets: %u part(s), %zu light(s), %zu cached asset(s)", sandbox.model->partCount(), sandbox.scene_lights->size(),
+         sandbox.assets.size());
 
-    // Convert every part to InstancedMesh and populate a 10x10 grid on the XZ plane.
-    for (scene::Model& model : sandbox.models) {
-        for (scene::ModelPart& part : model.mutableParts()) {
-            part.convertToInstanced();
-            graphics::primitives::scene::InstancedMesh& instanced = std::get<graphics::primitives::scene::InstancedMesh>(part.mesh);
-            for (u32 x = 0; x < kGridSize; x++) {
-                for (u32 z = 0; z < kGridSize; z++) {
-                    Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
-                    transform(0, 3) = (static_cast<f32>(x) - (kGridSize - 1) / 2.0f) * kGridSpacing;
-                    transform(2, 3) = (static_cast<f32>(z) - (kGridSize - 1) / 2.0f) * kGridSpacing;
-                    instanced.addInstance(transform);
-                }
+    // 10x10 grid on the XZ plane: instanced views over the shared geometry; the Model is untouched.
+    for (const scene::ModelPart& part : sandbox.model->parts()) {
+        Sandbox::GridPart grid_part{
+            graphics::primitives::scene::InstancedMesh::fromStandard(std::get<graphics::primitives::scene::StandardMesh>(part.mesh)), &part
+        };
+        for (u32 x = 0; x < kGridSize; x++) {
+            for (u32 z = 0; z < kGridSize; z++) {
+                Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+                transform(0, 3) = (static_cast<f32>(x) - (kGridSize - 1) / 2.0f) * kGridSpacing;
+                transform(2, 3) = (static_cast<f32>(z) - (kGridSize - 1) / 2.0f) * kGridSpacing;
+                grid_part.mesh.addInstance(transform);
             }
-            instanced.uploadIfDirty(); // must run before the frame loop -- see Renderer docs
         }
+        grid_part.mesh.uploadIfDirty(); // must run before the frame loop -- see Renderer docs
+        sandbox.grid.push_back(std::move(grid_part));
     }
 
-    // Second copy of the model, left as StandardMesh (not instanced) and lifted +10 on Y, so
-    // flying the camera up/down toggles it in and out of the frustum -- exercises mesh culling.
-    // Its lights are deliberately unused, same as before this file was flattened out of Scene.
-    scene::LoadedGltf standalone_loaded = scene::loadGltf(sandbox.model_path);
-    sandbox.standalone_models = std::move(standalone_loaded.models);
-    for (scene::Model& model : sandbox.standalone_models) {
-        model.world_transform(1, 3) = 10.0f;
-    }
+    // Second load of the same path: a cache hit returning the very same object.
+    sandbox.standalone = sandbox.assets.load<scene::Model>(sandbox.model_path);
+    RLOG(LL_INFO, "assets: second load<Model> shares the first: %s", sandbox.standalone == sandbox.model ? "yes" : "NO");
+    sandbox.standalone_placement(1, 3) = 10.0f;
 
     sandbox.lights.emplace();
-    for (const graphics::primitives::scene::Light& light : sandbox.scene_lights) {
+    for (const graphics::primitives::scene::Light& light : *sandbox.scene_lights) {
         RLOG(LL_DEBUG, "Added light: " + light.display());
         sandbox.lights->add(light);
     }
@@ -151,24 +164,15 @@ void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
     }
 }
 
-// Culls and submits every part of every model against frustum. This loop -- not Camera or
-// Model -- is what ties "a group of models" to "a camera" for one frame; Renderer::submit
-// has no notion of camera, and Model has no notion of Renderer or Camera at all.
-void submitScene(graphics::renderers::DeferredRenderer& renderer, std::vector<scene::Model>& models, const graphics::primitives::scene::Frustum& frustum) {
-    for (scene::Model& model : models) {
-        for (scene::ModelPart& part : model.mutableParts()) {
-            const Eigen::Matrix4f world_matrix = model.world_transform * part.transform;
-            const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
-
-            // Camera-frustum cull only decides G-buffer visibility -- a culled object still casts shadows.
-            // Instanced parts carry per-instance transforms we don't cull yet, so treat them as visible.
-            const bool camera_visible =
-                !std::holds_alternative<graphics::primitives::scene::StandardMesh>(part.mesh) || frustum.intersects(world_bounds);
-
-            std::visit(
-                [&](auto& mesh) { renderer.submit(mesh, part.material, world_matrix, world_bounds, camera_visible); }, part.mesh
-            );
-        }
+// Culls and submits every part of `model` placed at `placement`. This loop -- not Camera or
+// Model -- ties a model to a camera for one frame; the Model itself carries no placement here.
+void submitModel(graphics::renderers::DeferredRenderer& renderer, const scene::Model& model, const Eigen::Matrix4f& placement,
+                 const graphics::primitives::scene::Frustum& frustum) {
+    for (const scene::ModelPart& part : model.parts()) {
+        const Eigen::Matrix4f world_matrix = placement * part.transform;
+        const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
+        const bool camera_visible = frustum.intersects(world_bounds); // culled parts still cast shadows
+        std::visit([&](const auto& mesh) { renderer.submit(mesh, part.material, world_matrix, world_bounds, camera_visible); }, part.mesh);
     }
 }
 
@@ -216,17 +220,17 @@ void frame(app::Application& app, Sandbox& sandbox) {
     renderer.setLights(*sandbox.lights);
 
     const graphics::primitives::scene::Frustum& frustum = sandbox.camera->frustum();
-    submitScene(renderer, sandbox.models, frustum);
-    submitScene(renderer, sandbox.standalone_models, frustum);
+    for (const Sandbox::GridPart& g : sandbox.grid) {
+        // Never culled: per-instance bounds aren't tracked, so one part's AABB can't stand in for the grid.
+        renderer.submit(g.mesh, g.part->material, g.part->transform, scene::worldBounds(g.part->transform, g.part->local_bounds), true);
+    }
+    submitModel(renderer, *sandbox.standalone, sandbox.standalone_placement, frustum);
 
     // Example calls -- establishes the pattern later features (shadow cascades, light
     // ranges) can copy. No-op unless F3 has turned debug draw on.
-    for (scene::Model& model : sandbox.standalone_models) {
-        for (const scene::ModelPart& part : model.mutableParts()) {
-            const Eigen::Matrix4f world_matrix = model.world_transform * part.transform;
-            const Eigen::AlignedBox3f world_bounds = scene::worldBounds(world_matrix, part.local_bounds);
-            renderer.debugDraw().aabb(world_bounds, Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f));
-        }
+    for (const scene::ModelPart& part : sandbox.standalone->parts()) {
+        const Eigen::Matrix4f world_matrix = sandbox.standalone_placement * part.transform;
+        renderer.debugDraw().aabb(scene::worldBounds(world_matrix, part.local_bounds), Eigen::Vector4f(1.0f, 0.2f, 0.2f, 1.0f));
     }
     // F5 freezes a snapshot (see the Sandbox field's comment for why the live frustum is
     // never drawn directly); nothing draws until the first freeze.
@@ -259,8 +263,11 @@ void frame(app::Application& app, Sandbox& sandbox) {
 
 // Every one of these owns sokol handles, so they have to go before sg_shutdown().
 void cleanup(Sandbox& sandbox) {
-    sandbox.models.clear();
-    sandbox.standalone_models.clear();
+    sandbox.grid.clear();
+    sandbox.model.reset();
+    sandbox.standalone.reset();
+    sandbox.scene_lights.reset();
+    sandbox.assets.clear();
     sandbox.lights.reset();
     sandbox.presenter.reset();
     sandbox.renderer.reset();

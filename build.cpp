@@ -140,7 +140,11 @@ int main(int argc, char** argv) {
 	    "src/graphics/presenter.cpp",
 
 	    "src/scene/model.cpp",
-	    "src/scene/gltf_loader.cpp",
+	
+	    "src/assets/asset_library.cpp",
+	    "src/assets/loaders/defaults.cpp",
+	    "src/assets/loaders/gltf.cpp",
+	    "src/assets/loaders/image.cpp",
 
 
 	    "src/app/application.cpp",

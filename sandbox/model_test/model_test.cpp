@@ -37,12 +37,12 @@ constexpr f32 kGridSpacing = 3.0f;
 
 const Eigen::Vector3f kWorldUp{0.0f, 1.0f, 0.0f};
 
-// Everything that has to survive between the init and frame callbacks. sokol_app owns the
-// loop, so this lives in main() and the callbacks capture it by reference.
+// The app's State: app::Application<Sandbox> builds it once the GPU is up and destroys it
+// before the GPU goes down.
 struct Sandbox {
         std::filesystem::path model_path;
 
-        // All constructed in init(), once the GPU and the window size are up.
+        // All constructed in the constructor, once the GPU and the window size are up.
         std::optional<graphics::renderers::DeferredRenderer> renderer;
         std::optional<graphics::Presenter> presenter;
         std::optional<graphics::primitives::pass::LightManager> lights;
@@ -77,9 +77,39 @@ struct Sandbox {
         f32 pitch = 0.0f;
 
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+
+        // The app::AppState shape: the constructor is init (GPU up, workers not yet
+        // started), frame() runs every frame, the destructor is cleanup (workers joined,
+        // GPU still up).
+        explicit Sandbox(app::Context& app);
+        ~Sandbox();
+        void frame(app::Context& app);
+
+        Sandbox(const Sandbox&) = delete;
+        Sandbox& operator=(const Sandbox&) = delete;
 };
 
-void init(app::Application& app, Sandbox& sandbox) {
+// The command line, read once the app is up -- the first thing the constructor does.
+void parseCli(app::Context& app, Sandbox& sandbox) {
+    app::CliParser cli{app.argc(), app.argv()};
+    cli.defineArg<std::string>("model");
+    cli.parse();
+
+    std::optional<std::string> model_arg = cli.arg<std::string>("model");
+    if (!model_arg.has_value()) {
+        RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
+    }
+    std::filesystem::path model_ext = std::filesystem::path(*model_arg).extension();
+    if (model_ext != ".glb" && model_ext != ".gltf") {
+        RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
+    }
+    sandbox.model_path = *model_arg;
+}
+
+Sandbox::Sandbox(app::Context& app) {
+    Sandbox& sandbox = *this;
+    parseCli(app, sandbox);
+
     sandbox.renderer.emplace();
     sandbox.presenter.emplace();
 
@@ -126,7 +156,7 @@ void init(app::Application& app, Sandbox& sandbox) {
     sandbox.last_time = std::chrono::steady_clock::now();
 }
 
-void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
+void flyCamera(app::Context& app, Sandbox& sandbox, f32 dt) {
     graphics::primitives::scene::Camera& camera = *sandbox.camera;
 
     const Eigen::Vector3f forward = camera.direction().normalized();
@@ -176,7 +206,9 @@ void submitModel(graphics::renderers::DeferredRenderer& renderer, const scene::M
     }
 }
 
-void frame(app::Application& app, Sandbox& sandbox) {
+void Sandbox::frame(app::Context& app) {
+    Sandbox& sandbox = *this;
+
     const auto now = std::chrono::steady_clock::now();
     const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
     sandbox.last_time = now;
@@ -262,7 +294,9 @@ void frame(app::Application& app, Sandbox& sandbox) {
 }
 
 // Every one of these owns sokol handles, so they have to go before sg_shutdown().
-void cleanup(Sandbox& sandbox) {
+Sandbox::~Sandbox() {
+    Sandbox& sandbox = *this;
+
     sandbox.grid.clear();
     sandbox.model.reset();
     sandbox.standalone.reset();
@@ -280,27 +314,7 @@ int main(int argc, char** argv) {
     initLog(1024 * 1024);
     RLOG(LL_INFO, "Starting Game Engine");
 
-    app::CliParser cli{argc, argv};
-    cli.defineArg<std::string>("model");
-    cli.parse();
-
-    std::optional<std::string> model_arg = cli.arg<std::string>("model");
-    if (!model_arg.has_value()) {
-        RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
-    }
-    std::filesystem::path model_ext = std::filesystem::path(*model_arg).extension();
-    if (model_ext != ".glb" && model_ext != ".gltf") {
-        RLOG(LL_FATAL, "--model <path>.glb|.gltf is required");
-    }
-
-    Sandbox sandbox{.model_path = *model_arg};
-
-    app::Application app{
-        app::Application::Config{},
-        [&sandbox](app::Application& app) { init(app, sandbox); },
-        [&sandbox](app::Application& app) { frame(app, sandbox); },
-        [&sandbox](app::Application&) { cleanup(sandbox); },
-    };
+    app::Application<Sandbox> app{{}, argc, argv};
     app.run();
 
     return 0;

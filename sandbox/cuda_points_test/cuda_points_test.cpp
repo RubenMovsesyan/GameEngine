@@ -87,6 +87,16 @@ struct Sandbox {
         u64 frames_at_mark = 0;
         f32 sim_rate = 0.0f;
         f32 frame_rate = 0.0f;
+
+        // The app::AppState shape: the constructor is init (GPU up, workers not yet
+        // started), frame() runs every frame, the destructor is cleanup (workers joined,
+        // GPU still up).
+        explicit Sandbox(app::Context& app);
+        ~Sandbox();
+        void frame(app::Context& app);
+
+        Sandbox(const Sandbox&) = delete;
+        Sandbox& operator=(const Sandbox&) = delete;
 };
 
 void generateSeed(Sandbox& sandbox) {
@@ -110,7 +120,7 @@ void generateSeed(Sandbox& sandbox) {
 
 // ---- CUDA sim worker (runs on its own thread, started + joined by Application) ---------
 
-void simWorker(app::Application& app, Sandbox*& sptr) {
+void simWorker(app::Context& app, Sandbox*& sptr) {
     Sandbox& s = *sptr;
 
     if (!s.shared->attachCuda()) {
@@ -186,7 +196,7 @@ void simWorker(app::Application& app, Sandbox*& sptr) {
 
 // ---- render thread -------------------------------------------------------------------
 
-void flyCamera(app::Application& app, Sandbox& s, f32 dt) {
+void flyCamera(app::Context& app, Sandbox& s, f32 dt) {
     Camera& camera = *s.camera;
     const Eigen::Vector3f forward = camera.direction().normalized();
     const Eigen::Vector3f right = forward.cross(kWorldUp).normalized();
@@ -210,7 +220,37 @@ void flyCamera(app::Application& app, Sandbox& s, f32 dt) {
     };
 }
 
-void init(app::Application& app, Sandbox& sandbox) {
+// The command line, read once the app is up -- the first thing the constructor does.
+void parseCli(app::Context& app, Sandbox& sandbox) {
+    app::CliParser cli{app.argc(), app.argv()};
+    cli.defineArg<u32>("count");
+    cli.defineArg<u32>("substeps");
+    cli.defineArg<u32>("frames");
+    cli.defineArg<bool>("double");
+    cli.defineArg<bool>("sim-priority");
+    cli.parse();
+
+    if (const auto v = cli.arg<u32>("count"); v && *v > 0) {
+        sandbox.count = *v;
+    }
+    if (const auto v = cli.arg<u32>("substeps"); v && *v > 0) {
+        sandbox.substeps = *v;
+    }
+    if (const auto v = cli.arg<u32>("frames"); v && *v > 0) {
+        sandbox.max_frames = *v;
+    }
+    if (const auto v = cli.arg<bool>("double"); v && *v) {
+        sandbox.sync = Sync::DoubleBuffer;
+    }
+    if (const auto v = cli.arg<bool>("sim-priority"); v && *v) {
+        sandbox.sync = Sync::SimPriority;
+    }
+}
+
+Sandbox::Sandbox(app::Context& app) {
+    Sandbox& sandbox = *this;
+    parseCli(app, sandbox);
+
     sandbox.presenter.emplace();
     sandbox.renderer.emplace();
     sandbox.renderer->setExposure(sandbox.exposure);
@@ -231,7 +271,7 @@ void init(app::Application& app, Sandbox& sandbox) {
         1.0472f, aspect, 0.5f, 500.0f, Eigen::Vector3f{0.0f, 18.0f, 62.0f}, Eigen::Vector3f{0.0f, -0.28f, -1.0f}, kWorldUp
     );
 
-    // Application starts the worker once init() returns and stops + joins it before cleanup.
+    // Application starts the worker once this constructor returns and stops + joins it before ~Sandbox().
     app.addWorker(simWorker, &sandbox);
 
     RLOG(LL_INFO, "cuda_points_test: %u points, %u substeps/cycle, %s sync", sandbox.count, sandbox.substeps,
@@ -241,7 +281,9 @@ void init(app::Application& app, Sandbox& sandbox) {
     sandbox.rate_mark = sandbox.last_time;
 }
 
-void frame(app::Application& app, Sandbox& sandbox) {
+void Sandbox::frame(app::Context& app) {
+    Sandbox& sandbox = *this;
+
     const auto now = std::chrono::steady_clock::now();
     const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
     sandbox.last_time = now;
@@ -306,7 +348,9 @@ void frame(app::Application& app, Sandbox& sandbox) {
     sandbox.shared->consumeEnd();
 }
 
-void cleanup(Sandbox& sandbox) {
+Sandbox::~Sandbox() {
+    Sandbox& sandbox = *this;
+
     RLOG(LL_INFO, "cuda_points_test: %llu sim steps over %llu frames (last: %.0f steps/s, %.0f fps, %.1fx)",
          static_cast<unsigned long long>(sandbox.sim_steps.load(std::memory_order_relaxed)),
          static_cast<unsigned long long>(sandbox.render_frames), sandbox.sim_rate, sandbox.frame_rate,
@@ -326,37 +370,7 @@ int main(int argc, char** argv) {
     initLog(1024 * 1024);
     RLOG(LL_INFO, "Starting cuda_points_test");
 
-    app::CliParser cli{argc, argv};
-    cli.defineArg<u32>("count");
-    cli.defineArg<u32>("substeps");
-    cli.defineArg<u32>("frames");
-    cli.defineArg<bool>("double");
-    cli.defineArg<bool>("sim-priority");
-    cli.parse();
-
-    Sandbox sandbox;
-    if (const auto v = cli.arg<u32>("count"); v && *v > 0) {
-        sandbox.count = *v;
-    }
-    if (const auto v = cli.arg<u32>("substeps"); v && *v > 0) {
-        sandbox.substeps = *v;
-    }
-    if (const auto v = cli.arg<u32>("frames"); v && *v > 0) {
-        sandbox.max_frames = *v;
-    }
-    if (const auto v = cli.arg<bool>("double"); v && *v) {
-        sandbox.sync = Sync::DoubleBuffer;
-    }
-    if (const auto v = cli.arg<bool>("sim-priority"); v && *v) {
-        sandbox.sync = Sync::SimPriority;
-    }
-
-    app::Application app{
-        app::Application::Config{},
-        [&sandbox](app::Application& app) { init(app, sandbox); },
-        [&sandbox](app::Application& app) { frame(app, sandbox); },
-        [&sandbox](app::Application&) { cleanup(sandbox); },
-    };
+    app::Application<Sandbox> app{{}, argc, argv};
     app.run();
 
     return 0;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>app::Application — GameEngine</title>
+<title>app::Application&lt;S&gt; — GameEngine</title>
 <link rel="stylesheet" href="../style.css">
 </head>
 <body>
@@ -53,61 +53,113 @@
 
 <main>
 
-<h1><code>app::Application</code></h1>
-<p class="lede">Owns the window, the GPU device and swapchain, and the workers. The runtime shell everything else runs inside.</p>
+<h1><code>app::Application&lt;S&gt;</code> and <code>app::Context</code></h1>
+<p class="lede">Owns the window, the sokol_gfx context, the frame loop, and the app&rsquo;s State <code>S</code> &mdash; for exactly as long as the GPU is up.</p>
 
 <h2>Role</h2>
 <p>
-  Constructs the whole GPU stack in one initializer list (window → instance → surface →
-  device → swapchain, in that order, since each depends on the previous) and runs
-  registered workers on their own threads while polling window events on the main
-  thread. Rendering itself lives entirely off <code>Application</code> —
-  <code>graphics::Renderer</code> owns its own present loop, run from a worker.
+  An app is a <strong>State</strong> type: whatever the app needs between frames
+  (renderers, the presenter, a camera, settings). <code>Application&lt;S&gt;</code> builds it
+  once the GPU is up, calls <code>S::frame</code> every frame, and destroys it before the GPU
+  goes down. The State&rsquo;s constructor is the app&rsquo;s init and its destructor is the
+  app&rsquo;s cleanup, so members that hold GPU handles are plain members.
 </p>
+<pre><code>run(): window opens &rarr; sg_setup() &rarr; S(context) &rarr; workers start
+       &rarr; S::frame(context) every frame
+       &rarr; workers stop + join &rarr; ~S() &rarr; sg_shutdown() &rarr; run() returns</code></pre>
 
-<h2>Depends on / depended on by</h2>
+<h2>The <code>AppState</code> concept</h2>
+<pre><code>template &lt;typename S&gt;
+concept AppState = std::constructible_from&lt;S, Context&amp;&gt; &amp;&amp; !std::convertible_to&lt;Context&amp;, S&gt; &amp;&amp;
+                   requires(S&amp; state, Context&amp; context) {
+                       { state.frame(context) } -&gt; std::same_as&lt;void&gt;;
+                   };</code></pre>
+<ul>
+  <li><code>explicit S(Context&amp;)</code> &mdash; the constructor must be explicit; the
+    <code>!convertible_to</code> clause rejects an implicit one.</li>
+  <li><code>void frame(Context&amp;)</code> &mdash; runs on the render thread, once per frame.</li>
+  <li><code>~S()</code> &mdash; not in the concept, but it is the cleanup: by then every
+    worker has been joined and sokol is still up.</li>
+</ul>
+
+<h2>Example</h2>
+<pre><code>struct ElectronCloud {
+    graphics::renderers::ClearRenderer renderer{kYellow};
+    graphics::Presenter presenter;
+
+    explicit ElectronCloud(app::Context&amp;) {}
+    void frame(app::Context&amp;) { presenter.present(renderer); }
+};
+
+int main(int argc, char** argv) {
+    app::Application&lt;ElectronCloud&gt; app{{.title = "ElectronCloud"}, argc, argv};
+    app.run();
+}</code></pre>
 <p>
-  Depends on <code>app::Window</code>/<code>Worker</code>, <code>gpu::Instance</code>/<code>Device</code>/<code>Swapchain</code>.
-  Constructed directly by <code>main()</code>; every worker function receives a
-  reference to it.
+  Settings from the command line are read by the State itself, in its constructor:
+</p>
+<pre><code>Sandbox::Sandbox(app::Context&amp; app) {
+    app::CliParser cli{app.argc(), app.argv()};
+    cli.defineArg&lt;u32&gt;("count");
+    cli.parse();
+    ...
+}</code></pre>
+
+<h2>Why <code>Context</code> is a separate, non-template base</h2>
+<p>
+  The State can&rsquo;t take <code>Application&lt;S&gt;&amp;</code>: the concept constraining
+  <code>S</code> would have to name <code>Application&lt;S&gt;</code>, which is itself
+  constrained by the concept. So everything that isn&rsquo;t State-specific lives in
+  <code>app::Context</code>, and the State, workers and helper functions (a fly camera, a
+  worker&rsquo;s loop) take <code>Context&amp;</code>. None of them need to be templates.
+  <code>Application&lt;S&gt;</code> adds only the <code>std::optional&lt;S&gt;</code> and
+  <code>run()</code>; its constructor is the only way to build a <code>Context</code>.
 </p>
 
 <h2>Public API</h2>
-<pre><code>class Application {
-    Application();
+<pre><code>template &lt;AppState S&gt;
+class Application : public Context {
+    explicit Application(Config config, int argc = 0, char** argv = nullptr);
+    void run();   // blocks until the window closes
+};
 
-    void run();
-    std::atomic&lt;bool&gt; running = false;
+class Context {
+    struct Config { int width = 1280; int height = 720; const char* title = "GameEngine"; };
 
-    gpu::Device&amp; device();
-    gpu::Swapchain&amp; swapchain();
+    void quit();                       // the current frame still finishes
     InputState&amp; input();
-    bool isCursorCaptured() const;   // forwards to Window::isCursorCaptured()
-    void toggleCursorCapture();      // forwards to Window::toggleCursorCapture()
+    DebugUI&amp; debugUI();                // valid from the State's constructor on
+    int argc() const;  char** argv() const;
+    int width() const; int height() const;   // framebuffer pixels
+    bool isCursorCaptured() const;
+    void setCursorCaptured(bool);
+    void toggleCursorCapture();
 
     template &lt;typename F, typename... Args&gt;
-    void addWorker(F&amp;&amp; work, Args&amp;&amp;... args);   // UserData inferred from work's 2nd parameter
+    void addWorker(F&amp;&amp; work, Args&amp;&amp;... args);   // work: void(Context&amp;, UserData&amp;)
+    bool workerShouldStop() const;
 };</code></pre>
 
 <h2>Worth knowing</h2>
 <ul>
-  <li><code>addWorker</code> infers <code>UserData</code> from the work callable's second parameter type (via <code>detail::WorkerCallableTraits</code>, see <a href="worker.html">Worker</a>) — <code>args...</code> construct that <code>UserData</code>, so you never spell the type out explicitly.</li>
-  <li><code>running</code> is public and atomic on purpose — worker loops read it directly (<code>while (app.running.load())</code>) without needing an accessor.</li>
-  <li>The private <code>OwnedSurface</code> nested class exists purely for destruction ordering: it must outlive the swapchain built from it but not outlive the instance it was created from — member declaration order encodes that (C++ destroys members in reverse declaration order).</li>
-  <li>Destructor joins every worker before <code>vkDeviceWaitIdle</code> — no GPU resource gets torn down while a worker might still be using it.</li>
-  <li>
-    <code>Application</code> only exposes cursor-capture <em>mechanism</em>
-    (<code>isCursorCaptured()</code>/<code>toggleCursorCapture()</code>, both thin
-    forwards to <code>Window</code>) — deciding <em>when</em> to toggle (e.g. on
-    Escape) is left to whoever drives the game loop
-    (<code>sandbox/model_test/model_test.cpp</code>'s <code>renderLoop</code>), since that's
-    also the thing calling <code>InputState::beginFrame()</code> and can use the
-    snapshot-based <code>isKeyPressed()</code> correctly. <code>run()</code>'s own poll
-    loop doesn't touch input policy at all.
-  </li>
+  <li><strong>One render thread.</strong> sokol_app owns the loop; the State&rsquo;s
+    constructor, <code>frame()</code> and destructor all run on the thread that called
+    <code>run()</code>. A <a href="worker.html">Worker</a> must never call <code>sg_*</code>.</li>
+  <li>Register workers from the State&rsquo;s constructor. They start once it returns; on
+    shutdown <code>workerShouldStop()</code> goes true and they are joined before
+    <code>~S()</code>, so a worker&rsquo;s CUDA teardown finishes while Vulkan is still up.</li>
+  <li><code>addWorker</code> infers <code>UserData</code> from the work callable&rsquo;s second
+    parameter (<code>detail::WorkerCallableTraits</code>); <code>args...</code> construct it.</li>
+  <li>The State lives inside the Application, so its address is stable for the whole run
+    &mdash; handing <code>this</code> to a worker is safe.</li>
+  <li>The window opens before the State is built, so a fatal command-line error (a missing
+    <code>--model</code>) shows up after the window appears.</li>
+  <li>Input events are translated into <a href="input_state.html">InputState</a> before
+    <code>frame()</code>; ImGui-consumed events never reach it. The State has no raw-event
+    hook yet.</li>
 </ul>
 
-<footer>Source: <code>src/app/application.hpp</code>, <code>src/app/application.cpp</code></footer>
+<footer>Source: <code>src/app/application.hpp</code>, <code>src/app/context.hpp</code>, <code>src/app/context.cpp</code></footer>
 
 </main>
 </div>

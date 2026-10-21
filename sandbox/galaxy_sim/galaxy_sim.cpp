@@ -107,6 +107,16 @@ struct Sandbox {
         u64 frames_at_mark = 0;
         f32 sim_rate = 0.0f;
         f32 frame_rate = 0.0f;
+
+        // The app::AppState shape: the constructor is init (GPU up, workers not yet
+        // started), frame() runs every frame, the destructor is cleanup (workers joined,
+        // GPU still up).
+        explicit Sandbox(app::Context& app);
+        ~Sandbox();
+        void frame(app::Context& app);
+
+        Sandbox(const Sandbox&) = delete;
+        Sandbox& operator=(const Sandbox&) = delete;
 };
 
 // A disc of stars: uniform-area radial density, thin vertical scatter, uniform-random mass.
@@ -276,7 +286,7 @@ void exactAccel(const Kernels& k, CUdeviceptr out_accel, CUdeviceptr bodies, u32
 
 // ---- CUDA simulation worker (own thread; started + joined by Application) --------------
 
-void simWorker(app::Application& app, Sandbox*& sptr) {
+void simWorker(app::Context& app, Sandbox*& sptr) {
     Sandbox& s = *sptr;
 
     if (!s.shared->attachCuda()) {
@@ -382,7 +392,7 @@ void simWorker(app::Application& app, Sandbox*& sptr) {
 
 // ---- render thread -------------------------------------------------------------------
 
-void flyCamera(app::Application& app, Sandbox& s, f32 dt) {
+void flyCamera(app::Context& app, Sandbox& s, f32 dt) {
     Camera& camera = *s.camera;
     const Eigen::Vector3f forward = camera.direction().normalized();
     const Eigen::Vector3f right = forward.cross(kWorldUp).normalized();
@@ -406,7 +416,61 @@ void flyCamera(app::Application& app, Sandbox& s, f32 dt) {
     };
 }
 
-void init(app::Application& app, Sandbox& sandbox) {
+// The command line, read once the app is up -- the first thing the constructor does.
+void parseCli(app::Context& app, Sandbox& sandbox) {
+    app::CliParser cli{app.argc(), app.argv()};
+    cli.defineArg<u32>("count");
+    cli.defineArg<u32>("frames");
+    cli.defineArg<u32>("substeps");
+    cli.defineArg<u32>("tree-every");
+    cli.defineArg<f32>("dt");
+    cli.defineArg<f32>("softening");
+    cli.defineArg<f32>("omega");
+    cli.defineArg<f32>("gravity");
+    cli.defineArg<f32>("theta");
+    cli.defineArg<bool>("exact");
+    cli.defineArg<bool>("verify");
+    cli.parse();
+
+    if (const auto v = cli.arg<u32>("count"); v && *v > 0) {
+        sandbox.count = *v;
+    }
+    if (const auto v = cli.arg<u32>("frames"); v && *v > 0) {
+        sandbox.max_frames = *v;
+    }
+    if (const auto v = cli.arg<u32>("substeps"); v && *v > 0) {
+        sandbox.substeps = *v;
+    }
+    if (const auto v = cli.arg<u32>("tree-every"); v && *v > 0) {
+        sandbox.tree_every = *v;
+    }
+    if (const auto v = cli.arg<f32>("dt"); v && *v > 0.0f) {
+        sandbox.dt = *v;
+    }
+    if (const auto v = cli.arg<f32>("softening"); v && *v > 0.0f) {
+        sandbox.softening = *v;
+    }
+    if (const auto v = cli.arg<f32>("omega"); v && *v > 0.0f) {
+        sandbox.omega = *v;
+    }
+    if (const auto v = cli.arg<f32>("gravity"); v && *v > 0.0f) {
+        sandbox.gravity = *v;
+    }
+    if (const auto v = cli.arg<f32>("theta"); v && *v > 0.0f) {
+        sandbox.theta = *v;
+    }
+    if (const auto v = cli.arg<bool>("exact"); v && *v) {
+        sandbox.exact = true;
+    }
+    if (const auto v = cli.arg<bool>("verify"); v && *v) {
+        sandbox.verify = true;
+    }
+}
+
+Sandbox::Sandbox(app::Context& app) {
+    Sandbox& sandbox = *this;
+    parseCli(app, sandbox);
+
     sandbox.presenter.emplace();
     sandbox.renderer.emplace();
     sandbox.renderer->setExposure(sandbox.exposure);
@@ -437,7 +501,9 @@ void init(app::Application& app, Sandbox& sandbox) {
     sandbox.rate_mark = sandbox.last_time;
 }
 
-void frame(app::Application& app, Sandbox& sandbox) {
+void Sandbox::frame(app::Context& app) {
+    Sandbox& sandbox = *this;
+
     const auto now = std::chrono::steady_clock::now();
     const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
     sandbox.last_time = now;
@@ -503,7 +569,9 @@ void frame(app::Application& app, Sandbox& sandbox) {
     sandbox.shared->consumeEnd();
 }
 
-void cleanup(Sandbox& sandbox) {
+Sandbox::~Sandbox() {
+    Sandbox& sandbox = *this;
+
     RLOG(LL_INFO, "galaxy_sim: %llu sim iters over %llu frames (last: %.0f iters/s, %.0f fps)",
          static_cast<unsigned long long>(sandbox.sim_iters.load(std::memory_order_relaxed)),
          static_cast<unsigned long long>(sandbox.render_frames), sandbox.sim_rate, sandbox.frame_rate);
@@ -525,61 +593,7 @@ int main(int argc, char** argv) {
     initLog(1024 * 1024);
     RLOG(LL_INFO, "Starting galaxy_sim");
 
-    app::CliParser cli{argc, argv};
-    cli.defineArg<u32>("count");
-    cli.defineArg<u32>("frames");
-    cli.defineArg<u32>("substeps");
-    cli.defineArg<u32>("tree-every");
-    cli.defineArg<f32>("dt");
-    cli.defineArg<f32>("softening");
-    cli.defineArg<f32>("omega");
-    cli.defineArg<f32>("gravity");
-    cli.defineArg<f32>("theta");
-    cli.defineArg<bool>("exact");
-    cli.defineArg<bool>("verify");
-    cli.parse();
-
-    Sandbox sandbox;
-    if (const auto v = cli.arg<u32>("count"); v && *v > 0) {
-        sandbox.count = *v;
-    }
-    if (const auto v = cli.arg<u32>("frames"); v && *v > 0) {
-        sandbox.max_frames = *v;
-    }
-    if (const auto v = cli.arg<u32>("substeps"); v && *v > 0) {
-        sandbox.substeps = *v;
-    }
-    if (const auto v = cli.arg<u32>("tree-every"); v && *v > 0) {
-        sandbox.tree_every = *v;
-    }
-    if (const auto v = cli.arg<f32>("dt"); v && *v > 0.0f) {
-        sandbox.dt = *v;
-    }
-    if (const auto v = cli.arg<f32>("softening"); v && *v > 0.0f) {
-        sandbox.softening = *v;
-    }
-    if (const auto v = cli.arg<f32>("omega"); v && *v > 0.0f) {
-        sandbox.omega = *v;
-    }
-    if (const auto v = cli.arg<f32>("gravity"); v && *v > 0.0f) {
-        sandbox.gravity = *v;
-    }
-    if (const auto v = cli.arg<f32>("theta"); v && *v > 0.0f) {
-        sandbox.theta = *v;
-    }
-    if (const auto v = cli.arg<bool>("exact"); v && *v) {
-        sandbox.exact = true;
-    }
-    if (const auto v = cli.arg<bool>("verify"); v && *v) {
-        sandbox.verify = true;
-    }
-
-    app::Application app{
-        app::Application::Config{},
-        [&sandbox](app::Application& app) { init(app, sandbox); },
-        [&sandbox](app::Application& app) { frame(app, sandbox); },
-        [&sandbox](app::Application&) { cleanup(sandbox); },
-    };
+    app::Application<Sandbox> app{{}, argc, argv};
     app.run();
 
     return 0;

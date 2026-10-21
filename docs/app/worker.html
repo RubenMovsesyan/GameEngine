@@ -54,12 +54,12 @@
 <main>
 
 <h1><code>app::Worker</code> / <code>WorkerBase</code></h1>
-<p class="lede">A thread that owns some UserData and runs a function of (Application&amp;, UserData&amp;) on it.</p>
+<p class="lede">A thread that owns some UserData and runs a function of (Context&amp;, UserData&amp;) on it.</p>
 
 <h2>Role</h2>
 <p>
   <code>WorkerBase</code> is a type-erased handle (pure virtual <code>run()</code>/<code>join()</code>)
-  so <code>Application</code> can hold workers with different <code>UserData</code> types in
+  so <code>app::Context</code> can hold workers with different <code>UserData</code> types in
   one <code>std::vector&lt;std::unique_ptr&lt;WorkerBase&gt;&gt;</code>. <code>Worker&lt;UserData&gt;</code>
   is the concrete templated implementation: it owns the thread, the work function, and the
   data that function operates on.
@@ -67,8 +67,8 @@
 
 <h2>Depends on / depended on by</h2>
 <p>
-  Depends only on the standard library. Owned by <code>app::Application</code>, constructed
-  via its templated <code>addWorker()</code> — see <a href="application.html">Application</a>.
+  Depends only on the standard library. Owned by <code>app::Context</code> (the non-template base of <code>app::Application&lt;S&gt;</code>),
+  constructed via its templated <code>addWorker()</code> — see <a href="application.html">Application</a>.
 </p>
 
 <h2>Public API</h2>
@@ -79,7 +79,7 @@
 
 template &lt;typename UserData&gt;
 class Worker : public WorkerBase {
-    Worker(Application&amp; app, std::function&lt;void(Application&amp;, UserData&amp;)&gt; work, UserData data);
+    Worker(Context&amp; app, std::function&lt;void(Context&amp;, UserData&amp;)&gt; work, UserData data);
     void run() override;   // starts the thread
     void join() override;
 };
@@ -91,8 +91,8 @@ namespace detail {
 
 <h2>Worth knowing</h2>
 <ul>
-  <li>The constructor only stores what it needs to run — <code>Application</code> decides when to actually call <code>run()</code>, so a whole batch of workers can be registered before any of them start.</li>
-  <li><code>WorkerCallableTraits</code> recurses through <code>F::operator()</code> for lambdas/functors, with specializations that stop the recursion for plain function pointers and (non-)const member functions — this is the machinery <code>Application::addWorker</code> uses to infer <code>UserData</code> without it being spelled out at the call site.</li>
+  <li>The constructor only stores what it needs to run — <code>Context</code> decides when to actually call <code>run()</code>: every worker registered in the State&rsquo;s constructor starts once that constructor returns.</li>
+  <li><code>WorkerCallableTraits</code> recurses through <code>F::operator()</code> for lambdas/functors, with specializations that stop the recursion for plain function pointers and (non-)const member functions — this is the machinery <code>Context::addWorker</code> uses to infer <code>UserData</code> without it being spelled out at the call site.</li>
 </ul>
 
 <footer>Source: <code>src/app/worker.hpp</code></footer>

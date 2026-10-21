@@ -1,4 +1,4 @@
-#include <app/application.hpp>
+#include <app/context.hpp>
 
 #include <sokol_app.h>
 
@@ -8,39 +8,38 @@
 
 namespace app {
 
-Application::Application(Config config, Callback init, Callback frame, Callback cleanup)
-    : m_config(config), m_init(std::move(init)), m_frame(std::move(frame)), m_cleanup(std::move(cleanup)) {}
+Context::Context(Config config, int argc, char** argv) : m_config(config), m_argc(argc), m_argv(argv) {}
 
-Application::~Application() {
+Context::~Context() {
     for (auto& worker : m_workers) {
         worker->join();
     }
 }
 
-void Application::initCallback(void* user_data) {
-    Application& app = *static_cast<Application*>(user_data);
+void Context::initCallback(void* user_data) {
+    Context& app = *static_cast<Context*>(user_data);
 
     sg_desc desc = {};
     desc.environment = sglue_environment();
     desc.logger.func = slog_func;
     sg_setup(&desc);
 
-    // Needs sg_setup() to already be up; constructed here rather than in Application's own
-    // ctor so app.debugUI() is valid by the time the app-provided init() callback runs.
+    // Needs sg_setup() to already be up; constructed here rather than in the Context ctor
+    // so debugUI() is valid by the time the State's constructor runs.
     app.m_debug_ui.emplace();
 
     if (app.m_init) {
         app.m_init(app);
     }
 
-    // Workers are registered from within init(); start them now that setup is complete.
+    // Workers are registered from the State's constructor; start them now that it is done.
     for (auto& worker : app.m_workers) {
         worker->run();
     }
 }
 
-void Application::frameCallback(void* user_data) {
-    Application& app = *static_cast<Application*>(user_data);
+void Context::frameCallback(void* user_data) {
+    Context& app = *static_cast<Context*>(user_data);
 
     app.m_input.beginFrame();
     if (app.m_frame) {
@@ -48,8 +47,8 @@ void Application::frameCallback(void* user_data) {
     }
 }
 
-void Application::eventCallback(const sapp_event* event, void* user_data) {
-    Application& app = *static_cast<Application*>(user_data);
+void Context::eventCallback(const sapp_event* event, void* user_data) {
+    Context& app = *static_cast<Context*>(user_data);
 
     // ImGui-consumed events (a click on the debug panel, etc.) never reach InputState.
     if (app.m_debug_ui && app.m_debug_ui->handleEvent(*event)) {
@@ -83,8 +82,8 @@ void Application::eventCallback(const sapp_event* event, void* user_data) {
     }
 }
 
-void Application::cleanupCallback(void* user_data) {
-    Application& app = *static_cast<Application*>(user_data);
+void Context::cleanupCallback(void* user_data) {
+    Context& app = *static_cast<Context*>(user_data);
 
     // Stop and join workers first: one may hold GPU resources (a CUDA context aliasing
     // Vulkan memory) that its own teardown must release while sokol/Vulkan are still up.
@@ -93,7 +92,8 @@ void Application::cleanupCallback(void* user_data) {
         worker->join();
     }
 
-    // Release GPU-owning state while sokol is still up; sg_destroy_* asserts after shutdown.
+    // Destroys the State: release GPU-owning state while sokol is still up; sg_destroy_*
+    // asserts after shutdown.
     if (app.m_cleanup) {
         app.m_cleanup(app);
     }
@@ -101,7 +101,11 @@ void Application::cleanupCallback(void* user_data) {
     sg_shutdown();
 }
 
-void Application::run() {
+void Context::runLoop(Callback init, Callback frame, Callback cleanup) {
+    m_init = std::move(init);
+    m_frame = std::move(frame);
+    m_cleanup = std::move(cleanup);
+
     sapp_desc desc = {};
     desc.user_data = this;
     desc.init_userdata_cb = initCallback;
@@ -116,23 +120,23 @@ void Application::run() {
     sapp_run(&desc);
 }
 
-void Application::quit() {
+void Context::quit() {
     sapp_request_quit();
 }
 
-int Application::width() const {
+int Context::width() const {
     return sapp_width();
 }
 
-int Application::height() const {
+int Context::height() const {
     return sapp_height();
 }
 
-bool Application::isCursorCaptured() const {
+bool Context::isCursorCaptured() const {
     return sapp_mouse_locked();
 }
 
-void Application::setCursorCaptured(bool captured) {
+void Context::setCursorCaptured(bool captured) {
     sapp_lock_mouse(captured);
 }
 

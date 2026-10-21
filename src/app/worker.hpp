@@ -7,9 +7,9 @@
 
 namespace app {
 
-class Application;
+class Context;
 
-// Type-erased so Application can hold workers with different UserData types in one vector.
+// Type-erased so Context can hold workers with different UserData types in one vector.
 class WorkerBase {
     public:
         virtual ~WorkerBase() = default;
@@ -18,11 +18,11 @@ class WorkerBase {
         virtual void join() = 0;
 };
 
-// Owns the thread it runs on; Application decides when run() is actually called.
+// Owns the thread it runs on; Context decides when run() is actually called.
 template <typename UserData>
 class Worker : public WorkerBase {
     public:
-        Worker(Application& app, std::function<void(Application&, UserData&)> work, UserData data)
+        Worker(Context& app, std::function<void(Context&, UserData&)> work, UserData data)
             : m_app(app), m_work(std::move(work)), m_data(std::move(data)) {}
 
         void run() override { m_thread = std::thread(m_work, std::ref(m_app), std::ref(m_data)); }
@@ -33,8 +33,8 @@ class Worker : public WorkerBase {
         }
 
     private:
-        Application& m_app;
-        std::function<void(Application&, UserData&)> m_work;
+        Context& m_app;
+        std::function<void(Context&, UserData&)> m_work;
         UserData m_data;
         std::thread m_thread;
 };

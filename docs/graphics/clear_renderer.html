@@ -90,22 +90,20 @@ sg_end_pass();
 return *m_target.texture;</code></pre>
 
 <h2>Usage</h2>
-<pre><code>std::optional&lt;graphics::renderers::ClearRenderer&gt; renderer;
-std::optional&lt;graphics::Presenter&gt; presenter;
+<pre><code>struct Yellow {
+    graphics::renderers::ClearRenderer renderer{sg_color{1.0f, 1.0f, 0.0f, 1.0f}};
+    graphics::Presenter presenter;
 
-app::Application app(
-    {.title = "yellow"},
-    [&amp;](app::Application&amp;) {
-        renderer.emplace(sg_color{1.0f, 1.0f, 0.0f, 1.0f});
-        presenter.emplace();
-    },
-    [&amp;](app::Application&amp;) { presenter-&gt;present(*renderer); },
-    [&amp;](app::Application&amp;) { presenter.reset(); renderer.reset(); });
+    explicit Yellow(app::Context&amp;) {}
+    void frame(app::Context&amp;) { presenter.present(renderer); }
+};
+
+app::Application&lt;Yellow&gt; app{{.title = "yellow"}};
 app.run();</code></pre>
 <p>
-  Both are <code>std::optional</code> because they own GPU handles: they can only be built
-  once <code>sg_setup()</code> has run (inside init) and must be released before
-  <code>sg_shutdown()</code> (inside cleanup).
+  Both own GPU handles, so they live in the app&rsquo;s State:
+  <a href="../app/application.html"><code>app::Application&lt;S&gt;</code></a> builds it after
+  <code>sg_setup()</code> and destroys it before <code>sg_shutdown()</code>.
 </p>
 
 <h2>Depends on / depended on by</h2>

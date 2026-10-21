@@ -54,6 +54,16 @@ struct Sandbox {
         f32 yaw = 0.0f;
         f32 pitch = -0.32f; // start looking slightly down at the disc
         std::chrono::steady_clock::time_point last_time = std::chrono::steady_clock::now();
+
+        // The app::AppState shape: the constructor is init (GPU up, workers not yet
+        // started), frame() runs every frame, the destructor is cleanup (workers joined,
+        // GPU still up).
+        explicit Sandbox(app::Context& app);
+        ~Sandbox();
+        void frame(app::Context& app);
+
+        Sandbox(const Sandbox&) = delete;
+        Sandbox& operator=(const Sandbox&) = delete;
 };
 
 void generatePoints(Sandbox& sandbox) {
@@ -82,7 +92,7 @@ void generatePoints(Sandbox& sandbox) {
     sandbox.spun.resize(sandbox.points.size());
 }
 
-void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
+void flyCamera(app::Context& app, Sandbox& sandbox, f32 dt) {
     Camera& camera = *sandbox.camera;
 
     const Eigen::Vector3f forward = camera.direction().normalized();
@@ -107,7 +117,25 @@ void flyCamera(app::Application& app, Sandbox& sandbox, f32 dt) {
     };
 }
 
-void init(app::Application& app, Sandbox& sandbox) {
+// The command line, read once the app is up -- the first thing the constructor does.
+void parseCli(app::Context& app, Sandbox& sandbox) {
+    app::CliParser cli{app.argc(), app.argv()};
+    cli.defineArg<u32>("count");
+    cli.defineArg<f32>("exposure");
+    cli.parse();
+
+    if (const std::optional<u32> count = cli.arg<u32>("count"); count && *count > 0) {
+        sandbox.point_count = *count;
+    }
+    if (const std::optional<f32> exposure = cli.arg<f32>("exposure"); exposure && *exposure > 0.0f) {
+        sandbox.exposure = *exposure;
+    }
+}
+
+Sandbox::Sandbox(app::Context& app) {
+    Sandbox& sandbox = *this;
+    parseCli(app, sandbox);
+
     sandbox.renderer.emplace();
     sandbox.presenter.emplace();
     sandbox.renderer->setExposure(sandbox.exposure);
@@ -123,7 +151,9 @@ void init(app::Application& app, Sandbox& sandbox) {
     sandbox.last_time = std::chrono::steady_clock::now();
 }
 
-void frame(app::Application& app, Sandbox& sandbox) {
+void Sandbox::frame(app::Context& app) {
+    Sandbox& sandbox = *this;
+
     const auto now = std::chrono::steady_clock::now();
     const f32 dt = std::chrono::duration<f32>(now - sandbox.last_time).count();
     sandbox.last_time = now;
@@ -166,7 +196,9 @@ void frame(app::Application& app, Sandbox& sandbox) {
     });
 }
 
-void cleanup(Sandbox& sandbox) {
+Sandbox::~Sandbox() {
+    Sandbox& sandbox = *this;
+
     sandbox.presenter.reset();
     sandbox.renderer.reset();
     sandbox.camera.reset();
@@ -178,25 +210,7 @@ int main(int argc, char** argv) {
     initLog(1024 * 1024);
     RLOG(LL_INFO, "Starting point_test");
 
-    app::CliParser cli{argc, argv};
-    cli.defineArg<u32>("count");
-    cli.defineArg<f32>("exposure");
-    cli.parse();
-
-    Sandbox sandbox;
-    if (const std::optional<u32> count = cli.arg<u32>("count"); count && *count > 0) {
-        sandbox.point_count = *count;
-    }
-    if (const std::optional<f32> exposure = cli.arg<f32>("exposure"); exposure && *exposure > 0.0f) {
-        sandbox.exposure = *exposure;
-    }
-
-    app::Application app{
-        app::Application::Config{},
-        [&sandbox](app::Application& app) { init(app, sandbox); },
-        [&sandbox](app::Application& app) { frame(app, sandbox); },
-        [&sandbox](app::Application&) { cleanup(sandbox); },
-    };
+    app::Application<Sandbox> app{{}, argc, argv};
     app.run();
 
     return 0;

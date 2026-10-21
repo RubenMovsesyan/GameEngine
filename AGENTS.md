@@ -18,7 +18,7 @@ src/graphics/  the graphics engine -- the Renderer concept + Presenter at the ro
   renderers/         whole rendering strategies (DeferredRenderer, PointRenderer, ClearRenderer)
 src/scene/  Model (meshes + local transforms + materials)
 src/assets/ AssetLibrary (load once, share by path) + built-in loaders in loaders/ (glTF, image)
-src/app/    window, input, frame loop (sokol_app)
+src/app/    Application<State> (owns the State + frame loop) over Context (window, input, workers)
 src/utils/  small shared helpers
 sandbox/    test executables
 ```
@@ -48,15 +48,24 @@ subclass, no singleton, no `shared_ptr` graph beyond the resource handles themse
   that defines `VK_USE_PLATFORM_XLIB_KHR` before pulling in `<vulkan/vulkan.h>`.
 
 **sokol_gfx is single-threaded and sokol_app owns the frame loop.** Every `sg_*` call must
-happen on the thread that runs the `app::Application` callbacks — that is the *only* thread
-that renders. `app::Worker` runs everything else off that thread: pure-CPU work, and GPU
+happen on the thread that runs the State's constructor, `frame()` and destructor — that is
+the *only* thread that renders. `app::Worker` runs everything else off that thread: pure-CPU work, and GPU
 compute that goes through its own API (e.g. a CUDA simulation thread). **A worker must never
 call `sg_*`.** It may drive CUDA and share a buffer with the renderer through the
-`gpu::SharedInstanceBuffer` handshake, but the sokol rendering path stays on the frame
-callback. `Application` starts workers after `init()` and stops + joins them (via
-`workerShouldStop()`) before the cleanup callback, so a worker's GPU teardown finishes while
+`gpu::SharedInstanceBuffer` handshake, but the sokol rendering path stays in `frame()`.
+`Application` starts workers after the State's constructor and stops + joins them (via
+`workerShouldStop()`) before destroying the State, so a worker's GPU teardown finishes while
 the context is still up. Work that needs both (texture loading) decodes on a worker and
-uploads from the frame callback; see `graphics::Texture::drainUploads`.
+uploads from `frame()`; see `graphics::Texture::drainUploads`.
+
+**An app is a State type handed to `app::Application<S>`.** `S` must satisfy `app::AppState`:
+an `explicit S(app::Context&)` (init: GPU up, register workers, parse
+`context.argc()/argv()` with `CliParser`) and `void frame(app::Context&)`; its destructor is
+cleanup. Application owns the State for exactly as long as the GPU is up, so members that
+hold GPU handles are plain members — no `std::optional` + `emplace` dance. The State,
+workers and helpers take `app::Context&` (the non-template base: window, input, DebugUI,
+workers, quit), never `Application<S>&`. The sandboxes still keep their GPU members in
+`std::optional` from before; new code shouldn't.
 
 **Every module gets a `docs/` page** — an HTML page (dark mode) explaining how that module
 works, with real code examples pulled from the module itself. Link the shared stylesheet at

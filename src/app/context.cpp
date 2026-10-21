@@ -6,7 +6,47 @@
 #include <sokol_glue.h>
 #include <sokol_log.h>
 
+// Last: Xlib defines macros (None, Bool, Status, ...) that would leak into anything after it.
+#if defined(__linux__)
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#endif
+
+#include <cstdint>
+
 namespace app {
+
+namespace {
+
+// sokol_app has no "not resizable" option, so tell the window manager directly: minimum and
+// maximum size both width x height. Keeps the hints sokol already set (centre gravity).
+void lockWindowSize(int width, int height) {
+#if defined(__linux__)
+    Display* display = static_cast<Display*>(const_cast<void*>(sapp_x11_get_display()));
+    const Window window = static_cast<Window>(reinterpret_cast<std::uintptr_t>(sapp_x11_get_window()));
+    if (display == nullptr || window == 0) {
+        return;
+    }
+
+    XSizeHints* hints = XAllocSizeHints();
+    long supplied = 0;
+    XGetWMNormalHints(display, window, hints, &supplied);
+    hints->flags |= PMinSize | PMaxSize;
+    hints->min_width = hints->max_width = width;
+    hints->min_height = hints->max_height = height;
+    XSetWMNormalHints(display, window, hints);
+    XFree(hints);
+
+    // The window is already mapped at whatever size the WM gave it; ask for ours back.
+    XResizeWindow(display, window, static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+    XFlush(display);
+#else
+    (void)width;
+    (void)height;
+#endif
+}
+
+} // namespace
 
 Context::Context(Config config, int argc, char** argv) : m_config(config), m_argc(argc), m_argv(argv) {}
 
@@ -18,6 +58,11 @@ Context::~Context() {
 
 void Context::initCallback(void* user_data) {
     Context& app = *static_cast<Context*>(user_data);
+
+    // sokol_app has created and mapped the window by the time it calls init.
+    if (!app.m_config.resizable) {
+        lockWindowSize(app.m_config.width, app.m_config.height);
+    }
 
     sg_desc desc = {};
     desc.environment = sglue_environment();

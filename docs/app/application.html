@@ -124,7 +124,12 @@ class Application : public Context {
 };
 
 class Context {
-    struct Config { int width = 1280; int height = 720; const char* title = "GameEngine"; };
+    struct Config {
+        int width = 1280;
+        int height = 720;
+        const char* title = "GameEngine";
+        bool resizable = true;   // false: fixed at width x height (X11)
+    };
 
     void quit();                       // the current frame still finishes
     InputState&amp; input();
@@ -154,6 +159,13 @@ class Context {
     &mdash; handing <code>this</code> to a worker is safe.</li>
   <li>The window opens before the State is built, so a fatal command-line error (a missing
     <code>--model</code>) shows up after the window appears.</li>
+  <li><strong>Fixed-size windows.</strong> sokol_app has no &ldquo;not resizable&rdquo;
+    option, so with <code>Config::resizable = false</code> the Context sets the X11 window&rsquo;s
+    minimum and maximum size both to <code>width</code>&times;<code>height</code>
+    (<code>XSetWMNormalHints</code>, keeping sokol&rsquo;s own hints) and resizes it back to
+    that size, at the start of init. On Hyprland (XWayland) that makes the window float at
+    exactly that size and refuse resizes; no window rule is needed. Other platforms ignore
+    the flag.</li>
   <li>Input events are translated into <a href="input_state.html">InputState</a> before
     <code>frame()</code>; ImGui-consumed events never reach it. The State has no raw-event
     hook yet.</li>

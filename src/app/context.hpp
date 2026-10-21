@@ -28,6 +28,10 @@ class Context {
                 int width = 1280;
                 int height = 720;
                 const char* title = "GameEngine";
+                // false pins the window at width x height: the window manager is told its
+                // minimum and maximum size are both that size. X11 only (no-op elsewhere),
+                // on Hyprland it floats at that size. See docs/app/application.html.
+                bool resizable = true;
         };
 
         ~Context();

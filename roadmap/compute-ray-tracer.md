@@ -31,7 +31,9 @@ faster than vsync, while the render thread draws the *same* `VkBuffer` — no co
 Still open for the ray tracer proper:
 - **Images**, not just buffers — `gpu::nativeHandle(sg_image)` on Vulkan is still
   `nullopt`; a compute raymarcher writing an output image needs the same export path for
-  `VkImage`/`VkDeviceMemory` (+ layout handling, unlike buffers).
+  `VkImage`/`VkDeviceMemory` (+ layout handling, unlike buffers). Planned in
+  [cuda-image-interop.md](cuda-image-interop.md) (item 4); until then, write a storage
+  buffer and copy it with a fullscreen pass (ElectronCloud's renderer does this).
 - **Metal backend: fine.** `sg_mtl_query_*` accessors exist; a CUDA/Metal buffer and an
   `id<MTLBuffer>` can be bridged directly (roadmap item 2).
 

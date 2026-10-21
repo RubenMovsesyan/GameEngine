@@ -136,6 +136,7 @@ int main(int argc, char** argv) {
 
 	    "src/graphics/renderers/deferred_renderer.cpp",
 	    "src/graphics/renderers/point_renderer.cpp",
+	    "src/graphics/renderers/clear_renderer.cpp",
 
 	    "src/graphics/presenter.cpp",
 

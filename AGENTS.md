@@ -15,7 +15,7 @@ src/gpu/    the sokol_gfx context, resource handles, and the native-handle seam
 src/graphics/  the graphics engine -- the Renderer concept + Presenter at the root, then:
   primitives/scene/  pipeline-agnostic scene types (Mesh, Material, Texture, Camera, Frustum, Skybox, Light, PointInstance)
   primitives/pass/   GPU-pass building blocks (RenderTarget, FullscreenPass, Tonemap/Fxaa, DebugDraw, shadow cascades, LightManager)
-  renderers/         whole rendering strategies (DeferredRenderer, PointRenderer)
+  renderers/         whole rendering strategies (DeferredRenderer, PointRenderer, ClearRenderer)
 src/scene/  Model (meshes + local transforms + materials)
 src/assets/ AssetLibrary (load once, share by path) + built-in loaders in loaders/ (glTF, image)
 src/app/    window, input, frame loop (sokol_app)
@@ -30,9 +30,10 @@ subclass, no singleton, no `shared_ptr` graph beyond the resource handles themse
 - **No virtual functions in `gpu/` or `graphics/`.** A whole rendering strategy is a
   *plugin*: any type satisfying the `graphics::Renderer` concept (one requirement —
   `sg_view render(int, int)`, recording every pass for the frame and returning the final
-  image) is a renderer. `graphics::renderers::DeferredRenderer` (meshes) and
-  `graphics::renderers::PointRenderer` (emissive points, wiring only so far) are the two
-  built-in ones. `graphics::Presenter` (at the `graphics/` root, alongside the concept)
+  image) is a renderer. `graphics::renderers::DeferredRenderer` (meshes),
+  `graphics::renderers::PointRenderer` (emissive points, wiring only so far) and
+  `graphics::renderers::ClearRenderer` (one clear pass, for bring-up; the template for a
+  new renderer) are the built-in ones. `graphics::Presenter` (at the `graphics/` root, alongside the concept)
   takes a renderer's output and blits it to the swapchain, and is the only thing that
   touches the swapchain or calls `sg_commit()`. Shared building blocks live under
   `graphics::primitives::` — `scene::` for pipeline-agnostic scene types, `pass::` for

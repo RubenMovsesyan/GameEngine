@@ -11,15 +11,16 @@ build.cpp   the build script, C++23
 external/   third-party dependencies, one submodule per directory (see external/AGENTS.md)
 docs/       system overview + the stylesheet every module's docs share
 roadmap/    scratch backlog of planned work, pre project-management-system
-src/gpu/    the sokol_gfx context, resource handles, and the native-handle seam
-src/graphics/  the graphics engine -- the Renderer concept + Presenter at the root, then:
+src/gpu/    the sokol_gfx context, resource handles, the native-handle seam, CUDA interop,
+            and BufferReadback (GPU -> CPU copies of storage buffers, Vulkan)
+src/graphics/  the graphics engine -- the Renderer concept, Presenter and Recorder at the root, then:
   primitives/scene/  pipeline-agnostic scene types (Mesh, Material, Texture, Camera, Frustum, Skybox, Light, PointInstance)
   primitives/pass/   GPU-pass building blocks (RenderTarget, FullscreenPass, Tonemap/Fxaa, DebugDraw, shadow cascades, LightManager)
   renderers/         whole rendering strategies (DeferredRenderer, PointRenderer, ClearRenderer)
 src/scene/  Model (meshes + local transforms + materials)
 src/assets/ AssetLibrary (load once, share by path) + built-in loaders in loaders/ (glTF, image)
 src/app/    Application<State> (owns the State + frame loop) over Context (window, input, workers)
-src/utils/  small shared helpers
+src/utils/  small shared helpers (Display concept, VideoEncoder: frames -> ffmpeg)
 sandbox/    test executables
 ```
 
@@ -96,9 +97,10 @@ globbing.
 All shader programs live in one file, `src/graphics/shaders/engine.glsl`, written in
 sokol-shdc's annotated GLSL. `build.cpp` runs `external/sokol-tools-bin/bin/linux/sokol-shdc`
 over it to generate `.build/shaders/engine.glsl.h`, which carries the SPIR-V for every
-program plus generated uniform-block structs and bind-slot constants. Only four TUs
+program plus generated uniform-block structs and bind-slot constants. Only five TUs
 include it: `renderers/deferred_renderer.cpp`, `renderers/point_renderer.cpp`,
-`primitives/pass/post.cpp`, and `presenter.cpp`.
+`primitives/pass/post.cpp`, `presenter.cpp`, and `recorder.cpp` (the `capture` compute
+program). Adding one means adding it to `includes_shader_header` in `build.cpp`.
 
 Bind slots are three separate spaces, each declared explicitly in the GLSL:
 
@@ -134,11 +136,19 @@ Resources sharing a name across programs must share a binding. Use the generated
   `gameengine/vk-interop` over `floooh/sokol` master. Upstream's Vulkan backend has no
   native-handle accessor; the fork adds `sg_vk_query_buffer_info` /
   `sg_vk_query_device_info`, a `sg_buffer_desc.vk_external_memory` opt-in (exportable
-  dedicated memory), and the two external-memory/-semaphore FD device extensions in
-  `sokol_app.h`. Every change is fenced with a `GameEngine fork` comment. Inside the
+  dedicated memory), `VK_BUFFER_USAGE_TRANSFER_SRC_BIT` on storage buffers (so
+  `gpu::BufferReadback` can copy them to the CPU), and the two external-memory/-semaphore
+  FD device extensions in `sokol_app.h`. Every change is fenced with a `GameEngine fork` comment. Inside the
   submodule, `origin` is the fork and `upstream` is `floooh/sokol`. **Pivot away the moment
   upstream sokol grows first-class external-memory support** — repoint `.gitmodules` at
   `floooh/sokol`, bump the pin, adapt `src/gpu/`.
+- **Recording is `graphics::Recorder`** (docs/graphics/recorder.html): a Presenter that also
+  writes every frame to a video. Render image -> `capture_cs` compute pass (RGBA8 into a
+  storage buffer) -> internal Presenter shows + commits -> `gpu::BufferReadback` copies it to
+  the CPU on sokol's queue after the commit (3 frames in flight) -> `utils::VideoEncoder`
+  pipes it to ffmpeg. No CUDA. ffmpeg is checked at construction (`RLOG(LL_FATAL)` if
+  missing). Drive the simulation by `frameTime()` while recording so the video is real time
+  regardless of render speed. `sandbox/recorder_test` records a known colour sequence.
 - **CUDA is optional** (`build.cpp` probes `CUDA_PATH` / `/opt/cuda`). When present it
   defines `GAMEENGINE_CUDA`, links `libcuda` (Driver API only — no `nvcc`, no `libcudart`
   in the engine), and builds `sandbox/cuda_points_test` (its kernel is `nvcc --ptx`'d and

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu::BufferReadback — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="interop.html">CUDA interop</a>
+  <a class="here" href="buffer_readback.html">BufferReadback</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/renderer.html">Renderer (concept)</a>
+  <a href="../graphics/presenter.html">Presenter</a>
+  <a href="../graphics/recorder.html">Recorder</a>
+  <a href="../graphics/clear_renderer.html">ClearRenderer</a>
+  <a href="../graphics/point_renderer.html">PointRenderer</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+  <a href="../utils/video_encoder.html">VideoEncoder</a>
+</nav>
+
+<main>
+
+<h1><code>gpu::BufferReadback</code></h1>
+<p class="lede">Copies sokol storage buffers back to the CPU &mdash; something sokol_gfx can't do on any backend.</p>
+
+<h2>Role</h2>
+<p>
+  A small ring of slots. Each slot is a sokol storage buffer the GPU writes this frame (in any
+  pass &mdash; <a href="../graphics/recorder.html"><code>graphics::Recorder</code></a> fills it
+  with a compute pass) plus a CPU-readable copy of it. With N slots the CPU reads frame k while
+  the GPU works on frames k+1 .. k+N&minus;1, so nothing waits unless the CPU falls behind.
+</p>
+<pre><code>// per frame, on the sokol thread
+sg_buffer target = readback.acquire(onReady);   // encodes the oldest frame first if the ring is full
+/* write `target` in a pass */
+sg_commit();                                    // (the Presenter does this)
+readback.submit();                              // queue the copy behind the frame
+
+// at the end
+readback.flush(onReady);                        // onReady(std::span&lt;const u8&gt;) per frame, in order</code></pre>
+
+<h2>How the copy works (Vulkan)</h2>
+<ul>
+  <li>An engine-owned command pool on sokol's queue family, one command buffer + fence per slot,
+    and a host-visible, host-coherent (cached if available) <code>VkBuffer</code> per slot,
+    mapped once.</li>
+  <li><code>submit()</code> records <code>barrier (shader write &rarr; transfer read)</code>,
+    <code>vkCmdCopyBuffer</code>, <code>barrier (transfer write &rarr; host read)</code> and
+    submits it on sokol's queue <em>after</em> <code>sg_commit()</code>. A pipeline barrier's
+    first scope covers everything earlier in submission order on the queue, so it orders the
+    copy after sokol's frame without touching sokol's command buffer &mdash; the same trick
+    <code>gpu::CrossSemaphore</code> uses for its empty submits.</li>
+  <li>Reading waits on the slot's fence, hands the mapped bytes to the callback, and frees
+    the slot. A slot is only reused after its copy has been read, so the GPU can't overwrite a
+    frame the CPU hasn't seen.</li>
+</ul>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><strong>Vulkan only.</strong> <code>create()</code> returns <code>nullopt</code> elsewhere.
+    A Metal version would be a shared-storage buffer read in place.</li>
+  <li><strong>Needs one sokol fork change</strong>: storage buffers are created with
+    <code>VK_BUFFER_USAGE_TRANSFER_SRC_BIT</code> (in <code>_sg_vk_buffer_usage</code>,
+    fenced <code>GameEngine fork</code>); upstream sokol only gives buffers
+    <code>TRANSFER_DST</code>. The source buffer is found with the fork's
+    <code>sg_vk_query_buffer_info</code>.</li>
+  <li>The storage buffers are <code>immutable</code> &mdash; sokol's rule for buffers bound
+    read/write.</li>
+  <li>Not thread-safe: everything happens on the sokol thread, like the rest of sokol.</li>
+</ul>
+
+<footer>Source: <code>src/gpu/buffer_readback.hpp</code>, <code>src/gpu/buffer_readback.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

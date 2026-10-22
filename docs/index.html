@@ -16,6 +16,7 @@
   <h4>graphics</h4>
   <a href="graphics/renderer.html">Renderer (concept)</a>
   <a href="graphics/presenter.html">Presenter</a>
+  <a href="graphics/recorder.html">Recorder</a>
 
   <h4>graphics · primitives/scene</h4>
   <a href="graphics/camera.html">Camera</a>
@@ -41,6 +42,7 @@
 
   <h4>gpu</h4>
   <a href="gpu/interop.html">CUDA interop</a>
+  <a href="gpu/buffer_readback.html">BufferReadback</a>
 
   <h4>scene</h4>
   <a href="scene/model.html">Model</a>
@@ -60,6 +62,7 @@
 
   <h4>utils</h4>
   <a href="utils/display.html">Display</a>
+  <a href="utils/video_encoder.html">VideoEncoder</a>
 </nav>
 
 <main>
@@ -79,7 +82,7 @@
 </div>
 <div class="box">
   <div class="name">graphics/</div>
-  <div class="desc">Rendering mechanism. The <code>Renderer</code> concept and the <code>Presenter</code> (swapchain blit + overlay + commit) sit at the root. <code>primitives/scene/</code> holds pipeline-agnostic scene types (Mesh concept, StandardMesh/InstancedMesh, Material, Texture, Light, Camera, Frustum, Skybox, PointInstance); <code>primitives/pass/</code> holds GPU-pass building blocks (RenderTarget, FullscreenPass, Tonemap/Fxaa, DebugDraw, shadow cascades, LightManager); <code>renderers/</code> holds whole strategies (DeferredRenderer, PointRenderer). "How to draw," with no asset-format knowledge (no cgltf, no stb_image).</div>
+  <div class="desc">Rendering mechanism. The <code>Renderer</code> concept, the <code>Presenter</code> (swapchain blit + overlay + commit) and the <a href="graphics/recorder.html"><code>Recorder</code></a> (a Presenter that also writes every frame to a video) sit at the root. <code>primitives/scene/</code> holds pipeline-agnostic scene types (Mesh concept, StandardMesh/InstancedMesh, Material, Texture, Light, Camera, Frustum, Skybox, PointInstance); <code>primitives/pass/</code> holds GPU-pass building blocks (RenderTarget, FullscreenPass, Tonemap/Fxaa, DebugDraw, shadow cascades, LightManager); <code>renderers/</code> holds whole strategies (DeferredRenderer, PointRenderer). "How to draw," with no asset-format knowledge (no cgltf, no stb_image).</div>
 </div>
 <div class="box">
   <div class="name">scene/</div>
@@ -95,7 +98,7 @@
 </div>
 <div class="box">
   <div class="name">utils/</div>
-  <div class="desc">Cross-cutting, dependency-free helpers — currently just the <code>Display</code> concept.</div>
+  <div class="desc">Cross-cutting helpers with no GPU dependency — the <code>Display</code> concept and <a href="utils/video_encoder.html"><code>VideoEncoder</code></a> (frames &rarr; ffmpeg).</div>
 </div>
 
 <p>

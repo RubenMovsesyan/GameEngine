@@ -39,7 +39,7 @@ int Presenter::targetHeight() const {
     return sapp_height();
 }
 
-void Presenter::blitAndFinish(sg_view image, const std::function<void()>& overlay) {
+void Presenter::presentImage(sg_view image, const std::function<void()>& overlay) {
     sg_pass pass = {};
     pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
     pass.swapchain = sglue_swapchain();

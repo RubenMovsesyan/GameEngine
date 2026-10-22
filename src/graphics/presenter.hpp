@@ -28,14 +28,19 @@ class Presenter {
         void present(R& renderer, const std::function<void()>& overlay = {}) {
             beginFrame();
             const sg_view image = renderer.render(targetWidth(), targetHeight());
-            blitAndFinish(image, overlay);
+            presentImage(image, overlay);
         }
 
-    private:
+        // The two halves of present(), for a caller that renders the image itself -- e.g.
+        // graphics::Recorder, which renders at the video's size and captures the image before
+        // showing it. Call beginFrame() before rendering (it drains texture uploads), then
+        // presentImage() with the result; the image is scaled to the window.
         void beginFrame();
+        void presentImage(sg_view image, const std::function<void()>& overlay = {});
+
+    private:
         int targetWidth() const;
         int targetHeight() const;
-        void blitAndFinish(sg_view image, const std::function<void()>& overlay);
 
         primitives::pass::FullscreenPass m_blit;
         gpu::SamplerHandle m_sampler;

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>utils::VideoEncoder — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · NVRHI · Linux</span>
+
+  <h4>gpu</h4>
+  <a href="../gpu/instance.html">Instance</a>
+  <a href="../gpu/device.html">Device</a>
+  <a href="../gpu/swapchain.html">Swapchain</a>
+
+  <h4>graphics</h4>
+  <a href="../graphics/camera.html">Camera</a>
+  <a href="../graphics/frustum.html">Frustum</a>
+  <a href="../graphics/light.html">Light</a>
+  <a href="../graphics/light_manager.html">LightManager</a>
+  <a href="../graphics/material.html">Material</a>
+  <a href="../graphics/mesh.html">Mesh</a>
+  <a href="../graphics/post_process_chain.html">PostProcessChain</a>
+  <a href="../graphics/renderer.html">Renderer</a>
+  <a href="../graphics/skybox.html">Skybox</a>
+  <a href="../graphics/surface.html">Surface</a>
+  <a href="../graphics/texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/window.html">Window</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="display.html">Display</a>
+  <a class="here" href="video_encoder.html">VideoEncoder</a>
+</nav>
+
+<main>
+
+<h1><code>utils::VideoEncoder</code></h1>
+<p class="lede">Writes RGBA8 frames to a video file by streaming them into an ffmpeg process. No GPU involved.</p>
+
+<h2>Role</h2>
+<p>
+  The last step of <a href="../graphics/recorder.html"><code>graphics::Recorder</code></a>,
+  usable on its own with frames from anywhere. It runs
+</p>
+<pre><code>ffmpeg -y -loglevel error -f rawvideo -pix_fmt rgba -s WxH -r FPS -i - \
+       -c:v libx264 -preset slow -crf CRF -pix_fmt yuv420p -movflags +faststart PATH</code></pre>
+<p>
+  and writes each frame to its stdin. H.264 in yuv420p plays everywhere; <code>crf</code> 16
+  is close to visually lossless (0 is lossless, higher is smaller and blurrier).
+</p>
+
+<h2>Public API</h2>
+<pre><code>class VideoEncoder {
+    struct Config { u32 width = 1920; u32 height = 1080; u32 fps = 60;
+                    std::string path = "recording.mp4"; u32 crf = 16; };
+
+    explicit VideoEncoder(Config);          // fatal if ffmpeg is missing or the size is odd
+    ~VideoEncoder();                        // finish()
+    void write(std::span&lt;const u8&gt; rgba);   // width * height RGBA8, row 0 at the top
+    bool finish();                          // close stdin, wait for ffmpeg; false on error
+    u64 framesWritten() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><strong>ffmpeg is checked up front</strong> (<code>command -v ffmpeg</code>): a missing
+    ffmpeg is <code>RLOG(LL_FATAL)</code> at construction, not a failure on the first frame.</li>
+  <li>Frames are 1/fps apart in the video regardless of how long they took to produce.</li>
+  <li>The path is single-quoted for the shell, so spaces are fine. The container comes from
+    the extension.</li>
+  <li>Writing blocks while ffmpeg is busy; recording is offline, so a slow encode only makes
+    recording take longer, never the video choppier.</li>
+</ul>
+
+<footer>Source: <code>src/utils/video_encoder.hpp</code>, <code>src/utils/video_encoder.cpp</code></footer>
+
+</main>
+</div>
+</body>
+</html>

@@ -114,6 +114,7 @@ int main(int argc, char** argv) {
 	    "src/gpu/cross_semaphore.cpp",
 	    "src/gpu/cuda_interop.cpp",         // fully #ifdef GAMEENGINE_CUDA -- compiles to nothing without it
 	    "src/gpu/shared_instance_buffer.cpp",
+	    "src/gpu/buffer_readback.cpp",
 
 	    "external/imgui/imgui.cpp",
 	    "external/imgui/imgui_draw.cpp",
@@ -139,6 +140,7 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderers/clear_renderer.cpp",
 
 	    "src/graphics/presenter.cpp",
+	    "src/graphics/recorder.cpp",
 
 	    "src/scene/model.cpp",
 	
@@ -152,6 +154,8 @@ int main(int argc, char** argv) {
 	    "src/app/cli_parser.cpp",
 	    "src/app/input_state.cpp",
 	    "src/app/debug_ui.cpp",
+
+	    "src/utils/video_encoder.cpp",
 	};
 
 	// One binary per sandbox: the shared engine objects + that sandbox's own entry point.
@@ -160,6 +164,7 @@ int main(int argc, char** argv) {
 	std::vector<std::string> sandbox_mains = {
 	    "sandbox/model_test/model_test.cpp",
 	    "sandbox/point_test/point_test.cpp",
+	    "sandbox/recorder_test/recorder_test.cpp",
 	};
 	if (cuda) {
 	    sandbox_mains.push_back("sandbox/cuda_points_test/cuda_points_test.cpp");
@@ -173,7 +178,8 @@ int main(int argc, char** argv) {
 	    const bool includes_shader_header = source == "src/graphics/renderers/deferred_renderer.cpp" ||
 	                                        source == "src/graphics/renderers/point_renderer.cpp" ||
 	                                        source == "src/graphics/primitives/pass/post.cpp" ||
-	                                        source == "src/graphics/presenter.cpp";
+	                                        source == "src/graphics/presenter.cpp" ||
+	                                        source == "src/graphics/recorder.cpp";
 	    if (includes_shader_header && shader_task != nullptr) {
 	        task.depends_on(*shader_task);
 	    }

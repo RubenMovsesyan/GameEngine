@@ -524,6 +524,44 @@ void main() {
 @program present fullscreen_vs present_fs
 
 //------------------------------------------------------------------------------
+// Capture: a compute pass that copies a finished image into a storage buffer as packed
+// RGBA8, one uint per pixel, row 0 at the top -- what graphics::Recorder reads back to the
+// CPU (gpu::BufferReadback) and hands to the video encoder. Any source format works; values
+// are clamped to 0..1, so an HDR image should be tonemapped first.
+//------------------------------------------------------------------------------
+
+@cs capture_cs
+layout(local_size_x=8, local_size_y=8, local_size_z=1) in;
+
+layout(binding=0) uniform texture2D capture_source;
+layout(binding=0) uniform sampler capture_sampler;
+
+struct capture_pixel {
+    uint rgba; // red in the low byte
+};
+
+layout(binding=1) buffer capture_pixels {
+    capture_pixel capture_out[];
+};
+
+layout(binding=0) uniform capture_params {
+    vec4 capture_size; // x = width, y = height, in pixels
+};
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    const ivec2 size = ivec2(capture_size.xy);
+    if (pixel.x >= size.x || pixel.y >= size.y) {
+        return;
+    }
+    const vec4 color = texelFetch(sampler2D(capture_source, capture_sampler), pixel, 0);
+    capture_out[pixel.y * size.x + pixel.x].rgba = packUnorm4x8(clamp(color, 0.0, 1.0));
+}
+@end
+
+@program capture capture_cs
+
+//------------------------------------------------------------------------------
 // Shadow-map debug blit
 //------------------------------------------------------------------------------
 

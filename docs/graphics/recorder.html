@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>graphics::Recorder — GameEngine</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <a class="brand" href="../index.html">Game<span>Engine</span></a>
+  <span class="tag">C++23 · Vulkan · sokol · Linux</span>
+
+  <h4>graphics</h4>
+  <a href="camera.html">Camera</a>
+  <a href="debug_draw.html">DebugDraw</a>
+  <a href="frustum.html">Frustum</a>
+  <a href="fullscreen_pass.html">FullscreenPass</a>
+  <a href="light.html">Light</a>
+  <a href="light_manager.html">LightManager</a>
+  <a href="material.html">Material</a>
+  <a href="mesh.html">Mesh</a>
+  <a href="clear_renderer.html">ClearRenderer</a>
+  <a href="point_renderer.html">PointRenderer</a>
+  <a href="post.html">post (Tonemap/Fxaa)</a>
+  <a href="presenter.html">Presenter</a>
+  <a class="here" href="recorder.html">Recorder</a>
+  <a href="render_target.html">RenderTarget</a>
+  <a href="renderer.html">Renderer (concept)</a>
+  <a href="skybox.html">Skybox</a>
+  <a href="texture.html">Texture</a>
+
+  <h4>scene</h4>
+  <a href="../scene/model.html">Model</a>
+
+  <h4>assets</h4>
+  <a href="../assets/asset_library.html">AssetLibrary</a>
+  <a href="../assets/defaults.html">registerDefaultLoaders</a>
+  <a href="../assets/gltf.html">loadGltf</a>
+  <a href="../assets/image.html">loadTexture</a>
+
+  <h4>app</h4>
+  <a href="../app/application.html">Application</a>
+  <a href="../app/cli_parser.html">CliParser</a>
+  <a href="../app/debug_ui.html">DebugUI</a>
+  <a href="../app/input_state.html">InputState</a>
+  <a href="../app/worker.html">Worker</a>
+
+  <h4>utils</h4>
+  <a href="../utils/display.html">Display</a>
+  <a href="../utils/video_encoder.html">VideoEncoder</a>
+</nav>
+
+<main>
+
+<h1><code>graphics::Recorder</code></h1>
+<p class="lede">A <a href="presenter.html">Presenter</a> that also records: every frame goes to the window <em>and</em> into a video file, a fixed 1/fps apart however long it took to render.</p>
+
+<h2>Role</h2>
+<p>
+  Drop-in for <code>Presenter::present</code> while recording. Any
+  <a href="renderer.html">Renderer</a> can be recorded unchanged &mdash; the Recorder only
+  sees the image <code>render()</code> returns. Each frame:
+</p>
+<ol>
+  <li>renders at the video's size (<code>Config::width &times; height</code>), not the window's;</li>
+  <li>a compute pass (<code>capture_cs</code> in <code>engine.glsl</code>) packs the image into
+    a storage buffer as RGBA8, one <code>uint</code> per pixel, row 0 at the top &mdash; any
+    source format, clamped to 0..1;</li>
+  <li>an internal <a href="presenter.html">Presenter</a> shows the image in the window
+    (scaled), draws the overlay on top, and commits the frame;</li>
+  <li><a href="../gpu/buffer_readback.html"><code>gpu::BufferReadback</code></a> copies the
+    storage buffer to the CPU, a few frames behind so the GPU never waits;</li>
+  <li><a href="../utils/video_encoder.html"><code>utils::VideoEncoder</code></a> streams the
+    frames into ffmpeg.</li>
+</ol>
+<p>
+  The overlay (ImGui, an FPS counter, ...) is drawn on the window only: the capture happens
+  before the blit, so the video holds just the renderer's image.
+</p>
+
+<h2>Fixed timestep</h2>
+<p>
+  Frames are 1/fps apart in the video no matter how long they take, so drive the simulation
+  from <code>frameTime()</code> instead of the wall clock while recording. Then the video
+  plays back in real time even when rendering is far slower than that &mdash; you can record
+  at settings too slow to run live.
+</p>
+<pre><code>graphics::Recorder recorder{{.width = 1920, .height = 1080, .fps = 60, .path = "out.mp4"}};
+
+// per frame
+simulate(recorder.frameTime());     // not the wall clock
+recorder.present(renderer, overlay);
+if (done) {
+    recorder.finish();              // encodes the frames still in flight, closes the file
+    app.quit();
+}</code></pre>
+
+<h2>Public API</h2>
+<pre><code>class Recorder {
+    struct Config { u32 width = 1920; u32 height = 1080; u32 fps = 60;
+                    std::string path = "recording.mp4"; u32 crf = 16; };
+
+    explicit Recorder(Config);       // fatal if ffmpeg is missing or readback is unavailable
+    ~Recorder();                     // finish()
+
+    template &lt;Renderer R&gt;
+    void present(R&amp; renderer, const std::function&lt;void()&gt;&amp; overlay = {});
+
+    f64 frameTime() const;           // 1 / fps
+    u64 framesPresented() const;     // frames recorded so far
+    void finish();                   // flush + close; later frames are shown but not recorded
+    bool finished() const;
+    const Config&amp; config() const;
+};</code></pre>
+
+<h2>Worth knowing</h2>
+<ul>
+  <li><strong>Vulkan only</strong>, through <code>gpu::BufferReadback</code>; ffmpeg must be
+    installed (checked when the Recorder is built &mdash; fatal if missing).</li>
+  <li><strong>No CUDA.</strong> The readback is plain Vulkan on sokol's queue.</li>
+  <li>It renders once per frame at the video size and shows that same image, rather than
+    rendering twice. A renderer that rebuilds targets on a size change won't thrash.</li>
+  <li>Three frames are in flight; <code>present()</code> only waits on the GPU if the CPU
+    (encoding) falls three frames behind.</li>
+  <li>Width and height must be even (H.264 with 4:2:0 chroma).</li>
+  <li><code>sandbox/recorder_test</code> records a known sequence of colours
+    (<code>./run recorder_test --out x.mp4</code>); decode it to check frame count and order.</li>
+</ul>
+
+<footer>Source: <code>src/graphics/recorder.hpp</code>, <code>src/graphics/recorder.cpp</code>, <code>capture_cs</code> in <code>src/graphics/shaders/engine.glsl</code></footer>
+
+</main>
+</div>
+</body>
+</html>

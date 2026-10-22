@@ -26,6 +26,7 @@
   <a href="point_renderer.html">PointRenderer</a>
   <a href="post.html">post (Tonemap/Fxaa)</a>
   <a class="here" href="presenter.html">Presenter</a>
+  <a href="recorder.html">Recorder</a>
   <a href="render_target.html">RenderTarget</a>
   <a href="renderer.html">Renderer (concept)</a>
   <a href="skybox.html">Skybox</a>
@@ -49,6 +50,7 @@
 
   <h4>utils</h4>
   <a href="../utils/display.html">Display</a>
+  <a href="../utils/video_encoder.html">VideoEncoder</a>
 </nav>
 
 <main>
@@ -86,7 +88,17 @@
 
     template &lt;Renderer R&gt;
     void present(R&amp; renderer, const std::function&lt;void()&gt;&amp; overlay = {});
+
+    // The two halves of present(), for a caller that renders the image itself
+    // (graphics::Recorder): beginFrame() before rendering, then presentImage().
+    void beginFrame();
+    void presentImage(sg_view image, const std::function&lt;void()&gt;&amp; overlay = {});
 };</code></pre>
+<p>
+  <a href="recorder.html"><code>Recorder</code></a> uses the two halves: it renders at the
+  video's size, captures the image, then hands it to <code>presentImage()</code>, which scales
+  it to the window.
+</p>
 
 <h2>Worth knowing</h2>
 <ul>
@@ -104,7 +116,7 @@
   </li>
   <li>
     <code>present()</code> is a template so the concept can constrain it, but the
-    non-template guts (<code>beginFrame</code>, <code>blitAndFinish</code>, the size
+    non-template guts (<code>beginFrame</code>, <code>presentImage</code>, the size
     accessors) live in <code>presenter.cpp</code> &mdash; so the generated
     <code>engine.glsl.h</code> stays out of the header and out of every translation unit
     that merely includes <code>presenter.hpp</code>.

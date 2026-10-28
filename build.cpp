@@ -30,8 +30,31 @@ int main(int argc, char** argv) {
 	engine.addInclude(Include<Direct>("src"));
 	engine.addInclude(Include<Direct>(".build/shaders"));
 
-	engine.addLink(Link<Dependency>("vulkan"));
 	engine.addLink(Link<Dependency>("pthread"));
+
+	// Backend per platform: Metal on macOS, Vulkan on Linux. src/gpu/sokol.cpp turns the
+	// GAMEENGINE_METAL define into SOKOL_METAL (Vulkan otherwise); Vulkan-only engine code
+	// (the CUDA interop layer, BufferReadback) is left out of the Metal build entirely.
+#if defined(__APPLE__)
+	const bool metal = true;
+	engine.addCompileFlag("-DGAMEENGINE_METAL");
+	// Only sokol_metal.mm is Objective-C++; clang ignores ARC for the C++ TUs.
+	engine.addCompileFlag("-fobjc-arc");
+	engine.addLink(Link<Framework>("Metal"));
+	engine.addLink(Link<Framework>("MetalKit"));
+	engine.addLink(Link<Framework>("QuartzCore"));
+	engine.addLink(Link<Framework>("Cocoa"));
+	const std::string shdc = std::string("external/sokol-tools-bin/bin/") +
+#if defined(__aarch64__)
+	                         "osx_arm64" +
+#else
+	                         "osx" +
+#endif
+	                         "/sokol-shdc";
+	const std::string shader_lang = "metal_macos";
+#else
+	const bool metal = false;
+	engine.addLink(Link<Dependency>("vulkan"));
 
 	// sokol_app on Linux: X11 windowing plus dlopen for the Vulkan loader.
 	engine.addLink(Link<Dependency>("X11"));
@@ -39,6 +62,9 @@ int main(int argc, char** argv) {
 	engine.addLink(Link<Dependency>("Xcursor"));
 	engine.addLink(Link<Dependency>("dl"));
 	engine.addLink(Link<Dependency>("m"));
+	const std::string shdc = "external/sokol-tools-bin/bin/linux/sokol-shdc";
+	const std::string shader_lang = "spirv_vk";
+#endif
 
 	// Optional CUDA: only the Driver API (libcuda, always present with the NVIDIA driver) --
 	// no nvcc, no libcudart in the engine. Enables src/gpu/cuda_interop.* and the
@@ -54,7 +80,7 @@ int main(int argc, char** argv) {
 	        }
 	    }
 	}
-	const bool cuda = !cuda_dir.empty();
+	const bool cuda = !metal && !cuda_dir.empty();
 	if (cuda) {
 	    RLOG(LL_INFO, "CUDA found at " + cuda_dir + " -- building the interop path");
 	    engine.addCompileFlag("-DGAMEENGINE_CUDA");
@@ -88,7 +114,8 @@ int main(int argc, char** argv) {
 	    }
 	}
 
-	// Shaders -> a single sokol-shdc generated header carrying the SPIR-V for every program,
+	// Shaders -> a single sokol-shdc generated header carrying the bytecode (SPIR-V, or Metal
+	// source on macOS) for every program,
 	// so the binary keeps shipping its own bytecode. A real Task (not a raw exec()'d Command),
 	// so every TU that includes the generated header (see includes_shader_header below) is
 	// tracked as depending on it and rebuilds when a shader changes.
@@ -103,18 +130,11 @@ int main(int argc, char** argv) {
 
 	Task* shader_task = nullptr;
 	if (shader_stale) {
-	    shader_task = &engine.addTask(Output(Command({"external/sokol-tools-bin/bin/linux/sokol-shdc", "-i", shader_source, "-o",
-	                                                  shader_header, "-l", "spirv_vk", "-f", "sokol"})));
+	    shader_task = &engine.addTask(Output(Command({shdc, "-i", shader_source, "-o", shader_header, "-l", shader_lang, "-f", "sokol"})));
 	}
 
-	const std::vector<std::string> engine_sources = {
-	    "src/gpu/sokol.cpp",
+	std::vector<std::string> engine_sources = {
 	    "src/gpu/handle.cpp",
-	    "src/gpu/external_buffer.cpp",
-	    "src/gpu/cross_semaphore.cpp",
-	    "src/gpu/cuda_interop.cpp",         // fully #ifdef GAMEENGINE_CUDA -- compiles to nothing without it
-	    "src/gpu/shared_instance_buffer.cpp",
-	    "src/gpu/buffer_readback.cpp",
 
 	    "external/imgui/imgui.cpp",
 	    "external/imgui/imgui_draw.cpp",
@@ -140,7 +160,6 @@ int main(int argc, char** argv) {
 	    "src/graphics/renderers/clear_renderer.cpp",
 
 	    "src/graphics/presenter.cpp",
-	    "src/graphics/recorder.cpp",
 
 	    "src/scene/model.cpp",
 	
@@ -157,6 +176,21 @@ int main(int argc, char** argv) {
 
 	    "src/utils/video_encoder.cpp",
 	};
+	if (metal) {
+	    engine_sources.push_back("src/gpu/sokol_metal.mm"); // sokol.cpp, compiled as Objective-C++
+	} else {
+	    // Vulkan-only: the interop layer and BufferReadback (and so the Recorder) reach into
+	    // Vulkan directly. Metal versions are roadmap/metal-backend.md work.
+	    engine_sources.insert(engine_sources.end(), {
+	        "src/gpu/sokol.cpp",
+	        "src/gpu/external_buffer.cpp",
+	        "src/gpu/cross_semaphore.cpp",
+	        "src/gpu/cuda_interop.cpp", // fully #ifdef GAMEENGINE_CUDA -- compiles to nothing without it
+	        "src/gpu/shared_instance_buffer.cpp",
+	        "src/gpu/buffer_readback.cpp",
+	        "src/graphics/recorder.cpp",
+	    });
+	}
 
 	// One binary per sandbox: the shared engine objects + that sandbox's own entry point.
 	// Each entry file is named after its directory (not a shared "main.cpp") so the build
@@ -164,8 +198,10 @@ int main(int argc, char** argv) {
 	std::vector<std::string> sandbox_mains = {
 	    "sandbox/model_test/model_test.cpp",
 	    "sandbox/point_test/point_test.cpp",
-	    "sandbox/recorder_test/recorder_test.cpp",
 	};
+	if (!metal) {
+	    sandbox_mains.push_back("sandbox/recorder_test/recorder_test.cpp");
+	}
 	if (cuda) {
 	    sandbox_mains.push_back("sandbox/cuda_points_test/cuda_points_test.cpp");
 	    sandbox_mains.push_back("sandbox/galaxy_sim/galaxy_sim.cpp");

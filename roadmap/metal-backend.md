@@ -8,6 +8,20 @@ Run macOS builds on sokol's Metal backend instead of Vulkan-only.
 - Metal also has sokol native-handle accessors (`sg_mtl_query_*`), unlike the Vulkan
   backend, which has none — matters for interop (see compute-ray-tracer.md).
 
+## Status
+
+**Step 1 landed (rendering):** `build.cpp` switches on `__APPLE__`, `src/gpu/sokol_metal.mm`
+compiles sokol as Objective-C++ with `SOKOL_METAL`. `model_test` (deferred: G-buffer,
+cascaded shadows, sky, tonemap, FXAA, ImGui) and `point_test` render correctly on an M-series
+Mac with Metal API + shader validation clean; the Y-flip / depth conventions the renderer
+hard-codes hold unchanged. The Vulkan-only `gpu/` files, `graphics::Recorder` and
+`recorder_test` are excluded from the Metal build.
+
+Next: (2) Metal `BufferReadback` -> Recorder on Metal; (3) `MetalCompute` + `MTLSharedEvent`
+sync + a backend-neutral `SharedInstanceBuffer`, proved with `cuda_points_test`'s kernel;
+(4) shared CUDA/MSL kernel source (portability header, `hydrogen.hpp` off Eigen) for
+ElectronCloud, writing its output image directly; (5) `galaxy_sim`'s `nbody`.
+
 ## Touch points
 - `build.cpp`: platform detection; Metal needs `-fobjc-arc`, `-framework Metal
   QuartzCore Cocoa`, a `.metal`/`metallib` shader step (sokol-shdc target `metal_macos`).

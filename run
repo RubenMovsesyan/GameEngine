@@ -6,7 +6,7 @@ if [ "$1" = clean ]; then
 	shift
 fi
 [ -x ./build ] || clang++ -std=c++23 build.cpp -o build
-./build -j $(nproc)
+./build -j $(getconf _NPROCESSORS_ONLN)
 
 # Optional first arg picks the sandbox (a dir under sandbox/); default is model_test.
 # Anything starting with '-' is a flag for the default sandbox, not a name.

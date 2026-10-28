@@ -44,7 +44,9 @@ subclass, no singleton, no `shared_ptr` graph beyond the resource handles themse
   strategy (a compute raymarcher, …) add a type under `renderers/` with a `render()` and
   hand it to a `Presenter` — no base class, no change to anything existing.
 - **`src/gpu/sokol.cpp` is the only translation unit that defines `SOKOL_IMPL`.** It also
-  picks the backend (`SOKOL_VULKAN`) and sets `SOKOL_NO_ENTRY` so we keep our own `main`.
+  picks the backend (`SOKOL_METAL` when `build.cpp` defines `GAMEENGINE_METAL` on macOS,
+  `SOKOL_VULKAN` otherwise; on macOS it is compiled through `sokol_metal.mm` as
+  Objective-C++) and sets `SOKOL_NO_ENTRY` so we keep our own `main`.
   Note the include order inside it: `sokol_app.h` must come first, because it is the header
   that defines `VK_USE_PLATFORM_XLIB_KHR` before pulling in `<vulkan/vulkan.h>`.
 
@@ -76,8 +78,13 @@ docs page that describes an older design is worse than none.
 
 ## Building
 
-Needs `vulkan-headers`, `vulkan-validation-layers`, and X11 development headers
-(`libx11`, `libxi`, `libxcursor`).
+Linux (Vulkan) needs `vulkan-headers`, `vulkan-validation-layers`, and X11 development
+headers (`libx11`, `libxi`, `libxcursor`). macOS (Metal) needs only the Xcode command-line
+tools; `build.cpp` switches on `__APPLE__`: Metal/MetalKit/QuartzCore/Cocoa frameworks, the
+`osx_arm64` sokol-shdc, `metal_macos` shaders, no CUDA. **The Metal build leaves out the
+Vulkan-only code** -- `external_buffer`, `cross_semaphore`, `cuda_interop`,
+`shared_instance_buffer`, `buffer_readback`, and so `graphics::Recorder` and
+`sandbox/recorder_test` -- until their Metal versions land (`roadmap/metal-backend.md`).
 
 ```sh
 clang++ -std=c++23 build.cpp -o build   # once, to bootstrap
@@ -95,9 +102,9 @@ globbing.
 ## Shaders
 
 All shader programs live in one file, `src/graphics/shaders/engine.glsl`, written in
-sokol-shdc's annotated GLSL. `build.cpp` runs `external/sokol-tools-bin/bin/linux/sokol-shdc`
-over it to generate `.build/shaders/engine.glsl.h`, which carries the SPIR-V for every
-program plus generated uniform-block structs and bind-slot constants. Only five TUs
+sokol-shdc's annotated GLSL. `build.cpp` runs the platform's `external/sokol-tools-bin/bin/<os>/sokol-shdc`
+over it to generate `.build/shaders/engine.glsl.h`, which carries the SPIR-V (Linux) or
+Metal source (macOS) for every program plus generated uniform-block structs and bind-slot constants. Only five TUs
 include it: `renderers/deferred_renderer.cpp`, `renderers/point_renderer.cpp`,
 `primitives/pass/post.cpp`, `presenter.cpp`, and `recorder.cpp` (the `capture` compute
 program). Adding one means adding it to `includes_shader_header` in `build.cpp`.
@@ -114,8 +121,10 @@ Resources sharing a name across programs must share a binding. Use the generated
 ## Choices
 
 - C++23, clang. The build script is C++23 because `build.hpp` is a C++ header.
-- sokol_gfx for rendering, sokol_app for windowing and input. Vulkan backend on Linux;
-  the same code targets Metal, D3D11, GL and WebGPU without changes.
+- sokol_gfx for rendering, sokol_app for windowing and input. Vulkan backend on Linux,
+  Metal on macOS; the shaders and renderers are unchanged between the two (sokol's Vulkan
+  backend flips the viewport, so both share Metal's clip-space and texture-origin
+  conventions). D3D11, GL and WebGPU aren't built.
 - Eigen for math. Column-major, matching GLSL.
 - Deferred shading (`graphics::renderers::DeferredRenderer`, one implementation of the
   `graphics::Renderer` concept): G-buffer → lighting → sky → tonemap → FXAA, with a

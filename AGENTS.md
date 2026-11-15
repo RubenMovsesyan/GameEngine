@@ -89,18 +89,18 @@ clang++ -std=c++23 build.cpp -o build   # once, to bootstrap
 `./build` rebuilds itself when `build.cpp` or `buildcpp/build.hpp` changes, and writes
 `compile_commands.json`. Artifacts land in `.build/`.
 
-Adding a source file means adding a line to `engine_sources` in `build.cpp` — there is no
+Adding a source file means adding a line to `engine_sources` in `build_recipe.hpp` — there is no
 globbing.
 
 ## Shaders
 
 All shader programs live in one file, `src/graphics/shaders/engine.glsl`, written in
-sokol-shdc's annotated GLSL. `build.cpp` runs `external/sokol-tools-bin/bin/linux/sokol-shdc`
-over it to generate `.build/shaders/engine.glsl.h`, which carries the SPIR-V for every
+sokol-shdc's annotated GLSL. `build_recipe.hpp` runs `external/sokol-tools-bin/bin/linux/sokol-shdc`
+over it to generate `.build/gameengine/shaders/engine.glsl.h`, which carries the SPIR-V for every
 program plus generated uniform-block structs and bind-slot constants. Only five TUs
 include it: `renderers/deferred_renderer.cpp`, `renderers/point_renderer.cpp`,
 `primitives/pass/post.cpp`, `presenter.cpp`, and `recorder.cpp` (the `capture` compute
-program). Adding one means adding it to `includes_shader_header` in `build.cpp`.
+program). Adding one means adding it to `includes_shader_header` in `build_recipe.hpp`.
 
 Bind slots are three separate spaces, each declared explicitly in the GLSL:
 
